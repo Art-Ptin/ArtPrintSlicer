@@ -1,0 +1,8 @@
+# Modèle 3D de l'imprimante : PRIVÉ, ne doit jamais être publié
+/machine/
+
+# Filet de sécurité : aucun fichier STEP ne doit être versionné, où qu'il soit
+*.step
+*.stp
+*.STEP
+*.STP
