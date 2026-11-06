@@ -6,3 +6,6 @@
 *.stp
 *.STEP
 *.STP
+
+# Dossier de compilation (généré automatiquement)
+/build/

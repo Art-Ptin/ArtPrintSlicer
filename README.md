@@ -11,7 +11,7 @@ Le slicer génère des trajectoires où ces deux axes bougent en même temps que
 
 ## État du projet
 
-🚧 **En cours de développement.** Le logiciel n'est pas encore utilisable pour imprimer. Les fonctionnalités, les formats et les réglages peuvent encore changer.
+**En cours de développement.** Le logiciel n'est pas encore utilisable pour imprimer. Les fonctionnalités, les formats et les réglages peuvent encore changer.
 
 ## Licence
 
