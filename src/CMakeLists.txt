@@ -1,6 +1,8 @@
 # Bibliothèque commune : le code du slicer, partagé par le programme et les tests.
 add_library(artprint_core
-    version.cpp)
+    version.cpp
+    maillage.cpp
+    stl.cpp)
 target_include_directories(artprint_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # La version vient de project() dans le CMakeLists.txt principal.
