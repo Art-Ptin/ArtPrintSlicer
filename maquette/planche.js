@@ -102,7 +102,7 @@ function dessinerFormes() {
   }
   zone.append(el('h3', '', 'Rayons et ombres'));
   const ligne = el('div', 'ligne');
-  for (const [style, libelle] of [['border-radius: var(--r-1)', 'rayon 4'], ['border-radius: var(--r-2)', 'rayon 8'],
+  for (const [style, libelle] of [['border-radius: var(--r-1)', 'rayon ' + variable('--r-1')], ['border-radius: var(--r-2)', 'rayon ' + variable('--r-2')],
     ['border-radius: var(--r-2); box-shadow: var(--o-1)', 'ombre 1'], ['border-radius: var(--r-2); box-shadow: var(--o-2)', 'ombre 2']]) {
     const boite = el('span', 'boite', libelle);
     boite.style.cssText = style;
@@ -121,21 +121,29 @@ function dessinerIcones() {
   }));
 }
 
-// Le logo, tel qu'il est dessiné dans la barre du slicer.
+// Le logo, tel qu'il est dessiné dans la barre du slicer. Les masques font
+// passer l'anneau derrière le A en haut et devant lui en bas.
 function logo(surClair) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 64 56');
+  svg.setAttribute('viewBox', '10 14 262 210');
   svg.setAttribute('class', 'logo' + (surClair ? ' sur-clair' : ''));
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', 'Symbole ArtPrint');
-  const id = surClair ? 'c' : 's';
-  svg.innerHTML = `<defs><clipPath id="haut-${id}"><rect x="0" y="0" width="64" height="37"/></clipPath>
-    <clipPath id="bas-${id}"><rect x="0" y="37" width="64" height="19"/></clipPath></defs>
-    <path class="logo-a" d="M26 3h10l20 50H44L32.500 22 24 53H12z"/>
-    <ellipse class="logo-vide" cx="32" cy="37" rx="27" ry="8" clip-path="url(#bas-${id})"/>
-    <ellipse class="logo-anneau" cx="32" cy="37" rx="27" ry="8"/>
-    <path class="logo-a" d="M26 3h10l20 50H44L32.500 22 24 53H12z" clip-path="url(#haut-${id})"/>
-    <path class="logo-pointe" d="M29.500 30.500h5L32 24z"/>`;
+  const id = surClair ? 'clair' : 'sombre' + (logo.compte = (logo.compte || 0) + 1);
+  svg.innerHTML = `<defs>
+        <mask id="logo-a-${id}" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+          <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+          <clipPath id="logo-devant-${id}"><rect x="10" y="156" width="262" height="68"/></clipPath>
+          <ellipse cx="141" cy="156" rx="119.250" ry="30.250" fill="none" stroke="#000" stroke-width="31.500" clip-path="url(#logo-devant-${id})"/>
+        </mask>
+        <mask id="logo-anneau-${id}" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+          <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+          <clipPath id="logo-derriere-${id}"><rect x="10" y="14" width="262" height="142"/></clipPath>
+          <path d="M100 22 125 18 246 220H195L124.600 85.500 105.700 220H61.600z" fill="#000" stroke="#000" stroke-width="16" clip-path="url(#logo-derriere-${id})"/>
+        </mask>
+      </defs>
+      <path class="logo-a" d="M100 22 125 18 246 220H195L124.600 85.500 105.700 220H61.600z" mask="url(#logo-a-${id})"/>
+      <ellipse class="logo-anneau" cx="141" cy="156" rx="119.250" ry="30.250" stroke-width="15.500" mask="url(#logo-anneau-${id})"/>`;
   return svg;
 }
 

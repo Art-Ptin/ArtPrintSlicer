@@ -10,84 +10,141 @@
 
 <header class="tete">
   <div class="marque">
-    <svg class="logo" viewBox="0 0 64 56" aria-hidden="true">
+    <svg class="logo" viewBox="10 14 262 210" aria-hidden="true">
       <defs>
-        <clipPath id="logo-haut"><rect x="0" y="0" width="64" height="37"/></clipPath>
-        <clipPath id="logo-bas"><rect x="0" y="37" width="64" height="19"/></clipPath>
+        <mask id="logo-a-barre" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+          <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+          <clipPath id="logo-devant-barre"><rect x="10" y="156" width="262" height="68"/></clipPath>
+          <ellipse cx="141" cy="156" rx="119.250" ry="30.250" fill="none" stroke="#000" stroke-width="31.500" clip-path="url(#logo-devant-barre)"/>
+        </mask>
+        <mask id="logo-anneau-barre" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+          <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+          <clipPath id="logo-derriere-barre"><rect x="10" y="14" width="262" height="142"/></clipPath>
+          <path d="M100 22 125 18 246 220H195L124.600 85.500 105.700 220H61.600z" fill="#000" stroke="#000" stroke-width="16" clip-path="url(#logo-derriere-barre)"/>
+        </mask>
       </defs>
-      <path class="logo-a" d="M26 3h10l20 50H44L32.500 22 24 53H12z"/>
-      <ellipse class="logo-vide" cx="32" cy="37" rx="27" ry="8" clip-path="url(#logo-bas)"/>
-      <ellipse class="logo-anneau" cx="32" cy="37" rx="27" ry="8"/>
-      <path class="logo-a" d="M26 3h10l20 50H44L32.500 22 24 53H12z" clip-path="url(#logo-haut)"/>
-      <path class="logo-pointe" d="M29.500 30.500h5L32 24z"/>
+      <path class="logo-a" d="M100 22 125 18 246 220H195L124.600 85.500 105.700 220H61.600z" mask="url(#logo-a-barre)"/>
+      <ellipse class="logo-anneau" cx="141" cy="156" rx="119.250" ry="30.250" stroke-width="15.500" mask="url(#logo-anneau-barre)"/>
     </svg>
     <span class="nom">ArtPrint</span><span class="produit">Slicer</span><span class="version" id="version"></span>
   </div>
-  <nav class="vues" role="tablist" aria-label="Vue">
-    <button id="vue-preparer" class="actif" role="tab" aria-selected="true">Préparer</button>
-    <button id="vue-apercu" role="tab" aria-selected="false" disabled>Aperçu</button>
-    <button id="vue-imprimante" role="tab" aria-selected="false" disabled title="Prévu : envoi du G-code à l'imprimante et suivi de l'impression">Imprimante</button>
+  <nav class="vues" role="tablist" aria-label="Page">
+    <button id="vue-preparer" class="actif" role="tab" aria-selected="true" data-icone="preparer"><span>Préparer</span></button>
+    <button id="vue-apercu" role="tab" aria-selected="false" data-icone="apercu" disabled><span>Aperçu</span></button>
+    <button id="vue-imprimante" role="tab" aria-selected="false" data-icone="imprimante" disabled title="À venir : envoi du G-code à l'imprimante et suivi de l'impression"><span>Imprimante</span></button>
   </nav>
   <div class="actions">
-    <button id="btn-ouvrir" class="bouton">Ouvrir un modèle…</button>
-    <button id="btn-trancher" class="bouton plein" disabled>Trancher</button>
-    <button id="btn-exporter" class="bouton" disabled>Exporter le G-code…</button>
+    <button id="btn-theme" class="bouton-icone" title="Changer de thème (système, clair, sombre)" aria-label="Changer de thème"></button>
+    <button id="btn-ouvrir" class="bouton" data-icone="dossier"><span>Ouvrir…</span></button>
+    <button id="btn-exporter" class="bouton" data-icone="exporter" disabled><span>Exporter le G-code…</span></button>
+    <button id="btn-trancher" class="bouton plein" disabled><span>Trancher</span></button>
   </div>
 </header>
-<div class="note-simulation" role="note">Simulation de l'interface : tout se manipule, mais les tranchages affichés sont préenregistrés et aucun fichier n'est écrit. Les paramètres marqués « prévu » ne sont pas encore appliqués par le slicer.</div>
+<div class="note-simulation" role="note">Simulation de l'interface : tout se manipule, mais les tranchages affichés sont préenregistrés et aucun fichier n'est écrit. Les éléments marqués « prévu » ou « à venir » ne sont pas encore branchés sur le slicer.</div>
 
 <div class="plan">
-  <aside class="cote" aria-label="Réglages">
-    <section class="bloc" aria-labelledby="t-imprimante">
-      <div class="bloc-tete"><span class="etiquette" id="t-imprimante">Imprimante</span><button class="lien" id="btn-machine">Réglages de la machine…</button></div>
-      <select class="champ" id="profil-imprimante" aria-label="Profil d'imprimante"></select>
-      <div class="fiche" id="fiche-imprimante"></div>
-    </section>
-
-    <section class="bloc" aria-labelledby="t-filament">
-      <div class="bloc-tete"><span class="etiquette" id="t-filament">Filament monté</span><button class="lien" id="btn-bibliotheque">Mes bobines…</button></div>
-      <div class="bobine" id="bobine-montee"></div>
-    </section>
-
-    <section class="bloc procede" aria-labelledby="t-procede">
-      <div class="haut">
-        <div class="bloc-tete"><span class="etiquette" id="t-procede">Procédé</span>
-          <label class="case-libelle"><input type="checkbox" id="mode-avance"> Paramètres avancés</label></div>
-        <div class="segments" role="group" aria-label="Mode de tranchage">
-          <button id="mode-3axes" class="actif">3 axes</button>
-          <button id="mode-32" disabled title="Prévu">3+2 axes</button>
-          <button id="mode-5axes" disabled title="Prévu">5 axes continu</button>
+  <aside class="cote" id="cote" aria-label="Réglages">
+    <section class="section" id="section-imprimante">
+      <header class="bandeau">
+        <h2><button class="replier" aria-expanded="true" aria-controls="corps-imprimante" title="Replier" data-icone="chevron-bas"><span>Imprimante</span></button></h2>
+        <span class="ressort"></span>
+        <button class="bouton-icone" id="btn-machine" title="Réglages de la machine" aria-label="Réglages de la machine" data-icone="reglages"></button>
+      </header>
+      <div class="section-corps" id="corps-imprimante">
+        <div class="tuiles">
+          <div class="tuile">
+            <span class="vignette" id="vignette-imprimante"></span>
+            <span class="deroulant nu" data-icone="chevron-bas"><select id="profil-imprimante" aria-label="Imprimante"></select></span>
+          </div>
+          <div class="tuile">
+            <span class="vignette" id="vignette-plateau"></span>
+            <span class="deroulant nu" data-icone="chevron-bas"><select id="type-plateau" aria-label="Type de plateau" title="Prévu : le type de plateau n'est pas encore pris en compte">
+              <option>Lisse</option><option>Texturé</option><option>Verre</option>
+            </select></span>
+          </div>
+          <button class="tuile action" id="btn-synchro" title="À venir : lire l'état de l'imprimante (Klipper)">
+            <span class="vignette" id="vignette-synchro"></span>
+            <span class="tuile-nom">Synchro</span>
+          </button>
         </div>
-        <div class="ligne-profil">
-          <select class="champ" id="profil-procede" aria-label="Profil de procédé"></select>
-          <button class="bouton fin" id="btn-retablir-tout" disabled>Tout rétablir</button>
+        <div class="buse">
+          <span class="sous-titre">Buse</span>
+          <label for="buse-diametre">Diamètre</label>
+          <span class="deroulant" data-icone="chevron-bas"><select id="buse-diametre" title="Prévu : la buse choisie ne change pas encore le tranchage">
+            <option value="0.2">0,2 mm</option><option value="0.4" selected>0,4 mm</option><option value="0.6">0,6 mm</option><option value="0.8">0,8 mm</option>
+          </select></span>
+          <label for="buse-debit">Débit</label>
+          <span class="deroulant" data-icone="chevron-bas"><select id="buse-debit" title="Prévu : le débit de la buse ne change pas encore le tranchage">
+            <option>Standard</option><option>Haut débit</option>
+          </select></span>
         </div>
-        <input class="champ" id="recherche" type="search" placeholder="Rechercher un paramètre" aria-label="Rechercher un paramètre">
       </div>
-      <div class="onglets" id="onglets" role="tablist" aria-label="Familles de paramètres"></div>
-      <div class="liste" id="liste"></div>
+    </section>
+
+    <section class="section" id="section-filament">
+      <header class="bandeau">
+        <h2><button class="replier" aria-expanded="true" aria-controls="corps-filament" title="Replier" data-icone="chevron-bas"><span>Filament</span></button></h2>
+        <span class="ressort"></span>
+        <button class="bouton-pilule" id="btn-bibliotheque" title="Ouvrir la bibliothèque de bobines">Mes bobines</button>
+      </header>
+      <div class="section-corps" id="corps-filament">
+        <div class="filet">
+          <span>Bobines</span><span class="trait"></span>
+          <button class="bouton-icone petit" id="btn-nouvelle-bobine" title="Ajouter une bobine" aria-label="Ajouter une bobine" data-icone="plus"></button>
+        </div>
+        <div class="bobines-grille" id="bobines-grille" role="radiogroup" aria-label="Bobine montée sur l'imprimante"></div>
+        <div class="bobine-montee" id="bobine-montee"></div>
+      </div>
+    </section>
+
+    <section class="section procede" id="section-procede">
+      <header class="bandeau">
+        <h2><button class="replier" aria-expanded="true" aria-controls="corps-procede" title="Replier" data-icone="chevron-bas"><span>Procédé</span></button></h2>
+        <div class="pilule" role="group" aria-label="Mode de tranchage">
+          <button id="mode-3axes" class="actif" aria-pressed="true">3 axes</button>
+          <button id="mode-5axes" aria-pressed="false" disabled title="À venir">5 axes continu</button>
+        </div>
+        <span class="ressort"></span>
+        <label class="interrupteur-libelle" for="mode-avance">Avancé<input type="checkbox" class="interrupteur" id="mode-avance"></label>
+      </header>
+      <div class="section-corps procede-corps" id="corps-procede">
+        <div class="ligne-profil">
+          <span class="deroulant" data-icone="chevron-bas"><select id="profil-procede" aria-label="Profil de procédé"></select></span>
+          <button class="bouton-icone" id="btn-retablir-tout" title="Rétablir toutes les valeurs du profil" aria-label="Rétablir toutes les valeurs du profil" data-icone="retablir" disabled></button>
+          <button class="bouton-icone" id="btn-recherche" title="Rechercher un paramètre" aria-label="Rechercher un paramètre" aria-expanded="false" data-icone="recherche"></button>
+        </div>
+        <input class="champ" id="recherche" type="search" placeholder="Rechercher un paramètre" aria-label="Rechercher un paramètre" hidden>
+        <div class="onglets" id="onglets" role="tablist" aria-label="Familles de paramètres"></div>
+        <div class="liste" id="liste"></div>
+      </div>
     </section>
   </aside>
 
   <main class="vue" id="vue">
     <canvas id="canvas3d"></canvas>
 
+    <button class="palette replier-cote" id="btn-cote" title="Masquer la colonne des réglages" aria-label="Masquer la colonne des réglages" aria-expanded="true" aria-controls="cote" data-icone="panneau"></button>
+
+    <div class="palette barre-outils" id="outils" role="toolbar" aria-label="Outils (à venir)"></div>
+
     <div class="palette points-de-vue" role="toolbar" aria-label="Point de vue">
-      <button id="cam-iso">3D</button><button id="cam-dessus">Dessus</button><button id="cam-face">Face</button><button id="cam-droite">Droite</button><button id="cam-cadrer">Recadrer</button>
-    </div>
-    <div class="palette outils" id="outils" role="toolbar" aria-label="Outils de placement (prévus)">
-      <button disabled title="Prévu">Déplacer</button><button disabled title="Prévu">Tourner</button><button disabled title="Prévu">Échelle</button><button disabled title="Prévu">Poser sur une face</button>
+      <button id="cam-iso">3D</button><button id="cam-dessus">Dessus</button><button id="cam-face">Face</button><button id="cam-droite">Droite</button><button id="cam-cadrer" title="Recadrer sur la pièce" aria-label="Recadrer sur la pièce" data-icone="echelle"></button>
     </div>
 
     <div class="accueil" id="accueil">
       <strong>Aucun modèle ouvert</strong>
       <span>Ouvre un fichier STL pour le poser sur le plateau.</span>
-      <button id="btn-ouvrir-2" class="bouton plein">Ouvrir un modèle…</button>
+      <button id="btn-ouvrir-2" class="bouton plein"><span>Ouvrir un modèle…</span></button>
     </div>
 
-    <div class="palette trajectoires" id="trajectoires" hidden>
-      <div class="bloc-tete"><h2 class="etiquette">Trajectoires</h2><span class="note-colonnes">longueur · part du temps</span></div>
-      <table><colgroup><col class="c1"><col><col class="c3"><col class="c4"></colgroup><tbody id="tableau-types"></tbody><tfoot id="total-types"></tfoot></table>
+    <div class="palette trajectoires replie" id="trajectoires" hidden>
+      <button class="trajectoires-tete" id="btn-trajectoires" aria-expanded="false" aria-controls="trajectoires-corps">
+        <span class="etiquette">Trajectoires</span><span class="note-colonnes" id="trajectoires-resume"></span><span class="chevron" data-icone="chevron-bas"></span>
+      </button>
+      <div id="trajectoires-corps" hidden>
+        <table><colgroup><col class="c1"><col><col class="c3"><col class="c4"></colgroup><tbody id="tableau-types"></tbody><tfoot id="total-types"></tfoot></table>
+        <div class="trajectoires-note note-colonnes" id="trajectoires-note"></div>
+      </div>
     </div>
     <div class="palette curseur-couches" id="curseur-couches" hidden>
       <output id="couche-texte" for="curseur-couche"></output>
@@ -110,14 +167,12 @@
   </main>
 </div>
 
-<footer class="releves" aria-label="Relevés">
-  <div class="releve large"><span class="etiquette">Modèle</span><span class="valeur texte" id="r-modele">Aucun</span><span class="detail" id="r-dimensions">&nbsp;</span></div>
-  <div class="releve"><span class="etiquette">Couches</span><span class="valeur" id="r-couches">–</span><span class="detail" id="r-hauteur">&nbsp;</span></div>
-  <div class="releve"><span class="etiquette">Filament</span><span class="valeur" id="r-filament">–</span><span class="detail" id="r-poids">&nbsp;</span></div>
-  <div class="releve"><span class="etiquette">Coût matière</span><span class="valeur" id="r-cout">–</span><span class="detail" id="r-prix">&nbsp;</span></div>
-  <div class="releve"><span class="etiquette">Durée estimée</span><span class="valeur" id="r-duree">–</span><span class="detail">sans les accélérations</span></div>
-  <div class="releve"><span class="etiquette">Trajets à vide</span><span class="valeur" id="r-vide">–</span><span class="detail" id="r-retractions">&nbsp;</span></div>
-  <div class="releve etat" id="releve-etat"><span class="etiquette">Vérification</span><span class="valeur" id="r-etat">En attente</span><span class="detail" id="r-etat-detail">Ouvre un modèle pour commencer.</span></div>
+<footer class="etat" aria-label="État">
+  <span class="etat-modele"><b id="r-modele">Aucun modèle</b><span id="r-dimensions"></span></span>
+  <span class="etat-resultat" id="etat-resultat" hidden>
+    <span><b id="r-couches"></b> couches</span><span><b id="r-filament"></b></span><span><b id="r-poids"></b></span><span><b id="r-cout"></b></span><span><b id="r-duree"></b></span>
+  </span>
+  <span class="etat-verification" id="releve-etat"><span class="etat-icone" id="etat-icone"></span><b id="r-etat">En attente</b><span id="r-etat-detail">Ouvre un modèle pour commencer.</span></span>
 </footer>
 
 <div id="feuilles"></div>

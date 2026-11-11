@@ -1,6 +1,6 @@
 // ArtPrint Slicer - licence AGPL v3
-// Maquette de l'interface : imprimante, filament monté et bibliothèque de
-// bobines, procédé détaillé par onglets, aperçu avec tableau des trajectoires.
+// Maquette de l'interface : sections Imprimante, Filament et Procédé, barre
+// d'outils, aperçu avec trajectoires repliables, ligne d'état.
 import { appeler } from './pont.js';
 import { Vue3D, couleursTrajectoires } from './vue3d.js';
 import { icone } from './icones.js';
@@ -88,18 +88,59 @@ const moteur = (cle) => etat.moteur.find((r) => r.cle === cle)?.valeur ?? '';
 
 function afficherImprimante() {
   const liste = $('profil-imprimante');
-  if (!liste.options.length) liste.add(new Option('ArtPrint 5 axes · buse 0,4 mm', 'artprint'));
+  if (!liste.options.length) liste.add(new Option('ArtPrint 5 axes', 'artprint'));
   const rayon = lireNombre(moteur('rayon_plateau')) || 150;
   const hauteur = lireNombre(moteur('hauteur_impression')) || 281;
-  const fiche = $('fiche-imprimante');
-  const item = (nom, valeur) => { const s = el('span', '', nom + ' '); s.append(el('b', '', valeur)); return s; };
-  fiche.replaceChildren(
-    item('Plateau', `Ø ${ecrire(rayon * 2)} mm`),
-    item('Hauteur', `${ecrire(hauteur)} mm`),
-    item('Tête B', `± ${moteur('b_limite_pres_plateau')}°`),
-    item('Marge', `${moteur('marge_securite')} mm`),
-    item('Collisions', moteur('modele_machine') ? 'actives' : 'sans modèle'));
   if (rayon !== vue3d.rayon || hauteur !== vue3d.hauteur) vue3d.definirVolume(rayon, hauteur);
+}
+
+// Vignettes de la section Imprimante. L'image de la machine est un fichier
+// privé : s'il n'est pas là, une icône la remplace.
+function afficherVignettes() {
+  const image = new Image();
+  image.alt = '';
+  image.addEventListener('error', () => $('vignette-imprimante').replaceChildren(icone('imprimante', 24)));
+  image.src = 'prive/imprimante.png';
+  $('vignette-imprimante').replaceChildren(image);
+  $('vignette-synchro').replaceChildren(icone('synchroniser', 24));
+  dessinerPlateau();
+}
+
+// Petit dessin du plateau rond, différent selon le type choisi.
+function dessinerPlateau() {
+  const type = { 'Texturé': 'texture', Verre: 'verre' }[$('type-plateau').value] || 'lisse';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 48 48');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('class', 'dessin-plateau ' + type);
+  let detail = '';
+  if (type === 'texture') {
+    for (let ligne = 0; ligne < 5; ligne++) {
+      for (let x = 6 + (ligne % 2) * 1.5; x <= 42; x += 3) {
+        const y = 17 + ligne * 3;
+        if (((x - 24) / 17.5) ** 2 + ((y - 23) / 6.5) ** 2 < 1) detail += `<circle class="grain" cx="${x}" cy="${y}" r="0.600"/>`;
+      }
+    }
+  } else if (type === 'verre') {
+    detail = '<path class="reflet" d="M11 22c3-3 8-4.500 13-4.500M31 28c3-.500 5-1.500 6.500-3"/>';
+  }
+  svg.innerHTML = '<path class="tranche" d="M4 23v3.500a20 8.500 0 0 0 40 0V23z"/>' +
+    `<ellipse class="dessus" cx="24" cy="23" rx="20" ry="8.500"/>${detail}`;
+  $('vignette-plateau').replaceChildren(svg);
+}
+
+// Choix gardés en mémoire mais pas encore appliqués par le slicer.
+function brancherChoixPrevus() {
+  for (const [id, nom] of [['type-plateau', 'Le type de plateau'], ['buse-diametre', 'Le diamètre de la buse'], ['buse-debit', 'Le débit de la buse']]) {
+    const liste = $(id);
+    const garde = memoire.lire(id, null);
+    if (garde !== null && [...liste.options].some((o) => o.value === garde)) liste.value = garde;
+    liste.addEventListener('change', () => {
+      memoire.ecrire(id, liste.value);
+      if (id === 'type-plateau') dessinerPlateau();
+      dire(`${nom} est noté, mais il ne change pas encore le tranchage (prévu).`, { info: true });
+    });
+  }
 }
 
 // Sous-groupes de la feuille « Réglages de la machine ».
@@ -196,26 +237,65 @@ function enregistrerBobines() {
   memoire.ecrire('montee', etat.montee);
 }
 
+// Vrai si une couleur « #rrggbb » est claire : le chiffre posé dessus doit être sombre.
+function estClaire(hex) {
+  const [rouge, vert, bleu] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return 0.2126 * rouge + 0.7152 * vert + 0.0722 * bleu > 140;
+}
+
 function afficherBobine() {
+  $('bobines-grille').replaceChildren(...etat.bobines.map((b, rang) => {
+    const montee = b.id === etat.montee;
+    const emplacement = el('div', 'emplacement' + (montee ? ' montee' : ''));
+    const numero = el('span', 'numero', String(rang + 1));
+    numero.style.background = b.couleur;
+    numero.style.color = estClaire(b.couleur) ? 'var(--c-barre)' : 'var(--c-barre-texte)';
+    const choix = el('button', 'choix');
+    choix.id = 'monter-' + b.id;
+    choix.setAttribute('role', 'radio');
+    choix.setAttribute('aria-checked', String(montee));
+    choix.title = montee ? `« ${b.nom} » est la bobine montée sur l'imprimante.` : `Monter « ${b.nom} » sur l'imprimante`;
+    choix.append(el('span', 'point'), el('span', 'nom', b.nom));
+    choix.addEventListener('click', () => { if (b.id !== etat.montee) monterBobine(b.id); });
+    const modifier = el('button', 'bouton-icone petit');
+    modifier.id = 'modifier-' + b.id;
+    modifier.title = `Modifier « ${b.nom} »`;
+    modifier.setAttribute('aria-label', modifier.title);
+    modifier.append(icone('modifier'));
+    modifier.addEventListener('click', () => ouvrirBibliotheque(b.id));
+    emplacement.append(numero, choix, modifier);
+    return emplacement;
+  }));
   const zone = $('bobine-montee');
   const b = bobineMontee();
   if (!b) {
-    zone.replaceChildren(el('span', 'detail', 'Aucune bobine. Ajoute-en une dans « Mes bobines ».'));
+    zone.replaceChildren(el('span', 'texte', 'Aucune bobine. Ajoute-en une avec le bouton « + ».'));
     return;
   }
-  const pastille = el('span', 'pastille');
-  pastille.style.background = b.couleur;
   const reste = Math.max(0, Math.min(1, b.poids_restant / b.poids_bobine));
   const jauge = el('div', 'jauge' + (reste < 0.15 ? ' bas' : ''));
   const niveau = el('span');
   niveau.style.width = `${reste * 100}%`;
   jauge.append(niveau);
   jauge.title = `Reste ${entier(b.poids_restant)} g sur ${entier(b.poids_bobine)} g`;
-  zone.replaceChildren(pastille, el('span', 'nom', `${b.nom}`), el('span', 'chiffres', `${entier(b.poids_restant)} g`),
-    el('span', 'detail', `${b.matiere} · ${ecrire(b.diametre)} mm · buse ${b.temp_buse} °C · plateau ${b.temp_plateau} °C`),
-    jauge);
+  const texte = el('span', 'texte');
+  texte.append(el('b', '', b.nom),
+    document.createTextNode(` · reste ${entier(b.poids_restant)} g · buse ${b.temp_buse} °C · plateau ${b.temp_plateau} °C`));
+  texte.title = `Bobine montée : ${texte.textContent}`;
+  zone.replaceChildren(texte, jauge);
   document.documentElement.style.setProperty('--c-piece', b.couleur);
   vue3d.rafraichirTheme();
+}
+
+function nouvelleBobine() {
+  const id = 'b' + Date.now().toString(36);
+  etat.bobines.push({ id, nom: 'Nouvelle bobine', marque: '', matiere: 'PLA', couleur: '#9aa4b2', diametre: 1.75,
+    densite: MATIERES.PLA.densite, temp_buse: MATIERES.PLA.temp_buse, temp_plateau: MATIERES.PLA.temp_plateau,
+    debit: 1, retraction: MATIERES.PLA.retraction, retraction_vitesse: 40, ventilation: true,
+    prix_kg: 20, poids_bobine: 1000, poids_restant: 1000 });
+  enregistrerBobines();
+  afficherBobine();
+  return id;
 }
 
 // La bobine montée fixe les réglages de matière du slicer.
@@ -246,8 +326,8 @@ const CHAMPS_BOBINE = [
   ['poids_restant', 'Poids restant', 'nombre', 'g', 0, 100000],
 ];
 
-function ouvrirBibliotheque() {
-  let choisie = etat.montee;
+function ouvrirBibliotheque(depart = etat.montee) {
+  let choisie = depart;
   let brouillon = null;       // bobine en cours de modification
   let aSupprimer = false;
   const gauche = el('div', 'colonne');
@@ -278,14 +358,7 @@ function ouvrirBibliotheque() {
     const ajouter = el('div', 'formulaire');
     const nouveau = el('button', 'bouton', '+ Nouvelle bobine');
     nouveau.id = 'bobine-nouvelle';
-    nouveau.addEventListener('click', () => {
-      const id = 'b' + Date.now().toString(36);
-      etat.bobines.push({ id, nom: 'Nouvelle bobine', marque: '', matiere: 'PLA', couleur: '#9aa4b2', diametre: 1.75,
-        densite: MATIERES.PLA.densite, temp_buse: MATIERES.PLA.temp_buse, temp_plateau: MATIERES.PLA.temp_plateau,
-        debit: 1, retraction: MATIERES.PLA.retraction, retraction_vitesse: 40, ventilation: true,
-        prix_kg: 20, poids_bobine: 1000, poids_restant: 1000 });
-      choisie = id; brouillon = null; enregistrerBobines(); dessiner();
-    });
+    nouveau.addEventListener('click', () => { choisie = nouvelleBobine(); brouillon = null; dessiner(); });
     ajouter.append(nouveau);
     gauche.replaceChildren(table, ajouter);
 
@@ -346,7 +419,7 @@ function ouvrirBibliotheque() {
       Object.assign(b, propre);
       brouillon = null;
       enregistrerBobines();
-      if (b.id === etat.montee) monterBobine(b.id, true);
+      if (b.id === etat.montee) monterBobine(b.id, true); else afficherBobine();
       dessiner();
       dire(`Bobine « ${b.nom} » enregistrée.`, { info: true });
     });
@@ -373,6 +446,17 @@ function ouvrirBibliotheque() {
 }
 
 // --- Procédé -------------------------------------------------------------------
+
+// Icône de chaque groupe de paramètres (et de chaque onglet, pour la recherche).
+const ICONES_GROUPE = {
+  'Hauteur de couche': 'g-hauteur', 'Largeur de ligne': 'g-largeur', 'Couture': 'g-couture', 'Précision': 'g-precision',
+  'Lissage du dessus': 'g-lissage', 'Parois': 'g-parois', 'Coques du dessus et du dessous': 'g-coques',
+  'Remplissage': 'g-remplissage', 'Ponts': 'g-ponts', 'Première couche': 'g-hauteur', 'Autres couches': 'g-vitesse',
+  'Surplombs et ponts': 'g-ponts', 'Déplacements': 'g-deplacement', 'Accélérations': 'g-acceleration',
+  'Supports': 'g-supports', 'Adhérence au plateau': 'g-adherence', 'Déplacements à vide': 'g-deplacement',
+  '5 axes': 'g-cinq-axes', 'Modes spéciaux': 'g-speciaux',
+  'Qualité': 'g-precision', 'Solidité': 'g-remplissage', 'Vitesse': 'g-vitesse', 'Autres': 'g-speciaux',
+};
 
 const profilCourant = () => PROFILS.find((p) => p.id === etat.profil) || PROFILS[0];
 const valeurProfil = (p) => (p.cle in profilCourant().valeurs ? profilCourant().valeurs[p.cle] : p.defaut);
@@ -433,7 +517,7 @@ async function choisirProfil(id) {
 
 function rangParametre(p, avecChemin) {
   const modifie = estModifie(p);
-  const large = p.type === 'choix';
+  const large = p.type === 'choix' && p.choix.some((choix) => choix.length > 12);
   const rang = el('div', 'rang' + (large ? ' large' : '') + (modifie ? ' modifie' : '') +
     (p.moteur ? '' : ' prevu') + (etat.refus[p.cle] ? ' invalide' : ''));
   rang.title = (p.aide || p.libelle) + (p.moteur ? '' : ' (Prévu : pas encore appliqué par le slicer.)');
@@ -447,11 +531,11 @@ function rangParametre(p, avecChemin) {
     champ.checked = etat.valeurs[p.cle];
     champ.addEventListener('change', () => changer(p, champ.checked));
   } else if (p.type === 'choix') {
-    champ = el('select', 'champ');
+    champ = el('select');
     for (const choix of p.choix) champ.add(new Option(choix, choix, false, choix === etat.valeurs[p.cle]));
     champ.addEventListener('change', () => changer(p, champ.value));
   } else {
-    champ = el('input', 'champ');
+    champ = el('input');
     champ.type = 'text';
     champ.inputMode = 'decimal';
     champ.autocomplete = 'off';
@@ -459,15 +543,24 @@ function rangParametre(p, avecChemin) {
     champ.addEventListener('change', () => changer(p, champ.value));
   }
   champ.id = 'p-' + p.cle;
+  // Un nombre s'écrit dans une boîte qui porte aussi son unité ; une liste
+  // déroulante a son chevron à gauche.
+  let boite = champ;
+  if (p.type === 'nombre' || p.type === 'entier') {
+    boite = el('span', 'champ-boite');
+    boite.append(champ);
+    if (p.unite) boite.append(el('span', 'unite', p.unite));
+  } else if (p.type === 'choix') {
+    boite = el('span', 'deroulant');
+    boite.append(icone('chevron-bas'), champ);
+  }
   const retablir = el('button', 'retablir');
   retablir.append(icone('retablir'));
   retablir.title = `Revenir à la valeur du profil : ${texteValeur(p, valeurProfil(p))}`;
   retablir.setAttribute('aria-label', `Rétablir ${p.libelle}`);
   retablir.addEventListener('click', () => changer(p, p.type === 'bool' || p.type === 'choix'
     ? valeurProfil(p) : ecrire(valeurProfil(p))));
-  rang.append(el('span', 'marqueur'), libelle, champ);
-  if (!large) rang.append(el('span', 'unite', p.unite));
-  rang.append(retablir);
+  rang.append(el('span', 'marqueur'), libelle, boite, retablir);
   if (etat.refus[p.cle]) rang.append(el('div', 'refus', etat.refus[p.cle]));
   return rang;
 }
@@ -509,27 +602,30 @@ function afficherProcede() {
     const titre = recherche ? p.onglet : p.section;
     if (titre !== section) {
       section = titre;
-      zone.append(el('div', 'section-titre etiquette', titre));
+      const ligne = el('div', 'groupe-titre');
+      ligne.append(icone(ICONES_GROUPE[titre] || 'reglages'), el('span', '', titre));
+      zone.append(ligne);
     }
     zone.append(rangParametre(p, Boolean(recherche)));
   }
   const caches = recherche ? 0 : PARAMETRES.filter((p) => p.onglet === etat.onglet && p.avance && !etat.avance && !estModifie(p)).length;
-  if (caches) zone.append(el('div', 'legende-prevu', `${caches} paramètre(s) avancé(s) masqué(s) : coche « Paramètres avancés ».`));
+  if (caches) zone.append(el('div', 'legende-prevu', `${caches} paramètre(s) avancé(s) masqué(s) : active « Avancé ».`));
   zone.scrollTop = defilement;
 }
 
 // --- Relevés, modèle, tranchage --------------------------------------------------
 
+const ICONES_ETAT = { bon: 'ok', mauvais: 'erreur', perime: 'attention' };
 function definirEtat(classe, titre, detail) {
-  $('releve-etat').className = 'releve etat ' + classe;
+  $('releve-etat').className = 'etat-verification ' + classe;
+  $('etat-icone').replaceChildren(icone(ICONES_ETAT[classe] || 'info'));
   $('r-etat').textContent = titre;
   $('r-etat-detail').textContent = detail;
   $('r-etat-detail').title = detail;
 }
 
 function viderReleves() {
-  for (const id of ['r-couches', 'r-filament', 'r-cout', 'r-duree', 'r-vide']) $(id).textContent = '–';
-  for (const id of ['r-hauteur', 'r-poids', 'r-prix', 'r-retractions']) $(id).textContent = ' ';
+  $('etat-resultat').hidden = true;
   $('console').hidden = true;
 }
 
@@ -619,6 +715,13 @@ function afficherTrajectoires(resultat) {
   pied.append(el('td'), el('td', '', 'Total'), el('td', 'nombre', `${fr(longueurs.reduce((a, b) => a + b, 0) / 1000, 2)} m`),
     el('td', 'nombre', duree(total)));
   $('total-types').replaceChildren(pied);
+  $('trajectoires-resume').textContent = `${fr(longueurs.reduce((a, b) => a + b, 0) / 1000, 2)} m · ${duree(total)}`;
+}
+
+function deplierTrajectoires(ouvert) {
+  $('trajectoires').classList.toggle('replie', !ouvert);
+  $('trajectoires-corps').hidden = !ouvert;
+  $('btn-trajectoires').setAttribute('aria-expanded', String(ouvert));
 }
 
 async function trancher() {
@@ -637,14 +740,13 @@ async function trancher() {
   const grammes = resultat.filament_m * 1000 * Math.PI * (diametre / 2) ** 2 * (b?.densite ?? 1.24) / 1000;
   etat.grammes = grammes;
   $('r-couches').textContent = entier(resultat.couches);
-  $('r-hauteur').textContent = `de ${ecrire(etat.valeurs.hauteur_couche)} mm`;
   $('r-filament').textContent = `${fr(resultat.filament_m, 2)} m`;
-  $('r-poids').textContent = `${fr(grammes, grammes < 10 ? 1 : 0)} g${b ? ' · ' + b.nom : ''}`;
-  $('r-cout').textContent = b ? `${fr(grammes * b.prix_kg / 1000, 2)} €` : '–';
-  $('r-prix').textContent = b ? `à ${ecrire(b.prix_kg)} €/kg` : ' ';
+  $('r-poids').textContent = `${fr(grammes, grammes < 10 ? 1 : 0)} g`;
+  $('r-cout').textContent = b ? `${fr(grammes * b.prix_kg / 1000, 2)} €` : '';
   $('r-duree').textContent = duree(resultat.duree_s);
-  $('r-vide').textContent = entier(verification.deplacements_a_vide);
-  $('r-retractions').textContent = `${entier(verification.retractions)} rétractions`;
+  $('etat-resultat').hidden = false;
+  $('trajectoires-note').textContent = `Couches de ${ecrire(etat.valeurs.hauteur_couche)} mm · ` +
+    `${entier(verification.deplacements_a_vide)} déplacements à vide · ${entier(verification.retractions)} rétractions`;
 
   if (verification.valide) definirEtat('bon', 'G-code vérifié', 'Aucune règle physique violée. Prêt à exporter.');
   else definirEtat('mauvais', 'Tranchage refusé', `${entier(verification.nombre_erreurs)} erreur(s) : le G-code ne peut pas être exporté.`);
@@ -692,6 +794,7 @@ function choisirVue(vue) {
   $('vue-apercu').setAttribute('aria-selected', String(apercu));
   for (const id of ['trajectoires', 'curseur-couches', 'curseur-trajet']) $(id).hidden = !apercu;
   $('outils').hidden = apercu;
+  $('vue').classList.toggle('apercu', apercu);
   vue3d.montrer(apercu ? 'apercu' : 'preparer');
 }
 
@@ -714,14 +817,115 @@ async function exporter() {
     { libelle: 'Plus tard' }] });
 }
 
+// --- Barre d'outils, icônes, thème ------------------------------------------------
+
+// Outils de manipulation, par groupes. Aucun n'est encore branché : un clic
+// le dit clairement au lieu de ne rien faire.
+const OUTILS = [
+  [['ajouter-objet', 'Ajouter un objet'], ['ajouter-plateau', 'Ajouter un plateau']],
+  [['orienter', 'Orientation automatique'], ['agencer', 'Agencer les objets'], ['couches-variables', 'Hauteur de couche variable']],
+  [['deplacer', 'Déplacer'], ['tourner', 'Tourner'], ['echelle', 'Mettre à l\'échelle'], ['poser-face', 'Poser sur une face']],
+  [['couper', 'Couper'], ['booleen', 'Opérations booléennes'], ['assembler', 'Assembler'], ['texte', 'Texte en relief']],
+  [['peindre-supports', 'Peindre les supports'], ['peindre-couture', 'Peindre la couture'], ['mesurer', 'Mesurer']],
+  [['strategie-5-axes', 'Stratégie de tranchage 5 axes'], ['direction-zone', 'Direction d\'impression par zone'], ['simulation-machine', 'Simulation de la machine']],
+];
+
+function dessinerOutils() {
+  const barre = $('outils');
+  barre.replaceChildren();
+  OUTILS.forEach((groupe, rang) => {
+    if (rang) barre.append(el('span', 'separateur'));
+    for (const [nom, libelle] of groupe) {
+      const bouton = el('button');
+      bouton.id = 'outil-' + nom;
+      bouton.title = `${libelle} (à venir)`;
+      bouton.setAttribute('aria-label', `${libelle} (à venir)`);
+      bouton.setAttribute('aria-disabled', 'true');
+      bouton.append(icone(nom, 20));
+      bouton.addEventListener('click', () => dire(`« ${libelle} » : cet outil est à venir.`, { info: true }));
+      barre.append(bouton);
+    }
+  });
+}
+
+// Pose les icônes demandées par l'attribut data-icone de la page.
+function poserIcones() {
+  for (const element of document.querySelectorAll('[data-icone]')) {
+    element.prepend(icone(element.dataset.icone));
+  }
+}
+
+// Thème : celui du système au départ, puis celui choisi avec le bouton.
+function themeSombre() {
+  const choisi = document.documentElement.dataset.theme;
+  return choisi ? choisi === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+function afficherTheme() {
+  const sombre = themeSombre();
+  $('btn-theme').replaceChildren(icone(sombre ? 'soleil' : 'lune'));
+  $('btn-theme').title = sombre ? 'Passer au thème clair' : 'Passer au thème sombre';
+  $('btn-theme').setAttribute('aria-label', $('btn-theme').title);
+  vue3d.rafraichirTheme();
+  if (etat.resultat) {
+    const ouvert = !$('trajectoires').classList.contains('replie');
+    afficherTrajectoires(etat.resultat);
+    deplierTrajectoires(ouvert);
+  }
+}
+function changerTheme() {
+  const theme = themeSombre() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+  memoire.ecrire('theme', theme);
+  afficherTheme();
+}
+
 // --- Démarrage -----------------------------------------------------------------
+
+const themeGarde = memoire.lire('theme', null);
+if (themeGarde === 'light' || themeGarde === 'dark') document.documentElement.dataset.theme = themeGarde;
+poserIcones();
+dessinerOutils();
+brancherChoixPrevus();
+afficherVignettes();
+afficherTheme();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', afficherTheme);
+$('btn-theme').addEventListener('click', changerTheme);
+$('btn-trajectoires').addEventListener('click', () => deplierTrajectoires($('trajectoires').classList.contains('replie')));
+$('btn-recherche').addEventListener('click', () => {
+  const ouvrir = $('recherche').hidden;
+  $('recherche').hidden = !ouvrir;
+  $('btn-recherche').setAttribute('aria-expanded', String(ouvrir));
+  if (ouvrir) { $('recherche').focus(); return; }
+  $('recherche').value = '';
+  etat.recherche = '';
+  afficherProcede();
+});
 
 $('btn-ouvrir').addEventListener('click', ouvrirModele);
 $('btn-ouvrir-2').addEventListener('click', ouvrirModele);
 $('btn-trancher').addEventListener('click', trancher);
 $('btn-exporter').addEventListener('click', exporter);
 $('btn-machine').addEventListener('click', ouvrirMachine);
-$('btn-bibliotheque').addEventListener('click', ouvrirBibliotheque);
+$('btn-bibliotheque').addEventListener('click', () => ouvrirBibliotheque());
+$('btn-nouvelle-bobine').addEventListener('click', () => ouvrirBibliotheque(nouvelleBobine()));
+$('btn-synchro').addEventListener('click', () => dire('Synchronisation avec l\'imprimante (Klipper) : à venir.', { info: true }));
+$('btn-cote').addEventListener('click', () => {
+  const montrer = $('cote').hidden;
+  $('cote').hidden = !montrer;
+  $('btn-cote').setAttribute('aria-expanded', String(montrer));
+  $('btn-cote').title = montrer ? 'Masquer la colonne des réglages' : 'Afficher la colonne des réglages';
+  $('btn-cote').setAttribute('aria-label', $('btn-cote').title);
+});
+// La flèche d'un bandeau replie ou déplie sa section. Tout est ouvert au démarrage.
+for (const bouton of document.querySelectorAll('.replier')) {
+  bouton.addEventListener('click', () => {
+    const ouvrir = bouton.getAttribute('aria-expanded') !== 'true';
+    bouton.setAttribute('aria-expanded', String(ouvrir));
+    bouton.title = ouvrir ? 'Replier' : 'Déplier';
+    $(bouton.getAttribute('aria-controls')).hidden = !ouvrir;
+    bouton.closest('.section').classList.toggle('repliee', !ouvrir);
+  });
+}
 $('btn-retablir-tout').addEventListener('click', () => choisirProfil(etat.profil));
 $('profil-procede').addEventListener('change', (e) => choisirProfil(e.target.value));
 $('mode-avance').addEventListener('change', (e) => { etat.avance = e.target.checked; afficherProcede(); });
