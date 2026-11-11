@@ -9,3 +9,6 @@
 
 # Dossier de compilation (généré automatiquement)
 /build/
+
+# Réponses préenregistrées de la maquette (fabriquées par maquette/generer_donnees.py)
+/maquette/donnees/

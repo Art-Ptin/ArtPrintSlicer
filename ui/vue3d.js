@@ -51,14 +51,27 @@ export class Vue3D {
     this.rayon = 150;
     this.hauteur = 281;
     this.sombre = window.matchMedia('(prefers-color-scheme: dark)');
-    this.sombre.addEventListener('change', () => this.definirVolume(this.rayon, this.hauteur));
+    this.sombre.addEventListener('change', () => this.rafraichirTheme());
     // Un thème choisi explicitement (attribut data-theme) l'emporte sur celui du système.
-    new MutationObserver(() => this.definirVolume(this.rayon, this.hauteur))
+    new MutationObserver(() => this.rafraichirTheme())
       .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     this.definirVolume(this.rayon, this.hauteur);
     new ResizeObserver(() => this.redimensionner()).observe(canvas.parentElement);
     this.redimensionner();
+  }
+
+  // Le thème a changé : le plateau et la pièce reprennent leurs couleurs.
+  rafraichirTheme() {
+    this.definirVolume(this.rayon, this.hauteur);
+    this.modele.children.forEach((objet) => objet.material.color.copy(this.jeton('--piece', '#2aa57b')));
+    this.demanderRendu();
+  }
+
+  // Couleur d'un jeton de la feuille de style (« --plateau »...), ou la valeur de repli.
+  jeton(nom, repli) {
+    const valeur = getComputedStyle(document.documentElement).getPropertyValue(nom).trim();
+    return new THREE.Color(valeur || repli);
   }
 
   estSombre() {
@@ -102,7 +115,7 @@ export class Vue3D {
     const sombre = this.estSombre();
     const disque = new THREE.Mesh(
       new THREE.CircleGeometry(rayon, 128),
-      new THREE.MeshBasicMaterial({ color: sombre ? 0x262c36 : 0xfbfcfd, side: THREE.DoubleSide }));
+      new THREE.MeshBasicMaterial({ color: this.jeton('--plateau', sombre ? '#262c36' : '#fbfcfd'), side: THREE.DoubleSide }));
     disque.position.z = -0.05;
     this.plateau.add(disque);
 
@@ -122,7 +135,12 @@ export class Vue3D {
     for (let r = 50; r < rayon; r += 50) cercle(grille, r, 0);
     cercle(grille, rayon, 0);
     grille.push(-rayon, 0, 0, rayon, 0, 0, 0, -rayon, 0, 0, rayon, 0);
-    traits(grille, sombre ? 0x4a5462 : 0xc3c9d2);
+    traits(grille, this.jeton('--grille', sombre ? '#4a5462' : '#c3c9d2'));
+
+    // Axes de la machine au centre du plateau : X rouge, Y vert, Z bleu.
+    traits([0, 0, 0.05, 30, 0, 0.05], 0xd9342b);
+    traits([0, 0, 0.05, 0, 30, 0.05], 0x2f9e5b);
+    traits([0, 0, 0.05, 0, 0, 30], 0x2f6fe1);
 
     // Volume d'impression : un cylindre en traits légers.
     const volume = [];
@@ -131,7 +149,7 @@ export class Vue3D {
       const a = (i / 8) * Math.PI * 2;
       volume.push(rayon * Math.cos(a), rayon * Math.sin(a), 0, rayon * Math.cos(a), rayon * Math.sin(a), hauteur);
     }
-    traits(volume, sombre ? 0x6b7686 : 0x9aa4b2, 0.35);
+    traits(volume, this.jeton('--grille', sombre ? '#6b7686' : '#9aa4b2'), 0.55);
 
     // Repère C = 0 : un trait rouge au bord, côté arrière.
     traits([0, rayon - 14, 0.02, 0, rayon, 0.02], 0xd9342b);
@@ -148,7 +166,7 @@ export class Vue3D {
     geometrie.computeBoundingBox();
     this.boite = geometrie.boundingBox.clone();
     this.modele.add(new THREE.Mesh(geometrie, new THREE.MeshStandardMaterial({
-      color: 0x2aa57b, roughness: 0.55, metalness: 0.05, flatShading: true })));
+      color: this.jeton('--piece', '#2aa57b'), roughness: 0.6, metalness: 0.05, flatShading: true })));
     this.montrer('preparer');
     this.pointDeVue('iso');
   }
@@ -185,6 +203,9 @@ export class Vue3D {
   viderApercu() {
     this.vider(this.apercu, false);
     this.couches = [];
+    this.donnees = null;
+    this.partielle = null;
+    this.progression = 1;
   }
 
   // « apercu » : pour chaque couche, { z, m: [x0,y0,z0,x1,y1,z1,type, ...] }.
@@ -195,31 +216,55 @@ export class Vue3D {
     this.materiaux.forEach((materiau, type) => {
       if (type !== TYPE_VIDE) materiau.linewidth = this.largeur;
     });
+    this.donnees = apercu;
     for (const couche of apercu) {
-      const parType = [[], [], [], [], [], []];
-      const m = couche.m;
-      for (let i = 0; i < m.length; i += 7) {
-        parType[m[i + 6]].push(m[i], m[i + 1], m[i + 2], m[i + 3], m[i + 4], m[i + 5]);
-      }
-      const objets = parType.map((positions, type) => {
-        if (!positions.length) return null;
-        let objet;
-        if (type === TYPE_VIDE) {
-          const geometrie = new THREE.BufferGeometry();
-          geometrie.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-          objet = new THREE.LineSegments(geometrie, this.materiaux[type]);
-        } else {
-          const geometrie = new LineSegmentsGeometry();
-          geometrie.setPositions(positions);
-          geometrie.setColors(this.ombrer(positions, type));
-          objet = new LineSegments2(geometrie, this.materiaux[type]);
-        }
-        this.apercu.add(objet);
-        return objet;
-      });
-      this.couches.push(objets);
+      this.couches.push(this.construireCouche(couche.m, couche.m.length));
     }
     this.coucheMax = this.couches.length;
+    this.progression = 1;
+    this.appliquerVisibilite();
+  }
+
+  // Fabrique les objets d'une couche à partir de ses « limite » premiers nombres
+  // (7 par mouvement). Rend un objet par type, ou null.
+  construireCouche(m, limite) {
+    const parType = [[], [], [], [], [], []];
+    for (let i = 0; i + 6 < limite; i += 7) {
+      parType[m[i + 6]].push(m[i], m[i + 1], m[i + 2], m[i + 3], m[i + 4], m[i + 5]);
+    }
+    return parType.map((positions, type) => {
+      if (!positions.length) return null;
+      let objet;
+      if (type === TYPE_VIDE) {
+        const geometrie = new THREE.BufferGeometry();
+        geometrie.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        objet = new THREE.LineSegments(geometrie, this.materiaux[type]);
+      } else {
+        const geometrie = new LineSegmentsGeometry();
+        geometrie.setPositions(positions);
+        geometrie.setColors(this.ombrer(positions, type));
+        objet = new LineSegments2(geometrie, this.materiaux[type]);
+      }
+      this.apercu.add(objet);
+      return objet;
+    });
+  }
+
+  // Montre seulement le début de la couche du haut : « fraction » de 0 à 1.
+  // Sert à suivre le trajet de la buse dans la couche.
+  montrerProgression(fraction) {
+    this.progression = Math.min(1, Math.max(0, fraction));
+    if (this.partielle) {
+      for (const objet of this.partielle) {
+        if (objet) { this.apercu.remove(objet); objet.geometry.dispose(); }
+      }
+      this.partielle = null;
+    }
+    const couche = this.donnees?.[this.coucheMax - 1];
+    if (couche && this.progression < 1) {
+      const mouvements = Math.round((couche.m.length / 7) * this.progression);
+      this.partielle = this.construireCouche(couche.m, mouvements * 7);
+    }
     this.appliquerVisibilite();
   }
 
@@ -246,7 +291,7 @@ export class Vue3D {
   montrerCouches(coucheMax, seule) {
     this.coucheMax = coucheMax;
     this.coucheSeule = seule;
-    this.appliquerVisibilite();
+    this.montrerProgression(this.progression);
   }
 
   montrerType(type, visible) {
@@ -258,9 +303,14 @@ export class Vue3D {
     this.couches.forEach((objets, indice) => {
       const numero = indice + 1;
       const coucheVisible = this.coucheSeule ? numero === this.coucheMax : numero <= this.coucheMax;
+      // La couche du haut est remplacée par sa version partielle, s'il y en a une.
+      const remplacee = this.partielle && numero === this.coucheMax;
       objets.forEach((objet, type) => {
-        if (objet) objet.visible = coucheVisible && this.typesVisibles.has(type);
+        if (objet) objet.visible = coucheVisible && !remplacee && this.typesVisibles.has(type);
       });
+    });
+    this.partielle?.forEach((objet, type) => {
+      if (objet) objet.visible = this.typesVisibles.has(type);
     });
     this.demanderRendu();
   }
