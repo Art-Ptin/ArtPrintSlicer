@@ -63,7 +63,12 @@ if(WIN32)
     install(FILES ui/lib/LICENCE-three.txt DESTINATION licences RENAME three.js.txt
         COMPONENT artprint)
 
-    find_program(MAKENSIS makensis PATHS "$ENV{ProgramFiles\(x86\)}/NSIS" "$ENV{ProgramFiles}/NSIS")
+    find_program(MAKENSIS makensis
+        PATHS "C:/Program Files (x86)/NSIS" "C:/Program Files/NSIS"
+              "$ENV{ProgramFiles\(x86\)}/NSIS" "$ENV{ProgramFiles}/NSIS")
+    if(NOT MAKENSIS)
+        message(STATUS "NSIS introuvable : la cible « installateur » ne sera pas disponible.")
+    endif()
     if(MAKENSIS)
         set(DOSSIER_PAQUET ${CMAKE_BINARY_DIR}/paquet)
         set(FICHIER_SETUP ${CMAKE_BINARY_DIR}/ArtPrintSlicer-Setup-${PROJECT_VERSION}.exe)

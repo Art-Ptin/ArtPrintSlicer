@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Installer NSIS (outil qui fabrique l'installateur)
+        run: choco install nsis --no-progress -y
+
       - name: Préparer la compilation
         run: cmake -S . -B build -A x64
 
