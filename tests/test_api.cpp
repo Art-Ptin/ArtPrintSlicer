@@ -89,7 +89,7 @@ void test_changer_les_reglages() {
                    {{"hauteur_couche", "0,3"},
                     {"nombre_parois", 3},
                     {"densite_remplissage", "150"},  // refusé : plus de 100 %
-                    {"distance_pivot_buse", "48,6"},
+                    {"distance_pivot_buse", "37,5"},
                     {"inconnu", "1"}}}});
     VERIFIER(reponse["ok"] == true);
     VERIFIER(reponse["refus"].size() == 2);
@@ -98,7 +98,7 @@ void test_changer_les_reglages() {
         if (r["cle"] == "hauteur_couche") VERIFIER(r["valeur"] == "0,3");
         if (r["cle"] == "nombre_parois") VERIFIER(r["valeur"] == "3");
         if (r["cle"] == "densite_remplissage") VERIFIER(r["valeur"] == "15");
-        if (r["cle"] == "distance_pivot_buse") VERIFIER(r["valeur"] == "48,6");
+        if (r["cle"] == "distance_pivot_buse") VERIFIER(r["valeur"] == "37,5");
     }
 
     // Enregistrement puis relecture : les valeurs reviennent à l'identique.
@@ -110,7 +110,7 @@ void test_changer_les_reglages() {
     VERIFIER(relu["ok"] == true);
     for (const Json& r : relu["reglages"]) {
         if (r["cle"] == "hauteur_couche") VERIFIER(r["valeur"] == "0,3");
-        if (r["cle"] == "distance_pivot_buse") VERIFIER(r["valeur"] == "48,6");
+        if (r["cle"] == "distance_pivot_buse") VERIFIER(r["valeur"] == "37,5");
     }
     std::filesystem::remove(std::filesystem::path(fichier));
 }
