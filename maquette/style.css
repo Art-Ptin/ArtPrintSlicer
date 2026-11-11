@@ -1,8 +1,8 @@
 /* ArtPrint Slicer - licence AGPL v3
    Feuille de style de l'interface. Toutes les couleurs, tailles et espacements
    viennent de tokens.css : aucune valeur en dur ici.
-   Signature : des formes droites, et une pente (--biais) reprise du A penché
-   du logo pour l'onglet actif et le bouton principal. */
+   Disposition : barre de titre et barre de pages en haut, colonne des réglages
+   à gauche, vue 3D au centre, ligne d'état en bas. */
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -65,62 +65,65 @@ input.interrupteur {
 .interrupteur:checked::before { transform: translateX(calc(var(--l-interrupteur) - var(--h-interrupteur))); }
 .interrupteur-libelle { display: inline-flex; align-items: center; gap: var(--e-2); font-size: var(--t-12); color: var(--c-texte-2); cursor: pointer; }
 
-/* --- Barre du haut --- */
-.tete {
-  display: flex; align-items: stretch; height: var(--h-barre); flex: none;
-  background: var(--c-barre); color: var(--c-barre-texte);
-  padding-left: max(var(--e-4), env(safe-area-inset-left, 0px)); padding-right: env(safe-area-inset-right, 0px);
+/* --- Barre du haut : une rangée de titre (menu, enregistrer, annuler), une rangée de pages --- */
+.tete { flex: none; background: var(--c-barre); color: var(--c-barre-texte); }
+.barre-titre {
+  position: relative; display: flex; align-items: stretch; height: var(--h-barre-titre); font-size: var(--t-12);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
 }
-.marque { display: flex; align-items: center; gap: var(--e-2); margin-right: var(--e-6); }
+.titre-bouton, .titre-icone { border: 0; background: none; color: var(--c-barre-texte); cursor: pointer; transition: background var(--d-rapide), color var(--d-rapide); }
+.titre-bouton { display: inline-flex; align-items: center; gap: var(--e-2); padding: 0 var(--e-2) 0 var(--e-3); }
+.titre-bouton .chevron { display: grid; color: var(--c-barre-texte-2); }
+.titre-icone { width: var(--h-barre-titre); display: grid; place-items: center; color: var(--c-barre-texte-2); }
+.titre-bouton:hover, .titre-bouton[aria-expanded="true"], .titre-icone:hover { background: var(--c-barre-2); color: var(--c-barre-texte); }
+.titre-sep { align-self: center; width: var(--trait); height: var(--i-16); background: var(--c-barre-texte-3); margin: 0 var(--e-1); }
+.titre-document { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--c-barre-texte-2); white-space: nowrap; pointer-events: none; }
+.barre-pages {
+  display: flex; align-items: stretch; height: var(--h-barre-onglets); background: var(--c-barre-2);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
+}
+.vues { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.vues button {
+  border: 0; background: none; padding: 0 var(--e-4); cursor: pointer; color: var(--c-barre-texte-2); white-space: nowrap;
+  display: inline-flex; align-items: center; gap: var(--e-2); transition: background var(--d-rapide), color var(--d-rapide);
+}
+.vues button:hover:not(:disabled):not(.actif) { color: var(--c-barre-texte); background: var(--c-barre); }
+.vues button.actif { background: var(--c-accent); color: var(--c-sur-accent); font-weight: var(--g-fort); }
+.vues button:disabled { color: var(--c-barre-texte-3); cursor: default; }
 .logo { height: var(--h-logo); width: auto; flex: none; }
 .logo-a { fill: var(--c-barre-texte); }
 .logo-anneau { fill: none; stroke: var(--c-accent); }
+.vues .logo { height: var(--i-20); }
+.vues button.actif .logo-a, .vues button.actif .logo-anneau { fill: var(--c-sur-accent); stroke: var(--c-sur-accent); }
+.vues button.actif .logo-anneau { fill: none; }
 .marque .nom { font-weight: var(--g-logo); font-size: var(--t-16); }
-.marque .produit { color: var(--c-barre-texte-2); }
-.marque .version { font-size: var(--t-11); color: var(--c-barre-texte-2); align-self: center; }
-
-/* Onglets de page : l'actif est un bloc penché à l'accent. */
-.vues { display: flex; align-items: stretch; }
-.vues button {
-  position: relative; border: 0; background: none; padding: 0 var(--e-5); cursor: pointer; color: var(--c-barre-texte-2);
-  display: inline-flex; align-items: center; gap: var(--e-2); transition: color var(--d-rapide);
-}
-.vues button::before {
-  content: ""; position: absolute; inset: 0; background: transparent; transition: background var(--d-rapide);
-  clip-path: polygon(var(--biais) 0, 100% 0, calc(100% - var(--biais)) 100%, 0 100%);
-}
-.vues button > * { position: relative; }
-.vues button:hover:not(:disabled) { color: var(--c-barre-texte); }
-.vues button:hover:not(:disabled)::before { background: var(--c-barre-2); }
-.vues button.actif { color: var(--c-sur-accent); font-weight: var(--g-fort); }
-.vues button.actif::before { background: var(--c-accent); }
-.vues button:disabled { color: var(--c-barre-texte-3); cursor: default; }
-
-.actions { display: flex; align-items: center; gap: var(--e-1); margin-left: auto; }
-.tete .bouton-icone { color: var(--c-barre-texte-2); }
-.tete .bouton-icone:hover { background: var(--c-barre-2); color: var(--c-barre-texte); }
-.tete .bouton:not(.plein) { background: none; border-color: transparent; color: var(--c-barre-texte); }
-.tete .bouton:not(.plein):hover:not(:disabled) { background: var(--c-barre-2); border-color: transparent; }
-.tete .bouton:not(.plein):disabled { color: var(--c-barre-texte-3); }
-/* Bouton principal : collé au bord droit, son bord gauche est penché. */
-.tete .bouton.plein {
-  position: relative; align-self: stretch; height: auto; border: 0; border-radius: 0; background: none;
-  padding: 0 var(--e-6) 0 calc(var(--e-6) + var(--biais)); margin-left: var(--e-2); font-size: var(--t-13);
-}
-.tete .bouton.plein::before {
-  content: ""; position: absolute; inset: 0; background: var(--c-accent); transition: background var(--d-rapide);
-  clip-path: polygon(var(--biais) 0, 100% 0, 100% 100%, 0 100%);
-}
-.tete .bouton.plein > * { position: relative; }
-.tete .bouton.plein:hover:not(:disabled) { background: none; }
-.tete .bouton.plein:hover:not(:disabled)::before { background: var(--c-accent-survol); }
-.tete .bouton.plein:active:not(:disabled)::before { background: var(--c-accent-appui); }
-.tete .bouton.plein:disabled { background: none; color: var(--c-barre-texte-3); }
-.tete .bouton.plein:disabled::before { background: var(--c-barre-2); }
+/* Boutons d'action : une petite flèche (menu) accolée au bouton principal. */
+.actions { display: flex; align-items: center; gap: var(--e-2); margin-left: auto; padding: 0 var(--e-3); }
+.double { display: inline-flex; height: var(--h-champ-serre); border-radius: var(--h-champ); overflow: hidden; flex: none; }
+.double button { border: 0; height: 100%; display: inline-flex; align-items: center; cursor: pointer; background: var(--c-accent); color: var(--c-sur-accent); transition: background var(--d-rapide); }
+.double-fleche { padding: 0 var(--e-1) 0 var(--e-2); margin-right: var(--trait); }
+.double-action { padding: 0 var(--e-3) 0 var(--e-2); font-weight: var(--g-fort); white-space: nowrap; }
+.double button:hover:not(:disabled), .double-fleche[aria-expanded="true"] { background: var(--c-accent-survol); }
+.double button:active:not(:disabled) { background: var(--c-accent-appui); }
+.double .double-action:disabled { background: var(--c-barre); color: var(--c-barre-texte-3); cursor: default; }
 .note-simulation {
   flex: none; font-size: var(--t-12); color: var(--c-attention); background: var(--c-attention-voile); border-bottom: var(--bord);
   padding-block: var(--e-1); padding-left: max(var(--e-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--e-4), env(safe-area-inset-right, 0px));
 }
+
+/* Menu déroulant (Fichier, flèches des boutons d'action) */
+.menu {
+  position: fixed; z-index: 40; min-width: var(--l-menu); max-width: calc(100vw - var(--e-4)); padding: var(--e-1) 0;
+  background: var(--c-panneau); color: var(--c-texte); border: var(--bord); border-radius: var(--r-2); box-shadow: var(--o-2);
+}
+.menu button {
+  width: 100%; min-height: var(--h-champ); border: 0; background: none; padding: 0 var(--e-3); cursor: pointer; text-align: left;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--e-5);
+}
+.menu button:hover, .menu button:focus-visible { background: var(--c-survol); }
+.menu button.choisi { font-weight: var(--g-fort); }
+.menu .note { font-size: var(--t-11); color: var(--c-texte-3); }
+.menu hr { border: 0; border-top: var(--bord); margin: var(--e-1) 0; }
 
 /* --- Plan : colonne des réglages + vue --- */
 .plan { flex: 1; display: flex; min-height: 0; }
@@ -211,6 +214,7 @@ input.interrupteur {
 .bobine-montee .texte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jauge { height: var(--trait-fort); background: var(--c-bord); }
 .jauge > span { display: block; height: 100%; background: var(--c-texte-2); }
+.jauge.vide > span { width: 0; }
 .jauge.bas > span { background: var(--c-erreur); }
 
 /* Procédé */
@@ -331,7 +335,7 @@ input.interrupteur {
 .curseur-trajet input { flex: 1; min-width: 0; }
 .curseur-trajet output { font-size: var(--t-12); font-weight: var(--g-fort); min-width: calc(var(--e-8) + var(--e-5)); text-align: right; }
 
-/* Console d'erreurs, messages */
+/* Console d'erreurs ; message : au-dessus de toutes les pages, sous la barre du haut */
 .console { left: var(--e-3); right: calc(var(--l-curseur) + var(--e-6)); bottom: calc(var(--e-3) + var(--h-ligne) + var(--e-8) + var(--h-champ)); max-height: 46%; overflow-y: auto; border-color: var(--c-erreur); }
 .console .bloc-tete { position: sticky; top: 0; background: var(--c-panneau); }
 .console .etiquette { color: var(--c-erreur); }
@@ -341,7 +345,7 @@ input.interrupteur {
 .console .code { font-size: var(--t-12); font-weight: var(--g-fort); }
 .console .solution { color: var(--c-texte-2); }
 .message {
-  position: absolute; left: 50%; top: calc(var(--e-3) + var(--l-outil) + var(--e-5)); transform: translateX(-50%); z-index: 6; max-width: min(calc(var(--l-feuille) * 0.65), 70%);
+  position: fixed; left: 50%; top: calc(var(--h-barre-titre) + var(--h-barre-onglets) + var(--e-8) * 3); transform: translateX(-50%); z-index: 35; max-width: min(calc(var(--l-feuille) * 0.65), 70%);
   background: var(--c-erreur-voile); color: var(--c-erreur); border: var(--trait) solid var(--c-erreur); border-radius: var(--r-2);
   box-shadow: var(--o-2); padding: var(--e-2) var(--e-3); display: flex; gap: var(--e-3); align-items: center;
 }
@@ -356,6 +360,114 @@ input.interrupteur {
   .barre-attente::after { animation: none; width: 100%; }
   * { transition-duration: 0s !important; }
 }
+
+/* --- Pages : Accueil, Imprimante, Projet, Calibration, Gestionnaire --- */
+.page { flex: 1; min-height: 0; display: flex; background: var(--c-fenetre); overflow: auto; }
+.page-accueil, .page-vide { align-items: center; justify-content: center; padding: var(--e-4); }
+.accueil-carte {
+  display: grid; justify-items: center; gap: var(--e-2); text-align: center; padding: var(--e-8); max-width: 100%;
+  background: var(--c-panneau); border: var(--bord); border-radius: var(--r-2);
+}
+.accueil-carte strong { font-size: var(--t-16); font-weight: var(--g-fort); }
+.accueil-carte > span { color: var(--c-texte-2); }
+.accueil-carte .bouton { margin-block: var(--e-2); }
+.logo.grand { height: calc(var(--h-logo) * 3); margin-bottom: var(--e-2); }
+.logo.grand .logo-a { fill: var(--c-texte); }
+.grande-icone { display: grid; color: var(--c-texte-2); }
+
+/* Imprimante : menu, caméra et progression, contrôle */
+.page-menu { width: var(--l-menu-page); flex: none; display: flex; flex-direction: column; background: var(--c-panneau); border-right: var(--bord); }
+.connexion { height: var(--h-champ-serre); display: grid; place-items: center; font-size: var(--t-11); font-weight: var(--g-fort); background: var(--c-attention-voile); color: var(--c-attention); }
+.appareil { display: flex; align-items: center; gap: var(--e-2); height: var(--h-barre-onglets); padding: 0 var(--e-3); border-bottom: var(--bord); color: var(--c-texte-2); }
+.page-menu button {
+  height: var(--h-barre-onglets); border: 0; background: none; padding: 0 var(--e-2) 0 var(--e-5); cursor: pointer; text-align: left;
+  display: flex; align-items: center; justify-content: space-between; transition: background var(--d-rapide);
+}
+.page-menu button .chevron { display: grid; color: var(--c-texte-3); }
+.page-menu button:hover { background: var(--c-survol); }
+.page-menu button.actif { background: var(--c-accent-voile); font-weight: var(--g-fort); }
+.page-menu button[aria-disabled="true"] { color: var(--c-texte-2); }
+.page-bandeau { display: flex; align-items: center; gap: var(--e-2); min-height: var(--h-bandeau); flex: none; padding: var(--e-1) var(--e-2) var(--e-1) var(--e-3); background: var(--c-survol); color: var(--c-texte-2); border-block: var(--bord); flex-wrap: wrap; }
+.camera-zone { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--c-panneau); }
+.camera { flex: 1; min-height: var(--h-camera); position: relative; display: grid; place-content: center; justify-items: center; gap: var(--e-3); background: var(--c-barre); color: var(--c-barre-texte-2); }
+.camera-lecture { width: var(--l-lecture); height: var(--l-lecture); border: var(--trait) solid var(--c-barre-texte-3); border-radius: 50%; background: var(--c-barre-2); color: var(--c-barre-texte); cursor: pointer; display: grid; place-items: center; transition: background var(--d-rapide); }
+.camera-lecture:hover { background: var(--c-accent); color: var(--c-sur-accent); }
+.camera-pied { display: flex; justify-content: space-between; align-items: center; flex: none; padding: var(--e-1) var(--e-2); }
+.progression { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--e-4); align-items: center; flex: none; padding: var(--e-3); }
+.progression-vignette { width: calc(var(--l-vignette) * 1.5); height: calc(var(--l-vignette) * 1.5); display: grid; place-items: center; background: var(--c-survol); border-radius: var(--r-2); color: var(--c-texte-3); }
+.progression-vignette img { width: 100%; height: 100%; object-fit: contain; }
+.progression-texte { display: grid; gap: var(--e-1); min-width: 0; max-width: calc(var(--l-controle) * 0.8); }
+.progression-texte b { color: var(--c-accent-texte); font-weight: var(--g-fort); }
+.progression-boutons { display: flex; gap: var(--e-1); }
+.controle { width: var(--l-controle); flex: none; display: flex; flex-direction: column; background: var(--c-panneau); border-left: var(--bord); overflow-y: auto; }
+.temperatures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--e-2); padding: var(--e-3) var(--e-3) 0; }
+.temperature { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 0 var(--e-2); padding: var(--e-2) var(--e-3); border: var(--bord); border-radius: var(--r-3); background: var(--c-champ); }
+.temperature .icone { grid-row: span 2; color: var(--c-texte-2); }
+.temperature small { font-size: var(--t-11); color: var(--c-texte-2); }
+.temperature b { font-weight: var(--g-fort); }
+/* Déplacement : même disposition que l'écran tactile de l'imprimante. */
+.deplacement { display: grid; gap: var(--e-3); padding: var(--e-3); }
+.dep-titre { display: flex; align-items: baseline; gap: var(--e-3); flex-wrap: wrap; }
+.dep-titre h3 { margin: 0; font-size: var(--t-16); font-weight: var(--g-fort); }
+.positions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--e-2); }
+.position { display: flex; align-items: center; gap: var(--e-2); height: var(--h-ligne); padding: 0 var(--e-2); border: var(--bord); border-radius: var(--r-3); background: var(--c-champ); white-space: nowrap; min-width: 0; }
+.position b { font-weight: var(--g-fort); }
+.position .icone { margin-left: auto; color: var(--c-attention); }
+.dep-blocs { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr) minmax(0, 1fr); gap: var(--e-2); }
+.dep-bloc { display: flex; flex-direction: column; gap: var(--e-2); padding: var(--e-2); border: var(--bord); border-radius: var(--r-3); background: var(--c-fenetre); min-width: 0; }
+.dep-bloc h4 { margin: 0; font-size: var(--t-12); font-weight: var(--g-normal); color: var(--c-texte-2); }
+.dep-bloc h4 small { font-size: var(--t-11); color: var(--c-texte-3); margin-left: var(--e-1); white-space: nowrap; }
+.croix { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: var(--h-touche); gap: var(--e-1); }
+.pile { display: grid; grid-auto-rows: calc(var(--h-touche) * 1.5 + var(--e-1) / 2); gap: var(--e-1); }
+.paire-touches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: var(--h-touche); gap: var(--e-1); }
+.touche {
+  display: grid; place-items: center; align-content: center; border: var(--bord); border-radius: var(--r-3); background: var(--c-champ);
+  cursor: pointer; font-weight: var(--g-fort); padding: 0; transition: background var(--d-rapide), border-color var(--d-rapide);
+}
+.touche:hover { border-color: var(--c-bord-fort); background: var(--c-survol); }
+.touche:active { background: var(--c-accent-voile); border-color: var(--c-accent); }
+.touche .icone { color: var(--c-texte-2); }
+.pas { display: flex; gap: var(--e-1); margin-top: auto; }
+.pas button { flex: 1; height: var(--h-champ); border: var(--bord); border-radius: var(--h-champ); background: var(--c-champ); cursor: pointer; padding: 0; white-space: nowrap; transition: border-color var(--d-rapide); }
+.pas button:hover { border-color: var(--c-bord-fort); }
+.pas button.actif { border: var(--trait-fort) solid var(--c-accent); font-weight: var(--g-fort); }
+.dep-bloc > .note-colonnes { margin-top: auto; text-align: center; min-height: var(--h-champ); display: grid; place-items: center; }
+.dep-alerte { display: flex; align-items: center; gap: var(--e-2); color: var(--c-attention); font-weight: var(--g-fort); }
+.dep-actions { display: flex; flex-wrap: wrap; gap: var(--e-2); }
+.dep-actions .bouton { flex: 1 1 auto; height: var(--h-barre-onglets); border-radius: var(--r-3); }
+
+/* Gestionnaire de bobines */
+.page-gestionnaire { flex-direction: column; padding: var(--e-3) var(--e-4) var(--e-4); gap: var(--e-3); }
+.gestion-barre { display: flex; align-items: center; gap: var(--e-2); flex: none; flex-wrap: wrap; }
+.gestion-barre .pilule button { height: var(--i-20); font-size: var(--t-12); }
+.gestion-barre .deroulant { height: var(--h-champ); }
+.champ-recherche { display: flex; align-items: center; gap: var(--e-2); height: var(--h-champ); padding: 0 var(--e-2); border: var(--bord); border-radius: var(--r-1); background: var(--c-champ); color: var(--c-texte-2); }
+.champ-recherche input { border: 0; background: none; outline: none; min-width: 0; width: calc(var(--l-champ) * 2); color: var(--c-texte); }
+.champ-recherche:focus-within { border-color: var(--c-accent-texte); }
+.gestion-table { flex: 1; min-height: 0; overflow-y: auto; background: var(--c-panneau); border: var(--bord); border-radius: var(--r-2); }
+.g-tete, .g-rang { display: grid; grid-template-columns: var(--l-nuance) minmax(0, 1fr) var(--l-reste) auto; align-items: center; gap: var(--e-3); padding: var(--e-2) var(--e-4); }
+.g-tete { position: sticky; top: 0; z-index: 1; background: var(--c-panneau); border-bottom: var(--bord-fort); color: var(--c-texte-2); font-size: var(--t-12); }
+.g-tete span:first-child { grid-column: 1 / 3; }
+.g-groupe { display: flex; align-items: center; gap: var(--e-2); width: 100%; height: var(--h-champ); padding: 0 var(--e-3); border: 0; border-bottom: var(--bord); background: var(--c-survol); cursor: pointer; color: var(--c-texte-2); font-size: var(--t-12); text-align: left; }
+.g-groupe .icone { transition: transform var(--d-rapide); }
+.g-groupe[aria-expanded="false"] .icone { transform: rotate(-90deg); }
+.g-groupe .compte { padding: 0 var(--e-2); border-radius: var(--h-champ); background: var(--c-bord); color: var(--c-texte); font-size: var(--t-11); }
+.g-rang { border-bottom: var(--bord); }
+.g-rang:hover { background: var(--c-survol); }
+.g-couleur { width: var(--l-nuance); height: var(--l-nuance); border: var(--bord-fort); border-radius: var(--r-2); }
+.g-nom { display: grid; min-width: 0; }
+.g-nom b { font-weight: var(--g-fort); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-nom small { font-size: var(--t-11); color: var(--c-texte-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-nom .carre { display: inline-block; width: var(--e-2); height: var(--e-2); border: var(--bord-fort); vertical-align: baseline; margin-right: var(--e-1); }
+.g-montee { font-size: var(--t-11); font-weight: var(--g-fort); color: var(--c-ok); border: var(--trait) solid var(--c-ok); border-radius: var(--r-1); padding: 0 var(--e-1); margin-left: var(--e-2); }
+.g-reste { display: grid; gap: var(--e-1); font-size: var(--t-12); }
+.g-reste .jauge { height: var(--h-jauge); border-radius: var(--h-jauge); overflow: hidden; }
+.g-reste .jauge > span { background: var(--c-accent); }
+.g-reste .jauge.bas > span { background: var(--c-erreur); }
+.g-actions { display: flex; gap: var(--e-1); justify-content: flex-end; min-width: calc(var(--h-champ) * 3 + var(--e-2)); }
+.g-actions .bouton-icone { color: var(--c-accent-texte); }
+.g-actions .bouton-icone:disabled { color: var(--c-texte-3); }
+.g-actions .confirmer { height: var(--h-champ); padding: 0 var(--e-2); border: var(--trait) solid var(--c-erreur); border-radius: var(--r-1); background: var(--c-erreur-voile); color: var(--c-erreur); cursor: pointer; font-size: var(--t-12); white-space: nowrap; }
 
 /* --- Ligne d'état : fine, tout en bas --- */
 .etat {
@@ -414,15 +526,31 @@ input.interrupteur {
 .choix-piece button:hover { background: var(--c-survol); }
 .choix-piece small { color: var(--c-texte-2); font-size: var(--t-12); }
 
+/* --- Fenêtre moyenne : le contrôle de l'imprimante passe sous la caméra --- */
+@media (max-width: 1180px) {
+  .page-imprimante { flex-wrap: wrap; align-content: flex-start; }
+  .camera-zone { flex-basis: calc(100% - var(--l-menu-page)); }
+  .controle { width: 100%; border-left: 0; border-top: var(--bord); overflow: visible; }
+}
+
 /* --- Fenêtre étroite (voir --seuil-etroit) --- */
 @media (max-width: 900px) {
   body { overflow: auto; height: auto; }
-  .tete { flex-wrap: wrap; height: auto; padding-right: max(var(--e-4), env(safe-area-inset-right, 0px)); }
-  .marque { height: var(--h-barre); }
-  .vues { height: var(--h-barre); }
+  .titre-document { display: none; }
+  .barre-pages { flex-wrap: wrap; height: auto; }
+  .vues { height: var(--h-barre-onglets); width: 100%; }
   .vues button { padding: 0 var(--e-3); }
-  .actions { flex-wrap: wrap; margin-left: 0; padding-block: var(--e-2); }
-  .tete .bouton.plein { align-self: center; height: var(--h-champ); }
+  .actions { margin-left: 0; padding-block: var(--e-2); flex-wrap: wrap; }
+  .page { flex: none; overflow: visible; }
+  .page-imprimante { flex-direction: column; }
+  .page-menu, .controle { width: auto; border: 0; border-bottom: var(--bord); }
+  .positions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dep-blocs { grid-template-columns: 1fr; }
+  .temperatures { grid-template-columns: 1fr; }
+  .g-tete, .g-rang { grid-template-columns: var(--l-nuance) minmax(0, 1fr); }
+  .g-tete span:not(:first-child) { display: none; }
+  .g-reste, .g-actions { grid-column: 2; justify-content: flex-start; }
+  .champ-recherche input { width: var(--l-champ); }
   .plan { flex-direction: column; }
   .cote { width: auto; order: 2; border-right: 0; border-top: var(--bord); }
   .replier-cote { display: none; }

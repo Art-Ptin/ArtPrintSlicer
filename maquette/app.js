@@ -5,6 +5,8 @@ import { appeler } from './pont.js';
 import { Vue3D, couleursTrajectoires } from './vue3d.js';
 import { icone } from './icones.js';
 import { ONGLETS, PARAMETRES, PROFILS, MATIERES, BOBINES_EXEMPLE } from './catalogue.js';
+import { ouvrirMenu } from './menu.js';
+import { brancherPages } from './pages.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (balise, classe, texte) => {
@@ -26,6 +28,7 @@ const memoire = {
 
 const vue3d = new Vue3D($('canvas3d'));
 window.artprint = { vue3d };
+let pages = null;        // pages Imprimante et Gestionnaire, branchées au démarrage
 
 const etat = {
   valeurs: {},          // valeur de chaque paramètre du procédé
@@ -40,6 +43,7 @@ const etat = {
   montee: memoire.lire('montee', BOBINES_EXEMPLE[0].id),
   modele: null,
   resultat: null,
+  page: 'preparer',     // page affichée (onglet de la barre du haut)
 };
 
 // --- Nombres -------------------------------------------------------------------
@@ -244,6 +248,7 @@ function estClaire(hex) {
 }
 
 function afficherBobine() {
+  pages?.rafraichir();
   $('bobines-grille').replaceChildren(...etat.bobines.map((b, rang) => {
     const montee = b.id === etat.montee;
     const emplacement = el('div', 'emplacement' + (montee ? ' montee' : ''));
@@ -639,8 +644,8 @@ function perimer() {
   if (!etat.modele) definirEtat('', 'En attente', 'Ouvre un modèle pour commencer.');
   else if (!etat.modele.ferme) definirEtat('mauvais', 'Modèle ouvert', 'Le modèle n\'est pas un volume fermé : il faut le réparer.');
   else if (avait) definirEtat('perime', 'À retrancher', 'Un réglage a changé depuis le dernier tranchage.');
-  else definirEtat('', 'Prêt', 'Clique sur « Trancher ».');
-  choisirVue('preparer');
+  else definirEtat('', 'Prêt', 'Clique sur « Trancher le plateau ».');
+  if (etat.page === 'apercu') choisirVue('preparer');
 }
 
 async function ouvrirModele() {
@@ -660,9 +665,11 @@ async function ouvrirModele() {
   const [x, y, z] = etat.modele.dimensions;
   $('r-modele').textContent = etat.modele.nom;
   $('r-dimensions').textContent = `${fr(x)} × ${fr(y)} × ${fr(z)} mm · ${entier(etat.modele.triangles)} triangles`;
+  $('titre-document').textContent = etat.modele.nom.replace(/\.[^.]+$/, '');
   if (!etat.modele.ferme) dire(etat.modele.message_fermeture);
   $('btn-trancher').disabled = false;
   perimer();
+  choisirVue('preparer');
 }
 
 // Vitesse d'un type de trajectoire, en mm/s, pour estimer la part du temps.
@@ -726,6 +733,7 @@ function deplierTrajectoires(ouvert) {
 
 async function trancher() {
   if (!etat.modele) return;
+  if (etat.page !== 'preparer' && etat.page !== 'apercu') choisirVue('preparer');   // pour voir l'attente
   occuper('Tranchage et vérification en cours…');
   await new Promise((suite) => setTimeout(suite, 30));
   const reponse = await demander('trancher');
@@ -786,12 +794,23 @@ function majCouche() {
   vue3d.montrerProgression(fraction);
 }
 
+const PAGES = ['accueil', 'preparer', 'apercu', 'imprimante', 'projet', 'calibration', 'gestionnaire'];
+
 function choisirVue(vue) {
-  const apercu = vue === 'apercu' && Boolean(etat.resultat);
-  $('vue-preparer').classList.toggle('actif', !apercu);
-  $('vue-apercu').classList.toggle('actif', apercu);
-  $('vue-preparer').setAttribute('aria-selected', String(!apercu));
-  $('vue-apercu').setAttribute('aria-selected', String(apercu));
+  if (vue === 'apercu' && !etat.resultat) vue = 'preparer';
+  etat.page = vue;
+  for (const nom of PAGES) {
+    $('vue-' + nom).classList.toggle('actif', nom === vue);
+    $('vue-' + nom).setAttribute('aria-selected', String(nom === vue));
+  }
+  // Préparation et Aperçu partagent la même page (colonne des réglages + vue 3D).
+  const dansLePlan = vue === 'preparer' || vue === 'apercu';
+  $('plan').hidden = !dansLePlan;
+  for (const nom of PAGES) {
+    if (nom !== 'preparer' && nom !== 'apercu') $('page-' + nom).hidden = nom !== vue;
+  }
+  if (!dansLePlan) return;
+  const apercu = vue === 'apercu';
   for (const id of ['trajectoires', 'curseur-couches', 'curseur-trajet']) $(id).hidden = !apercu;
   $('outils').hidden = apercu;
   $('vue').classList.toggle('apercu', apercu);
@@ -838,11 +857,17 @@ function dessinerOutils() {
     for (const [nom, libelle] of groupe) {
       const bouton = el('button');
       bouton.id = 'outil-' + nom;
-      bouton.title = `${libelle} (à venir)`;
-      bouton.setAttribute('aria-label', `${libelle} (à venir)`);
-      bouton.setAttribute('aria-disabled', 'true');
       bouton.append(icone(nom, 20));
-      bouton.addEventListener('click', () => dire(`« ${libelle} » : cet outil est à venir.`, { info: true }));
+      if (nom === 'ajouter-objet') {
+        bouton.title = 'Ouvrir un modèle…';
+        bouton.setAttribute('aria-label', bouton.title);
+        bouton.addEventListener('click', ouvrirModele);
+      } else {
+        bouton.title = `${libelle} (à venir)`;
+        bouton.setAttribute('aria-label', `${libelle} (à venir)`);
+        bouton.setAttribute('aria-disabled', 'true');
+        bouton.addEventListener('click', () => dire(`« ${libelle} » : cet outil est à venir.`, { info: true }));
+      }
       barre.append(bouton);
     }
   });
@@ -852,6 +877,9 @@ function dessinerOutils() {
 function poserIcones() {
   for (const element of document.querySelectorAll('[data-icone]')) {
     element.prepend(icone(element.dataset.icone));
+  }
+  for (const element of document.querySelectorAll('[data-icone-24]')) {
+    element.prepend(icone(element.dataset.icone24, 24));
   }
 }
 
@@ -879,6 +907,50 @@ function changerTheme() {
   afficherTheme();
 }
 
+// --- Menus de la barre du haut ----------------------------------------------------
+
+const aVenir = (nom) => () => dire(`${nom} : à venir.`, { info: true });
+function trancherOuDire() {
+  if (etat.modele) trancher(); else dire('Ouvre d\'abord un modèle.');
+}
+function exporterOuDire() {
+  if (etat.resultat?.verification.valide) exporter();
+  else dire('Tranche d\'abord le modèle : il n\'y a pas encore de G-code vérifié à exporter.');
+}
+const SORTIES_A_VENIR = [
+  { id: 'menu-exporter-stl', libelle: 'Exporter en STL…', note: 'à venir', action: aVenir('Export en STL') },
+  { id: 'menu-exporter-3mf', libelle: 'Exporter en 3MF…', note: 'à venir', action: aVenir('Export en 3MF') },
+  { id: 'menu-enregistrer', libelle: 'Enregistrer le projet', note: 'à venir', action: aVenir('Enregistrement du projet') },
+];
+function menuFichier() {
+  ouvrirMenu($('btn-fichier'), [
+    { id: 'menu-nouveau', libelle: 'Nouveau projet', note: 'à venir', action: aVenir('Nouveau projet') },
+    { id: 'menu-ouvrir', libelle: 'Ouvrir un modèle…', action: ouvrirModele },
+    null,
+    { id: 'menu-exporter-gcode', libelle: 'Exporter le G-code…', action: exporterOuDire },
+    ...SORTIES_A_VENIR,
+    null,
+    { id: 'menu-machine', libelle: 'Réglages de la machine…', action: ouvrirMachine },
+    { id: 'menu-bobines', libelle: 'Gestionnaire de bobines', action: () => choisirVue('gestionnaire') },
+    { id: 'menu-theme', libelle: themeSombre() ? 'Passer au thème clair' : 'Passer au thème sombre', action: changerTheme },
+  ]);
+}
+function menuTrancher() {
+  ouvrirMenu($('btn-trancher-menu'), [
+    { id: 'menu-trancher-plateau', libelle: 'Trancher le plateau', choisi: true, action: trancherOuDire },
+    { id: 'menu-trancher-tous', libelle: 'Trancher tous les plateaux', note: 'à venir', action: aVenir('Plusieurs plateaux') },
+  ]);
+}
+function menuSortie() {
+  ouvrirMenu($('btn-sortie-menu'), [
+    { id: 'menu-imprimer', libelle: 'Imprimer le plateau', note: 'à venir', action: aVenir('Impression directe sur l\'imprimante') },
+    { id: 'menu-imprimer-tous', libelle: 'Imprimer tous les plateaux', note: 'à venir', action: aVenir('Plusieurs plateaux') },
+    { id: 'menu-sortie-gcode', libelle: 'Exporter le G-code…', choisi: true, action: exporterOuDire },
+    null,
+    ...SORTIES_A_VENIR,
+  ]);
+}
+
 // --- Démarrage -----------------------------------------------------------------
 
 const themeGarde = memoire.lire('theme', null);
@@ -901,7 +973,18 @@ $('btn-recherche').addEventListener('click', () => {
   afficherProcede();
 });
 
-$('btn-ouvrir').addEventListener('click', ouvrirModele);
+pages = brancherPages({ etat, dire, moteur, lireNombre, bobineMontee, monterBobine, ouvrirBibliotheque, nouvelleBobine,
+  enregistrerBobines, afficherBobine });
+$('btn-fichier').addEventListener('click', menuFichier);
+$('btn-trancher-menu').addEventListener('click', menuTrancher);
+$('btn-sortie-menu').addEventListener('click', menuSortie);
+$('accueil-ouvrir').addEventListener('click', ouvrirModele);
+for (const [id, nom] of [['btn-enregistrer', 'Enregistrement du projet'], ['btn-annuler', 'Annuler'], ['btn-refaire', 'Refaire']]) {
+  $(id).addEventListener('click', aVenir(nom));
+}
+for (const nom of ['accueil', 'imprimante', 'projet', 'calibration', 'gestionnaire']) {
+  $('vue-' + nom).addEventListener('click', () => choisirVue(nom));
+}
 $('btn-ouvrir-2').addEventListener('click', ouvrirModele);
 $('btn-trancher').addEventListener('click', trancher);
 $('btn-exporter').addEventListener('click', exporter);

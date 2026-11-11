@@ -108,8 +108,14 @@
   --l-curseur: 36px;      /* curseur vertical de couches */
   --l-case: 16px;         /* case à cocher */
   --h-logo: 24px;
-  --h-barre: 44px;        /* barre du haut */
-  --biais: 10px;          /* pente des formes penchées, comme le A du logo */
+  --l-menu: 248px;        /* menu déroulant */
+  --l-menu-page: 176px;   /* menu de gauche de la page Imprimante */
+  --l-controle: 560px;    /* panneau « Contrôle » de la page Imprimante */
+  --h-touche: 48px;       /* touche de déplacement d'un axe */
+  --l-lecture: 56px;      /* bouton de lecture de la caméra */
+  --l-nuance: 32px;       /* carré de couleur d'une bobine, dans le gestionnaire */
+  --l-reste: 200px;       /* colonne « Restant » du gestionnaire */
+  --h-camera: 240px;      /* hauteur minimale de l'image de la caméra */
   --l-vignette: 44px;     /* image de l'imprimante ou du plateau, dans sa tuile */
   --h-tuile: 88px;        /* tuiles imprimante, plateau, synchro */
   --h-bandeau: 28px;      /* bandeau de titre d'une section de la colonne */
@@ -128,6 +134,7 @@
   /* --- Formes --- */
   --r-1: 2px;             /* champs, boutons */
   --r-2: 4px;             /* cartes, dialogues */
+  --r-3: 8px;             /* grandes touches de la page Imprimante */
   --trait: 1px;
   --trait-fort: 2px;      /* onglet actif, anneau de focus */
   --bord: var(--trait) solid var(--c-bord);

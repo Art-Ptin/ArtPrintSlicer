@@ -9,7 +9,19 @@
 </script>
 
 <header class="tete">
-  <div class="marque">
+  <div class="barre-titre">
+    <button class="titre-bouton" id="btn-fichier" aria-haspopup="menu" aria-expanded="false" data-icone="menu"><span>Fichier</span><span class="chevron" data-icone="chevron-bas"></span></button>
+    <span class="titre-sep"></span>
+    <button class="titre-icone" id="btn-enregistrer" title="Enregistrer le projet (à venir)" aria-label="Enregistrer le projet (à venir)" data-icone="enregistrer"></button>
+    <button class="titre-icone" id="btn-annuler" title="Annuler (à venir)" aria-label="Annuler (à venir)" data-icone="annuler"></button>
+    <button class="titre-icone" id="btn-refaire" title="Refaire (à venir)" aria-label="Refaire (à venir)" data-icone="refaire"></button>
+    <span class="titre-document"><span id="titre-document">Sans titre</span> · ArtPrint Slicer <span id="version"></span></span>
+    <span class="ressort"></span>
+    <button class="titre-icone" id="btn-theme" title="Changer de thème" aria-label="Changer de thème"></button>
+  </div>
+  <div class="barre-pages">
+    <nav class="vues" role="tablist" aria-label="Page">
+      <button id="vue-accueil" role="tab" aria-selected="false" title="Accueil" aria-label="Accueil">
     <svg class="logo" viewBox="10 14 262 210" aria-hidden="true">
       <defs>
         <mask id="logo-a-barre" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
@@ -26,23 +38,29 @@
       <path class="logo-a" d="M100 22 125 18 246 220H195L124.600 85.500 105.700 220H61.600z" mask="url(#logo-a-barre)"/>
       <ellipse class="logo-anneau" cx="141" cy="156" rx="119.250" ry="30.250" stroke-width="15.500" mask="url(#logo-anneau-barre)"/>
     </svg>
-    <span class="nom">ArtPrint</span><span class="produit">Slicer</span><span class="version" id="version"></span>
-  </div>
-  <nav class="vues" role="tablist" aria-label="Page">
-    <button id="vue-preparer" class="actif" role="tab" aria-selected="true" data-icone="preparer"><span>Préparer</span></button>
-    <button id="vue-apercu" role="tab" aria-selected="false" data-icone="apercu" disabled><span>Aperçu</span></button>
-    <button id="vue-imprimante" role="tab" aria-selected="false" data-icone="imprimante" disabled title="À venir : envoi du G-code à l'imprimante et suivi de l'impression"><span>Imprimante</span></button>
-  </nav>
-  <div class="actions">
-    <button id="btn-theme" class="bouton-icone" title="Changer de thème (système, clair, sombre)" aria-label="Changer de thème"></button>
-    <button id="btn-ouvrir" class="bouton" data-icone="dossier"><span>Ouvrir…</span></button>
-    <button id="btn-exporter" class="bouton" data-icone="exporter" disabled><span>Exporter le G-code…</span></button>
-    <button id="btn-trancher" class="bouton plein" disabled><span>Trancher</span></button>
+      </button>
+      <button id="vue-preparer" class="actif" role="tab" aria-selected="true" data-icone="preparer"><span>Préparation</span></button>
+      <button id="vue-apercu" role="tab" aria-selected="false" data-icone="apercu" disabled title="Disponible quand le modèle est tranché"><span>Aperçu</span></button>
+      <button id="vue-imprimante" role="tab" aria-selected="false" data-icone="imprimante"><span>Imprimante</span></button>
+      <button id="vue-projet" role="tab" aria-selected="false" data-icone="projet"><span>Projet</span></button>
+      <button id="vue-calibration" role="tab" aria-selected="false" data-icone="calibration"><span>Calibration</span></button>
+      <button id="vue-gestionnaire" role="tab" aria-selected="false" data-icone="bobine"><span>Gestionnaire</span></button>
+    </nav>
+    <div class="actions">
+      <div class="double">
+        <button class="double-fleche" id="btn-trancher-menu" aria-haspopup="menu" aria-expanded="false" title="Autres façons de trancher" aria-label="Autres façons de trancher" data-icone="chevron-bas"></button>
+        <button class="double-action" id="btn-trancher" disabled><span>Trancher le plateau</span></button>
+      </div>
+      <div class="double">
+        <button class="double-fleche" id="btn-sortie-menu" aria-haspopup="menu" aria-expanded="false" title="Imprimer, exporter, enregistrer" aria-label="Imprimer, exporter, enregistrer" data-icone="chevron-bas"></button>
+        <button class="double-action" id="btn-exporter" disabled><span>Exporter le G-code</span></button>
+      </div>
+    </div>
   </div>
 </header>
 <div class="note-simulation" role="note">Simulation de l'interface : tout se manipule, mais les tranchages affichés sont préenregistrés et aucun fichier n'est écrit. Les éléments marqués « prévu » ou « à venir » ne sont pas encore branchés sur le slicer.</div>
 
-<div class="plan">
+<div class="plan" id="plan">
   <aside class="cote" id="cote" aria-label="Réglages">
     <section class="section" id="section-imprimante">
       <header class="bandeau">
@@ -163,8 +181,154 @@
     </div>
 
     <div class="attente" id="attente" hidden><span id="attente-texte">Tranchage en cours…</span><div class="barre-attente" aria-hidden="true"></div></div>
-    <div class="message" id="message" role="status" hidden><span id="message-texte"></span><span id="message-actions"></span></div>
   </main>
+</div>
+
+<div class="page page-accueil" id="page-accueil" hidden>
+  <div class="accueil-carte">
+    <svg class="logo grand" viewBox="10 14 262 210" aria-hidden="true">
+      <defs>
+        <mask id="logo-a-accueil" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+          <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+          <clipPath id="logo-devant-accueil"><rect x="10" y="156" width="262" height="68"/></clipPath>
+          <ellipse cx="141" cy="156" rx="119.250" ry="30.250" fill="none" stroke="#000" stroke-width="31.500" clip-path="url(#logo-devant-accueil)"/>
+        </mask>
+        <mask id="logo-anneau-accueil" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+          <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+          <clipPath id="logo-derriere-accueil"><rect x="10" y="14" width="262" height="142"/></clipPath>
+          <path d="M100 22 125 18 246 220H195L124.600 85.500 105.700 220H61.600z" fill="#000" stroke="#000" stroke-width="16" clip-path="url(#logo-derriere-accueil)"/>
+        </mask>
+      </defs>
+      <path class="logo-a" d="M100 22 125 18 246 220H195L124.600 85.500 105.700 220H61.600z" mask="url(#logo-a-accueil)"/>
+      <ellipse class="logo-anneau" cx="141" cy="156" rx="119.250" ry="30.250" stroke-width="15.500" mask="url(#logo-anneau-accueil)"/>
+    </svg>
+    <strong>ArtPrint Slicer</strong>
+    <span>Slicer 5 axes continu pour l'imprimante ArtPrint.</span>
+    <button class="bouton plein" id="accueil-ouvrir"><span>Ouvrir un modèle…</span></button>
+    <span class="note-colonnes">Projets récents : à venir.</span>
+  </div>
+</div>
+
+<div class="page page-imprimante" id="page-imprimante" hidden>
+  <nav class="page-menu" aria-label="Imprimante">
+    <div class="connexion" id="connexion">Simulation · non connectée</div>
+    <div class="appareil" data-icone="imprimante"><span>ArtPrint 5 axes</span></div>
+    <button class="actif" id="menu-etat"><span>État</span><span class="chevron" data-icone="chevron-droite"></span></button>
+    <button id="menu-fichiers" aria-disabled="true"><span>Fichiers</span><span class="chevron" data-icone="chevron-droite"></span></button>
+    <button id="menu-maj" aria-disabled="true"><span>Mise à jour</span><span class="chevron" data-icone="chevron-droite"></span></button>
+  </nav>
+  <section class="camera-zone" aria-label="Caméra et progression">
+    <header class="page-bandeau"><span>Caméra</span><span class="ressort"></span>
+      <button class="bouton-icone" id="btn-camera-reglages" title="Réglages de la caméra (à venir)" aria-label="Réglages de la caméra (à venir)" data-icone="reglages"></button></header>
+    <div class="camera">
+      <button class="camera-lecture" id="btn-camera" title="Démarrer la caméra (à venir)" aria-label="Démarrer la caméra (à venir)"></button>
+      <span class="camera-note">Aucune caméra connectée</span>
+    </div>
+    <div class="camera-pied">
+      <button class="bouton-icone" id="btn-camera-2" title="Démarrer la caméra (à venir)" aria-label="Démarrer la caméra (à venir)" data-icone="lecture"></button>
+      <button class="bouton-icone" id="btn-camera-plein" title="Plein écran (à venir)" aria-label="Plein écran (à venir)" data-icone="plein-ecran"></button>
+    </div>
+    <header class="page-bandeau"><span>Progression de l'impression</span></header>
+    <div class="progression">
+      <span class="progression-vignette" id="progression-vignette"></span>
+      <div class="progression-texte">
+        <span id="progression-nom">Aucune impression en cours</span>
+        <b id="progression-etat">Imprimante non connectée</b>
+        <div class="jauge vide"><span></span></div>
+        <span class="note-colonnes">Couche : – · Temps restant : –</span>
+      </div>
+      <div class="progression-boutons">
+        <button class="bouton-icone" disabled title="Mettre en pause" aria-label="Mettre en pause" data-icone="pause"></button>
+        <button class="bouton-icone" disabled title="Arrêter l'impression" aria-label="Arrêter l'impression" data-icone="arret"></button>
+      </div>
+    </div>
+  </section>
+  <section class="controle" aria-label="Contrôle">
+    <header class="page-bandeau"><span>Contrôle</span><span class="ressort"></span>
+      <button class="bouton-pilule" data-a-venir="Options d'impression">Options d'impression</button>
+      <button class="bouton-pilule" data-a-venir="Options de sécurité">Sécurité</button>
+      <button class="bouton-pilule" data-a-venir="Calibration de la machine">Calibration</button></header>
+    <div class="temperatures" id="temperatures"></div>
+    <div class="deplacement">
+      <div class="dep-titre"><h3>Déplacement</h3><span class="note-colonnes">Simulation : les touches ne changent que les valeurs affichées.</span></div>
+      <div class="positions" id="positions"></div>
+      <div class="dep-blocs">
+        <div class="dep-bloc">
+          <h4>Tête X · plateau Y</h4>
+          <div class="croix">
+            <span></span><button class="touche" data-axe="y" data-sens="1" data-icone="chevron-haut"><span>Y+</span></button><span></span>
+            <button class="touche" data-axe="x" data-sens="-1" data-icone="chevron-gauche"><span>X−</span></button>
+            <button class="touche" id="dep-origine-xy" title="Mettre X et Y à zéro" aria-label="Mettre X et Y à zéro" data-icone="deplacer"></button>
+            <button class="touche" data-axe="x" data-sens="1" data-icone="chevron-droite"><span>X+</span></button>
+            <span></span><button class="touche" data-axe="y" data-sens="-1" data-icone="chevron-bas"><span>Y−</span></button><span></span>
+          </div>
+          <div class="pas" id="pas-lineaire" role="group" aria-label="Pas des axes X, Y et Z"></div>
+        </div>
+        <div class="dep-bloc">
+          <h4>Hauteur Z</h4>
+          <div class="pile">
+            <button class="touche" data-axe="z" data-sens="1" data-icone="chevron-haut"><span>Z+</span></button>
+            <button class="touche" data-axe="z" data-sens="-1" data-icone="chevron-bas"><span>Z−</span></button>
+          </div>
+          <span class="note-colonnes" id="pas-z"></span>
+        </div>
+        <div class="dep-bloc">
+          <h4>Inclinaison de la tête B <small>−90° = buse verticale</small></h4>
+          <div class="paire-touches">
+            <button class="touche" data-axe="b" data-sens="-1" data-icone="chevron-gauche"><span>B−</span></button>
+            <button class="touche" data-axe="b" data-sens="1" data-icone="chevron-droite"><span>B+</span></button>
+          </div>
+          <h4>Rotation du plateau C</h4>
+          <div class="paire-touches">
+            <button class="touche" data-axe="c" data-sens="-1" data-icone="chevron-gauche"><span>C−</span></button>
+            <button class="touche" data-axe="c" data-sens="1" data-icone="chevron-droite"><span>C+</span></button>
+          </div>
+          <div class="pas" id="pas-angle" role="group" aria-label="Pas des axes B et C"></div>
+        </div>
+      </div>
+      <div class="dep-alerte" id="dep-alerte" data-icone="attention"><span>Les axes marqués d'un triangle doivent être mis à zéro avant de bouger.</span></div>
+      <div class="dep-actions">
+        <button class="bouton plein" id="dep-zero" data-icone="origine"><span>Tout mettre à zéro</span></button>
+        <button class="bouton" id="dep-z150" data-icone="chevron-haut"><span>Monter Z à 150 mm</span></button>
+        <button class="bouton" id="dep-redresser" data-icone="buse"><span>Redresser la tête (−90°)</span></button>
+        <button class="bouton" id="dep-plateau0" data-icone="tourner"><span>Plateau à 0°</span></button>
+        <button class="bouton" id="dep-liberer" data-icone="moteurs-libres"><span>Libérer les moteurs</span></button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="page page-vide" id="page-projet" hidden>
+  <div class="accueil-carte">
+    <span class="grande-icone" data-icone-24="projet"></span>
+    <strong>Projet</strong>
+    <span>Informations du projet, notes et fichiers joints.</span>
+    <span class="note-colonnes">Page à venir.</span>
+  </div>
+</div>
+
+<div class="page page-vide" id="page-calibration" hidden>
+  <div class="accueil-carte">
+    <span class="grande-icone" data-icone-24="calibration"></span>
+    <strong>Calibration</strong>
+    <span>Assistants de réglage : débit, température, distance pivot-buse, axes B et C.</span>
+    <span class="note-colonnes">Page à venir.</span>
+  </div>
+</div>
+
+<div class="page page-gestionnaire" id="page-gestionnaire" hidden>
+  <div class="gestion-barre">
+    <div class="pilule" role="group" aria-label="Bobines affichées">
+      <button id="gestion-toutes" class="actif" aria-pressed="true">Toutes</button>
+      <button id="gestion-montee" aria-pressed="false">Sur l'imprimante</button>
+    </div>
+    <span class="deroulant" data-icone="chevron-bas"><select id="gestion-marque" aria-label="Marque"></select></span>
+    <span class="deroulant" data-icone="chevron-bas"><select id="gestion-matiere" aria-label="Type de matière"></select></span>
+    <span class="ressort"></span>
+    <label class="champ-recherche" data-icone="recherche"><input id="gestion-recherche" type="search" placeholder="Rechercher une bobine" aria-label="Rechercher une bobine"></label>
+    <button class="bouton plein" id="gestion-ajouter" data-icone="plus"><span>Ajouter une bobine</span></button>
+  </div>
+  <div class="gestion-table" id="gestion-table"></div>
 </div>
 
 <footer class="etat" aria-label="État">
@@ -175,5 +339,6 @@
   <span class="etat-verification" id="releve-etat"><span class="etat-icone" id="etat-icone"></span><b id="r-etat">En attente</b><span id="r-etat-detail">Ouvre un modèle pour commencer.</span></span>
 </footer>
 
+<div class="message" id="message" role="status" hidden><span id="message-texte"></span><span id="message-actions"></span></div>
 <div id="feuilles"></div>
 <script type="module" src="app.js"></script>
