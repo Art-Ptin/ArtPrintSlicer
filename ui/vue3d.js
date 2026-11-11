@@ -7,8 +7,19 @@ import { LineSegments2 } from './lib/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from './lib/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from './lib/lines/LineMaterial.js';
 
-// Couleur de chaque type de trajectoire (même ordre que dans le slicer).
+// Couleur de chaque type de trajectoire (même ordre que dans le slicer) :
+// jupe, paroi interne, paroi externe, remplissage plein, remplissage, déplacement.
+// Ce sont les valeurs de repli, utilisées quand la feuille de style ne définit
+// pas les variables « --seg-... ».
 export const COULEURS = ['#8a94a3', '#e8890c', '#d9342b', '#2f7de1', '#1fa77a', '#a3acb9'];
+const VARIABLES = ['--seg-jupe', '--seg-paroi-interne', '--seg-paroi-externe', '--seg-plein',
+  '--seg-remplissage', '--seg-deplacement'];
+
+// Couleurs en vigueur : celles des variables de design si elles existent.
+export function couleursTrajectoires() {
+  const style = getComputedStyle(document.documentElement);
+  return COULEURS.map((repli, type) => style.getPropertyValue(VARIABLES[type]).trim() || repli);
+}
 const TYPE_VIDE = 5;
 
 export class Vue3D {
@@ -39,7 +50,7 @@ export class Vue3D {
 
     // Un matériau par type : les cordons ont leur vraie largeur, en millimètres.
     this.largeur = 0.45;
-    this.materiaux = COULEURS.map((couleur, type) => type === TYPE_VIDE
+    this.materiaux = couleursTrajectoires().map((couleur, type) => type === TYPE_VIDE
       ? new THREE.LineBasicMaterial({ color: couleur, transparent: true, opacity: 0.6 })
       : new LineMaterial({ color: 0xffffff, vertexColors: true, linewidth: this.largeur, worldUnits: true }));
 
@@ -64,7 +75,15 @@ export class Vue3D {
   // Le thème a changé : le plateau et la pièce reprennent leurs couleurs.
   rafraichirTheme() {
     this.definirVolume(this.rayon, this.hauteur);
-    this.modele.children.forEach((objet) => objet.material.color.copy(this.jeton('--piece', '#2aa57b')));
+    this.modele.children.forEach((objet) => objet.material.color.copy(this.jeton('--c-piece', '#2aa57b')));
+    this.materiaux[TYPE_VIDE].color.set(couleursTrajectoires()[TYPE_VIDE]);
+    if (this.donnees) {
+      const progression = this.progression;
+      const max = this.coucheMax;
+      this.afficherApercu(this.donnees, this.largeur);
+      this.coucheMax = max;
+      this.montrerProgression(progression);
+    }
     this.demanderRendu();
   }
 
@@ -115,7 +134,7 @@ export class Vue3D {
     const sombre = this.estSombre();
     const disque = new THREE.Mesh(
       new THREE.CircleGeometry(rayon, 128),
-      new THREE.MeshBasicMaterial({ color: this.jeton('--plateau', sombre ? '#262c36' : '#fbfcfd'), side: THREE.DoubleSide }));
+      new THREE.MeshBasicMaterial({ color: this.jeton('--c-plateau', sombre ? '#262c36' : '#fbfcfd'), side: THREE.DoubleSide }));
     disque.position.z = -0.05;
     this.plateau.add(disque);
 
@@ -135,12 +154,12 @@ export class Vue3D {
     for (let r = 50; r < rayon; r += 50) cercle(grille, r, 0);
     cercle(grille, rayon, 0);
     grille.push(-rayon, 0, 0, rayon, 0, 0, 0, -rayon, 0, 0, rayon, 0);
-    traits(grille, this.jeton('--grille', sombre ? '#4a5462' : '#c3c9d2'));
+    traits(grille, this.jeton('--c-grille', sombre ? '#4a5462' : '#c3c9d2'));
 
     // Axes de la machine au centre du plateau : X rouge, Y vert, Z bleu.
-    traits([0, 0, 0.05, 30, 0, 0.05], 0xd9342b);
-    traits([0, 0, 0.05, 0, 30, 0.05], 0x2f9e5b);
-    traits([0, 0, 0.05, 0, 0, 30], 0x2f6fe1);
+    traits([0, 0, 0.05, 30, 0, 0.05], this.jeton('--axe-x', '#d9342b'));
+    traits([0, 0, 0.05, 0, 30, 0.05], this.jeton('--axe-y', '#2f9e5b'));
+    traits([0, 0, 0.05, 0, 0, 30], this.jeton('--axe-z', '#2f6fe1'));
 
     // Volume d'impression : un cylindre en traits légers.
     const volume = [];
@@ -149,10 +168,10 @@ export class Vue3D {
       const a = (i / 8) * Math.PI * 2;
       volume.push(rayon * Math.cos(a), rayon * Math.sin(a), 0, rayon * Math.cos(a), rayon * Math.sin(a), hauteur);
     }
-    traits(volume, this.jeton('--grille', sombre ? '#6b7686' : '#9aa4b2'), 0.55);
+    traits(volume, this.jeton('--c-grille', sombre ? '#6b7686' : '#9aa4b2'), 0.55);
 
     // Repère C = 0 : un trait rouge au bord, côté arrière.
-    traits([0, rayon - 14, 0.02, 0, rayon, 0.02], 0xd9342b);
+    traits([0, rayon - 14, 0.02, 0, rayon, 0.02], this.jeton('--axe-x', '#d9342b'));
     this.demanderRendu();
   }
 
@@ -166,7 +185,7 @@ export class Vue3D {
     geometrie.computeBoundingBox();
     this.boite = geometrie.boundingBox.clone();
     this.modele.add(new THREE.Mesh(geometrie, new THREE.MeshStandardMaterial({
-      color: this.jeton('--piece', '#2aa57b'), roughness: 0.6, metalness: 0.05, flatShading: true })));
+      color: this.jeton('--c-piece', '#2aa57b'), roughness: 0.6, metalness: 0.05, flatShading: true })));
     this.montrer('preparer');
     this.pointDeVue('iso');
   }
@@ -271,7 +290,7 @@ export class Vue3D {
   // Donne du relief à l'aperçu : chaque cordon est éclairci ou assombri
   // selon son orientation, comme s'il était éclairé de côté.
   ombrer(positions, type) {
-    const base = new THREE.Color(COULEURS[type]);
+    const base = new THREE.Color(couleursTrajectoires()[type]);
     const couleurs = new Float32Array(positions.length);
     for (let i = 0; i < positions.length; i += 6) {
       const dx = positions[i + 3] - positions[i], dy = positions[i + 4] - positions[i + 1];

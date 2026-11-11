@@ -65,8 +65,7 @@ function choisirPiece() {
     const voile = document.createElement('div');
     voile.className = 'voile';
     const feuille = document.createElement('div');
-    feuille.className = 'feuille';
-    feuille.style.width = 'min(420px, 100%)';
+    feuille.className = 'feuille etroite';
     feuille.setAttribute('role', 'dialog');
     feuille.setAttribute('aria-label', 'Ouvrir une pièce d\'exemple');
     const tete = document.createElement('div');

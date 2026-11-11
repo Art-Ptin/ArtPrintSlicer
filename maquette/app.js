@@ -2,7 +2,8 @@
 // Maquette de l'interface : imprimante, filament monté et bibliothèque de
 // bobines, procédé détaillé par onglets, aperçu avec tableau des trajectoires.
 import { appeler } from './pont.js';
-import { Vue3D, COULEURS } from './vue3d.js';
+import { Vue3D, couleursTrajectoires } from './vue3d.js';
+import { icone } from './icones.js';
 import { ONGLETS, PARAMETRES, PROFILS, MATIERES, BOBINES_EXEMPLE } from './catalogue.js';
 
 const $ = (id) => document.getElementById(id);
@@ -134,7 +135,7 @@ function ouvrirMachine() {
           champ = el('input', 'champ');
           champ.type = 'text';
           champ.value = r.valeur;
-          if (r.type === 'texte') champ.style.textAlign = 'left';
+          if (r.type === 'texte') champ.classList.add('texte');
           if (r.facultatif) champ.placeholder = r.type === 'texte' ? 'aucun' : 'à mesurer';
         }
         champ.id = 'machine-' + cle;
@@ -174,7 +175,7 @@ function ouvrirFeuille(titre, contenu, { simple = false, pied = '' } = {}) {
   const corps = el('div', 'corps' + (simple ? ' simple' : ''));
   corps.append(...(Array.isArray(contenu) ? contenu : [contenu]));
   feuille.append(tete, corps);
-  if (pied) { const p = el('div', 'pied'); p.append(el('span', 'detail', pied)); feuille.append(p); }
+  if (pied) feuille.append(el('div', 'pied', pied));
   voile.append(feuille);
   const clore = () => { voile.remove(); document.removeEventListener('keydown', touche); };
   const touche = (e) => { if (e.key === 'Escape') clore(); };
@@ -210,10 +211,10 @@ function afficherBobine() {
   niveau.style.width = `${reste * 100}%`;
   jauge.append(niveau);
   jauge.title = `Reste ${entier(b.poids_restant)} g sur ${entier(b.poids_bobine)} g`;
-  zone.replaceChildren(pastille, el('span', 'nom', `${b.nom}`), el('span', 'mono', `${entier(b.poids_restant)} g`),
+  zone.replaceChildren(pastille, el('span', 'nom', `${b.nom}`), el('span', 'chiffres', `${entier(b.poids_restant)} g`),
     el('span', 'detail', `${b.matiere} · ${ecrire(b.diametre)} mm · buse ${b.temp_buse} °C · plateau ${b.temp_plateau} °C`),
     jauge);
-  document.documentElement.style.setProperty('--piece', b.couleur);
+  document.documentElement.style.setProperty('--c-piece', b.couleur);
   vue3d.rafraichirTheme();
 }
 
@@ -294,7 +295,6 @@ function ouvrirBibliotheque() {
     brouillon = brouillon || { ...b };
     const formulaire = el('div', 'formulaire');
     const erreurs = el('div', 'refus');
-    erreurs.style.color = 'var(--mauvais)';
     for (const [cle, libelle, type, unite] of CHAMPS_BOBINE) {
       if (!cle) { formulaire.append(el('hr')); continue; }
       const paire = el('div', 'paire' + (type === 'nombre' ? ' unite' : ''));
@@ -315,7 +315,7 @@ function ouvrirBibliotheque() {
         champ = el('input');
         champ.type = 'checkbox';
         champ.checked = brouillon[cle];
-        champ.style.justifySelf = 'end';
+        champ.className = 'case';
         champ.addEventListener('change', () => { brouillon[cle] = champ.checked; });
       } else {
         champ = el('input', 'champ' + (type === 'texte' ? ' texte' : ''));
@@ -459,7 +459,8 @@ function rangParametre(p, avecChemin) {
     champ.addEventListener('change', () => changer(p, champ.value));
   }
   champ.id = 'p-' + p.cle;
-  const retablir = el('button', 'retablir', '↺');
+  const retablir = el('button', 'retablir');
+  retablir.append(icone('retablir'));
   retablir.title = `Revenir à la valeur du profil : ${texteValeur(p, valeurProfil(p))}`;
   retablir.setAttribute('aria-label', `Rétablir ${p.libelle}`);
   retablir.addEventListener('click', () => changer(p, p.type === 'bool' || p.type === 'choix'
@@ -601,7 +602,7 @@ function afficherTrajectoires(resultat) {
     coche.append(boite);
     const libelle = el('td');
     const trait = el('span', 'trait-couleur');
-    trait.style.background = COULEURS[type];
+    trait.style.background = couleursTrajectoires()[type];
     const texte = el('label', '', nom.charAt(0).toUpperCase() + nom.slice(1));
     texte.htmlFor = boite.id;
     libelle.append(trait, texte);
@@ -651,7 +652,7 @@ async function trancher() {
     const element = el('li');
     const [x, y, z, bb, c] = erreur.position.map((v) => fr(v, 2));
     element.append(el('span', 'code', `Ligne ${erreur.ligne} : ${erreur.texte}`), el('span', '', erreur.probleme),
-      el('span', 'mono', `X ${x}  Y ${y}  Z ${z}  B ${bb}°  C ${c}°`), el('span', 'solution', `Solution possible : ${erreur.solution}`));
+      el('span', 'chiffres', `X ${x}  Y ${y}  Z ${z}  B ${bb}°  C ${c}°`), el('span', 'solution', `Solution possible : ${erreur.solution}`));
     return element;
   }));
   $('console').hidden = verification.valide;

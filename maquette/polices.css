@@ -1,0 +1,7 @@
+/* ArtPrint Slicer - licence AGPL v3
+   Police de l'interface : Archivo (Omnibus-Type, licence OFL), livrée avec le
+   logiciel pour fonctionner sans connexion. Deux graisses pour l'interface
+   (400 et 600) ; la graisse 700 est réservée au nom « ArtPrint » du logo. */
+@font-face { font-family: "Archivo"; font-weight: 400; font-style: normal; font-display: swap; src: url("polices/archivo-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Archivo"; font-weight: 600; font-style: normal; font-display: swap; src: url("polices/archivo-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Archivo"; font-weight: 700; font-style: normal; font-display: swap; src: url("polices/archivo-latin-700-normal.woff2") format("woff2"); }
