@@ -52,10 +52,18 @@ export class Vue3D {
     this.hauteur = 281;
     this.sombre = window.matchMedia('(prefers-color-scheme: dark)');
     this.sombre.addEventListener('change', () => this.definirVolume(this.rayon, this.hauteur));
+    // Un thème choisi explicitement (attribut data-theme) l'emporte sur celui du système.
+    new MutationObserver(() => this.definirVolume(this.rayon, this.hauteur))
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     this.definirVolume(this.rayon, this.hauteur);
     new ResizeObserver(() => this.redimensionner()).observe(canvas.parentElement);
     this.redimensionner();
+  }
+
+  estSombre() {
+    const choisi = document.documentElement.dataset.theme;
+    return choisi ? choisi === 'dark' : this.sombre.matches;
   }
 
   demanderRendu() {
@@ -91,7 +99,7 @@ export class Vue3D {
     this.rayon = rayon;
     this.hauteur = hauteur;
     this.vider(this.plateau);
-    const sombre = this.sombre.matches;
+    const sombre = this.estSombre();
     const disque = new THREE.Mesh(
       new THREE.CircleGeometry(rayon, 128),
       new THREE.MeshBasicMaterial({ color: sombre ? 0x262c36 : 0xfbfcfd, side: THREE.DoubleSide }));
