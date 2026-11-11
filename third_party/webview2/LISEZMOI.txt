@@ -1,0 +1,10 @@
+Microsoft Edge WebView2 SDK (Copyright (C) Microsoft Corporation).
+
+  include/WebView2.h        en-tête du SDK
+  x64/WebView2Loader.dll    DLL de chargement, livrée à côté du programme
+  mingw/EventToken.h        petite passerelle pour compiler avec MinGW (ArtPrint)
+
+Ces deux fichiers de Microsoft viennent du paquet « Microsoft.Web.WebView2 »
+(https://www.nuget.org/packages/Microsoft.Web.WebView2), distribué sous une
+licence de type BSD. Pour les mettre à jour, les remplacer par ceux d'une
+version plus récente du paquet.

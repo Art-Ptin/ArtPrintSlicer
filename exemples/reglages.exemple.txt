@@ -22,6 +22,15 @@ sens_c = 1
 centre_plateau_x = 0
 centre_plateau_y = 0
 
+# Courses des axes X, Y, Z en mm, dans les coordonnées du G-code.
+# À MESURER sur la machine. Sans ces réglages, les courses ne sont pas vérifiées.
+# course_x_min =
+# course_x_max =
+# course_y_min =
+# course_y_max =
+# course_z_min =
+# course_z_max =
+
 # Butées de B, en degrés.
 b_min = -90
 b_max = 90
@@ -35,7 +44,55 @@ b_limite_pres_plateau = 55
 # c_min =
 # c_max =
 
-# --- Vérificateur ----------------------------------------------------------
+# Collisions avec la vraie forme de l'imprimante.
+# Le modèle de machine se fabrique à partir du fichier STEP (qui reste privé) :
+#   python outils/convertir_machine.py machine/imprimante.step machine/groupes.txt machine/machine.apm
+# Un nom sans dossier est cherché à côté de ce fichier de réglages.
+# Sans ce réglage, les collisions avec la machine ne sont pas vérifiées.
+# modele_machine = machine.apm
+# Distance minimale à garder entre la tête, le bras et tout le reste, en mm.
+marge_securite = 2
+# Rayon autour de la pointe de la buse où le contact avec la matière est normal, en mm.
+zone_buse = 5
+# Marge propre à la buse, qui travaille au ras de la matière, en mm.
+marge_buse = 0,2
 
+# --- Impression ------------------------------------------------------------
+
+# Cordon déposé, en mm.
 largeur_extrusion = 0,45
 hauteur_couche = 0,2
+hauteur_premiere_couche = 0,2
+diametre_filament = 1,75
+# Multiplicateur de matière (1 = normal).
+debit = 1
+
+# Coque de la pièce.
+nombre_parois = 2
+couches_dessus = 4
+couches_dessous = 3
+# Remplissage intérieur, en pourcentage (0 = creux, 100 = plein).
+densite_remplissage = 15
+
+# Jupe : boucles tracées autour de la pièce pour amorcer la buse (0 = aucune).
+jupe_boucles = 1
+jupe_distance = 5
+
+# Vitesses, en mm/s.
+vitesse_paroi_externe = 25
+vitesse_paroi_interne = 40
+vitesse_remplissage = 60
+vitesse_premiere_couche = 20
+vitesse_a_vide = 120
+
+# Rétraction avant chaque déplacement à vide. Longueur à régler sur la machine.
+retraction_longueur = 2
+retraction_vitesse = 40
+# La buse monte de cette hauteur (mm) pendant les déplacements à vide.
+levee_z = 0,2
+
+# Températures, en °C. Plateau à 0 : pas de plateau chauffant.
+temperature_buse = 210
+temperature_plateau = 0
+# Ventilateur de pièce à partir de la 2e couche : 1 = oui, 0 = non.
+ventilation = 1

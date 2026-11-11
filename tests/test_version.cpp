@@ -7,8 +7,8 @@
 int main() {
     int erreurs = 0;
 
-    if (artprint::version() != "0.0.1") {
-        std::cerr << "ÉCHEC : version attendue 0.0.1, obtenue "
+    if (artprint::version() != "0.1.0") {
+        std::cerr << "ÉCHEC : version attendue 0.1.0, obtenue "
                   << artprint::version() << '\n';
         ++erreurs;
     }

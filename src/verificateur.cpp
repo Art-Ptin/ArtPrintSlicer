@@ -17,10 +17,16 @@
 #include <deque>
 #include <format>
 #include <istream>
+#include <filesystem>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <sstream>
 
+#include "collisions.hpp"
 #include "gcode.hpp"
+#include "machine.hpp"
 #include "matiere.hpp"
 
 namespace artprint {
@@ -43,7 +49,23 @@ public:
     explicit Verificateur(const Reglages& reglages)
         : machine_(reglages.machine),
           verif_(reglages.verification),
-          grille_(std::min(verif_.pas_controle, verif_.hauteur_couche / 2.0)) {}
+          largeur_(reglages.impression.largeur_extrusion),
+          hauteur_(std::min(reglages.impression.hauteur_couche,
+                            reglages.impression.hauteur_premiere_couche)),
+          grille_(std::min(verif_.pas_controle, hauteur_ / 2.0)) {
+        if (machine_.modele_machine.empty()) {
+            return;
+        }
+        // Forme réelle de l'imprimante : chargée une fois, puis gardée.
+        try {
+            modele_ = charger_modele(machine_.modele_machine);
+            detecteur_ = std::make_unique<DetecteurCollisions>(*modele_, machine_);
+        } catch (const std::exception& erreur) {
+            signaler(TypeErreur::modele_machine, position_, erreur.what(),
+                     "Vérifier le réglage « modele_machine », ou le vider pour trancher sans "
+                     "contrôle des collisions.");
+        }
+    }
 
     void traiter_ligne(int numero, std::string_view texte) {
         ligne_ = numero;
@@ -238,6 +260,9 @@ private:
                                  "orientation du plateau.",
                                  court, cible.c));
         }
+        verifier_course('X', cible.x, machine_.course_x_min, machine_.course_x_max, cible);
+        verifier_course('Y', cible.y, machine_.course_y_min, machine_.course_y_max, cible);
+        verifier_course('Z', cible.z, machine_.course_z_min, machine_.course_z_max, cible);
         if (cible.b < machine_.b_min - 1e-6 || cible.b > machine_.b_max + 1e-6) {
             signaler(TypeErreur::limite_b, cible,
                      std::format("L'axe B est à {:.2f}°, hors de ses butées ({:.1f}° à "
@@ -252,6 +277,86 @@ private:
                      "Détordre le plateau : faire un déplacement à vide qui ramène C dans "
                      "ses limites.");
         }
+    }
+
+    // Vérifie qu'un axe linéaire reste dans sa course. Le mouvement est
+    // droit : si le départ et l'arrivée sont dans la course, tout le trajet l'est.
+    void verifier_course(char axe, double valeur, const std::optional<double>& min,
+                         const std::optional<double>& max, const PositionMachine& cible) {
+        if ((min && valeur < *min - 1e-6) || (max && valeur > *max + 1e-6)) {
+            const std::string bas = min ? std::format("{:.1f}", *min) : "sans limite";
+            const std::string haut = max ? std::format("{:.1f}", *max) : "sans limite";
+            signaler(TypeErreur::limite_course, cible,
+                     std::format("L'axe {} est demandé à {:.2f} mm, hors de sa course "
+                                 "({} à {} mm) : la machine irait en butée.",
+                                 axe, valeur, bas, haut),
+                     "Déplacer, tourner ou réduire la pièce pour rester dans la course.");
+        }
+    }
+
+    // Le modèle de machine est gros : il est gardé en mémoire d'un tranchage
+    // à l'autre tant que le fichier ne change pas.
+    static std::shared_ptr<const ModeleMachine> charger_modele(const std::string& chemin_utf8) {
+        static std::mutex verrou;
+        static std::string chemin_garde;
+        static std::filesystem::file_time_type date_gardee;
+        static std::shared_ptr<const ModeleMachine> garde;
+        const std::filesystem::path chemin(std::u8string(chemin_utf8.begin(), chemin_utf8.end()));
+        std::error_code erreur;
+        const auto date = std::filesystem::last_write_time(chemin, erreur);
+        const std::lock_guard<std::mutex> garde_verrou(verrou);
+        if (!garde || chemin_garde != chemin_utf8 || erreur || date != date_gardee) {
+            garde = std::make_shared<const ModeleMachine>(lire_modele_machine(chemin));
+            chemin_garde = chemin_utf8;
+            date_gardee = date;
+        }
+        return garde;
+    }
+
+    // Contrôle les collisions à cette position. Renvoie vrai si une erreur
+    // a été signalée.
+    bool controler_collision(const PositionMachine& ici) {
+        if (!detecteur_) {
+            return false;
+        }
+        std::optional<Contact> contact;
+        try {
+            contact = detecteur_->controler(ici);
+        } catch (const ErreurReglageManquant&) {
+            return false;  // déjà signalé par le contrôle de la pose
+        }
+        if (!contact) {
+            return false;
+        }
+        const char* solution = "";
+        TypeErreur type = TypeErreur::collision_machine;
+        switch (contact->type) {
+            case TypeContact::matiere:
+                type = TypeErreur::collision_matiere;
+                solution = "Imprimer cette zone plus tôt, réduire l'inclinaison de la tête, ou "
+                           "faire tourner le plateau avant d'approcher.";
+                break;
+            case TypeContact::plateau:
+                type = TypeErreur::collision_plateau;
+                solution = "Remonter la trajectoire, ou réduire l'inclinaison de la tête près "
+                           "du plateau.";
+                break;
+            case TypeContact::machine:
+                solution = "Rapprocher la pièce du centre du plateau, la tourner ou la réduire.";
+                break;
+        }
+        signaler(type, ici,
+                 std::format("Collision : « {} » touche « {} » (distance {:.1f} mm, pour une "
+                             "marge de sécurité de {:.1f} mm).",
+                             contact->piece, contact->obstacle, contact->distance,
+                             machine_.marge_securite),
+                 solution);
+        // Après trop de collisions, le contrôle s'arrête : le G-code est
+        // déjà refusé, inutile de ralentir la suite.
+        if (++collisions_ >= verif_.erreurs_max_par_type) {
+            detecteur_.reset();
+        }
+        return true;
     }
 
     // Rejoue le mouvement par petits pas, de la position actuelle à la cible.
@@ -275,6 +380,7 @@ private:
         bool plateau_signale = false;
         bool volume_signale = false;
         bool dessus_signale = false;
+        bool collision_signalee = false;
         Vec3 precedent = depart.pointe;
 
         for (int k = 1; k <= nombre; ++k) {
@@ -297,6 +403,9 @@ private:
             if (!b_signale) {
                 b_signale = verifier_inclinaison(ici, pose);
             }
+            if (!collision_signalee) {
+                collision_signalee = controler_collision(ici);
+            }
             if (!extrusion) {
                 continue;
             }
@@ -316,7 +425,7 @@ private:
 
             distance_extrusion_ += avance;
             attente_.push_back({pose.pointe, pose.direction, distance_extrusion_});
-            const double retard = 3.0 * verif_.largeur_extrusion;
+            const double retard = 3.0 * largeur_;
             while (!attente_.empty() && attente_.front().distance < distance_extrusion_ - retard) {
                 deposer(attente_.front());
                 attente_.pop_front();
@@ -352,13 +461,13 @@ private:
 
     void controler_matiere(const PositionMachine& ici, const PoseOutil& pose, double avance,
                            bool& dessus_signale) {
-        const double hauteur = verif_.hauteur_couche;
+        const double hauteur = hauteur_;
 
         // « Dans » : le cœur du cordon, un quart de couche sous la pointe.
         if (grille_.occupe(pose.pointe - pose.direction * (hauteur / 4.0))) {
             longueur_dans_ += avance;
             if (!dans_signale_ &&
-                longueur_dans_ > verif_.tolerance_croisement * verif_.largeur_extrusion) {
+                longueur_dans_ > verif_.tolerance_croisement * largeur_) {
                 dans_signale_ = true;
                 signaler(TypeErreur::dans_matiere, ici,
                          std::format("Le cordon est imprimé dans de la matière déjà déposée "
@@ -393,8 +502,11 @@ private:
     }
 
     void deposer(const Depot& depot) {
-        grille_.deposer(depot.pointe, depot.direction, verif_.largeur_extrusion,
-                        verif_.hauteur_couche);
+        grille_.deposer(depot.pointe, depot.direction, largeur_,
+                        hauteur_);
+        if (detecteur_) {
+            detecteur_->deposer(depot.pointe - depot.direction * (hauteur_ / 2.0));
+        }
     }
 
     void vider_attente() {
@@ -413,6 +525,8 @@ private:
 
     const ReglagesMachine machine_;
     const ReglagesVerification verif_;
+    const double largeur_;  // largeur nominale du cordon
+    const double hauteur_;  // hauteur nominale du cordon
     GrilleMatiere grille_;
     RapportVerification rapport_;
     std::map<TypeErreur, int> compte_par_type_;
@@ -427,6 +541,10 @@ private:
     double retrait_ = 0.0;  // longueur de filament actuellement rétractée
     bool retracte_firmware_ = false;
     bool a_extrude_ = false;
+
+    std::shared_ptr<const ModeleMachine> modele_;
+    std::unique_ptr<DetecteurCollisions> detecteur_;
+    int collisions_ = 0;
 
     std::deque<Depot> attente_;
     double distance_extrusion_ = 0.0;

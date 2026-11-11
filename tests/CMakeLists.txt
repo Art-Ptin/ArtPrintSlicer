@@ -21,3 +21,21 @@ add_executable(test_verificateur
     test_verificateur.cpp)
 target_link_libraries(test_verificateur PRIVATE artprint_core)
 add_test(NAME verificateur COMMAND test_verificateur)
+
+# Slicer 3 axes : coupe en couches, parois, remplissage, G-code vérifié.
+add_executable(test_slicer
+    test_slicer.cpp)
+target_link_libraries(test_slicer PRIVATE artprint_core)
+add_test(NAME slicer COMMAND test_slicer)
+
+# Commandes de l'interface graphique : ouvrir, régler, trancher, enregistrer.
+add_executable(test_api
+    test_api.cpp)
+target_link_libraries(test_api PRIVATE artprint_core)
+add_test(NAME api COMMAND test_api)
+
+# Collisions avec la forme de la machine (machine d'essai inventée).
+add_executable(test_collisions
+    test_collisions.cpp)
+target_link_libraries(test_collisions PRIVATE artprint_core)
+add_test(NAME collisions COMMAND test_collisions)

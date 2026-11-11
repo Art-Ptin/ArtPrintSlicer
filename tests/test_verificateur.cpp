@@ -177,6 +177,26 @@ void test_limites_de_c() {
                  .contient(TypeErreur::limite_c));
 }
 
+void test_courses_des_axes() {
+    // Sans réglage de course : rien n'est vérifié.
+    VERIFIER_ACCEPTE(verifier_gcode_texte("G0 X500 Y-500 Z200\n", Reglages{}));
+
+    Reglages reglages;
+    reglages.machine.course_x_min = -100.0;
+    reglages.machine.course_x_max = 120.0;
+    reglages.machine.course_y_max = 80.0;
+    reglages.machine.course_z_max = 50.0;
+    VERIFIER_ACCEPTE(verifier_gcode_texte("G0 X120 Y80 Z50\nG0 X-100 Y-900\n", reglages));
+
+    const RapportVerification rapport =
+        verifier_gcode_texte("G0 X121\nG0 X0 Y81\nG0 Y0 Z51\nG0 X-100.5 Z0\n", reglages);
+    VERIFIER(rapport.nombre_erreurs == 4);
+    VERIFIER(rapport.contient(TypeErreur::limite_course));
+    VERIFIER(!rapport.erreurs.empty() &&
+             rapport.erreurs[0].probleme.find("L'axe X") != std::string::npos &&
+             rapport.erreurs[0].probleme.find("-100.0 à 120.0") != std::string::npos);
+}
+
 void test_reglage_manquant() {
     // Tête inclinée alors que la distance pivot-buse n'est pas renseignée.
     const RapportVerification rapport = verifier_gcode_texte("G0 Z50 B10\n", Reglages{});
@@ -296,7 +316,7 @@ void test_fichier_de_reglages() {
     VERIFIER(reglages.machine.axe_pivot_b == AxePivot::x);
     VERIFIER(reglages.machine.sens_c == -1);
     VERIFIER(reglages.machine.hauteur_bascule_b == 30.0);
-    VERIFIER(reglages.verification.hauteur_couche == 0.3);
+    VERIFIER(reglages.impression.hauteur_couche == 0.3);
     // Ce qui n'est pas écrit garde sa valeur par défaut.
     VERIFIER(reglages.machine.rayon_plateau == 150.0);
     VERIFIER(!reglages.machine.c_min);
@@ -329,6 +349,7 @@ int main() {
         {"C par le chemin le plus court", test_c_chemin_le_plus_court},
         {"limites de B", test_limites_de_b},
         {"limites de C", test_limites_de_c},
+        {"courses des axes X, Y, Z", test_courses_des_axes},
         {"réglage manquant", test_reglage_manquant},
         {"volume d'impression", test_volume_d_impression},
         {"commandes refusées ou ignorées", test_commandes_refusees},

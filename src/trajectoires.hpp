@@ -1,0 +1,48 @@
+// ArtPrint Slicer - licence AGPL v3
+// Trajectoires : transforme les contours de chaque couche en chemins que la
+// buse va suivre (jupe, parois, remplissage plein, remplissage intérieur).
+#pragma once
+
+#include <string_view>
+#include <vector>
+
+#include "polygones.hpp"
+#include "reglages.hpp"
+
+namespace artprint {
+
+enum class TypeTrait {
+    jupe,
+    paroi_interne,
+    paroi_externe,
+    remplissage_plein,
+    remplissage,
+};
+
+// Nom du type en français, écrit dans les commentaires du G-code.
+std::string_view nom_type(TypeTrait type);
+
+// Un chemin d'extrusion continu, en millimètres, dans le repère de la pièce.
+struct Trait {
+    TypeTrait type{};
+    std::vector<Point2> points;
+    bool ferme = false;  // vrai : boucle, le dernier point rejoint le premier
+};
+
+struct CoucheTrajectoires {
+    double z = 0.0;        // hauteur de la buse pendant cette couche
+    double hauteur = 0.0;  // épaisseur de la couche
+    std::vector<Trait> traits;  // dans l'ordre d'impression
+};
+
+// « contours » : les contours de la matière pour chaque couche, du bas vers
+// le haut. La couche 0 a l'épaisseur « hauteur_premiere_couche ».
+std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygones>& contours,
+                                                      const ReglagesImpression& reglages);
+
+// Lignes parallèles qui remplissent une zone, reliées en zigzag quand c'est
+// possible. « angle » en degrés, « espacement » en mm entre deux lignes.
+std::vector<std::vector<Point2>> lignes_de_remplissage(const Polygones& zone, double espacement,
+                                                       double angle);
+
+}  // namespace artprint

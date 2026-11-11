@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(ArtPrintSlicer
-    VERSION 0.0.1
+    VERSION 0.1.0
     DESCRIPTION "Slicer 5 axes continu"
     LANGUAGES CXX)
 
@@ -11,13 +11,70 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Avec MSVC : programmes autonomes, sans « Visual C++ Redistributable » à installer.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 # Avec MSVC : fichiers source lus en UTF-8 et avertissements stricts.
 if(MSVC)
     add_compile_options(/utf-8 /W4 /permissive-)
 endif()
+
+# Clipper2 : bibliothèque de calcul sur les polygones (licence Boost).
+# CMake la télécharge tout seul à la première compilation.
+include(FetchContent)
+set(CLIPPER2_UTILS OFF CACHE BOOL "" FORCE)
+set(CLIPPER2_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CLIPPER2_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(clipper2
+    GIT_REPOSITORY https://github.com/AngusJohnson/Clipper2.git
+    GIT_TAG ef88ee97c0e759792e43a2b2d8072def6c9244e8  # version 1.5.4
+    GIT_SHALLOW FALSE
+    SOURCE_SUBDIR CPP)
+FetchContent_MakeAvailable(clipper2)
+
+# nlohmann/json : lecture et écriture du JSON échangé avec l'interface (licence MIT).
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+FetchContent_Declare(json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(json)
 
 add_subdirectory(src)
 
 # Les tests sont lancés avec CTest.
 enable_testing()
 add_subdirectory(tests)
+
+# --- Installation et installateur Windows ------------------------------------
+# « cmake --install <build> --component artprint --prefix <dossier> » rassemble
+# les fichiers du logiciel ; la cible « installateur » en fait un Setup.exe.
+if(WIN32)
+    install(TARGETS artprint-slicer ArtPrintSlicer RUNTIME DESTINATION . COMPONENT artprint)
+    install(FILES third_party/webview2/x64/WebView2Loader.dll DESTINATION . COMPONENT artprint)
+    install(DIRECTORY ui DESTINATION . COMPONENT artprint)
+    install(FILES exemples/reglages.exemple.txt DESTINATION exemples COMPONENT artprint)
+    install(FILES outils/convertir_machine.py DESTINATION outils COMPONENT artprint)
+    install(FILES LICENSE LICENCES-TIERCES.txt DESTINATION . COMPONENT artprint)
+    install(FILES ${clipper2_SOURCE_DIR}/LICENSE DESTINATION licences RENAME Clipper2.txt
+        COMPONENT artprint)
+    install(FILES ${json_SOURCE_DIR}/LICENSE.MIT DESTINATION licences RENAME nlohmann-json.txt
+        COMPONENT artprint)
+    install(FILES ui/lib/LICENCE-three.txt DESTINATION licences RENAME three.js.txt
+        COMPONENT artprint)
+
+    find_program(MAKENSIS makensis PATHS "$ENV{ProgramFiles\(x86\)}/NSIS" "$ENV{ProgramFiles}/NSIS")
+    if(MAKENSIS)
+        set(DOSSIER_PAQUET ${CMAKE_BINARY_DIR}/paquet)
+        set(FICHIER_SETUP ${CMAKE_BINARY_DIR}/ArtPrintSlicer-Setup-${PROJECT_VERSION}.exe)
+        add_custom_target(installateur
+            COMMAND ${CMAKE_COMMAND} -E rm -rf ${DOSSIER_PAQUET}
+            COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component artprint
+                --prefix ${DOSSIER_PAQUET} --config $<CONFIG>
+            COMMAND ${MAKENSIS} -V2 -INPUTCHARSET UTF8 -DSOURCE=${DOSSIER_PAQUET} -DVERSION=${PROJECT_VERSION}
+                -DSORTIE=${FICHIER_SETUP} ${PROJECT_SOURCE_DIR}/installateur/artprint.nsi
+            DEPENDS artprint-slicer ArtPrintSlicer
+            COMMENT "Fabrication de l'installateur ${FICHIER_SETUP}"
+            VERBATIM)
+    endif()
+endif()

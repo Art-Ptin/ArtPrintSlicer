@@ -5,10 +5,11 @@
 //   - jamais de cordon imprimé dans ou sous une matière déjà imprimée ;
 //   - une rétraction avant chaque déplacement à vide ;
 //   - C passe toujours par le chemin le plus court ;
-//   - les limites des axes B et C et du volume d'impression sont respectées.
+//   - les courses de X, Y, Z, les limites de B et C et le volume d'impression
+//     sont respectés.
 //
-// Les collisions avec la vraie forme de l'imprimante (fichier STEP) ne sont
-// pas encore vérifiées ici : ce sera une étape à part.
+// Si le réglage « modele_machine » est renseigné, chaque mouvement est aussi
+// contrôlé contre la vraie forme de l'imprimante (voir collisions.hpp).
 #pragma once
 
 #include <cstddef>
@@ -29,12 +30,17 @@ enum class TypeErreur {
     retraction_manquante,    // déplacement à vide sans rétraction avant
     extrusion_sans_reprise,  // extrusion alors que le filament est encore rétracté
     c_chemin_long,           // C tourne de plus d'un demi-tour en un mouvement
+    limite_course,           // X, Y ou Z sort de la course de la machine
     limite_b,                // B dépasse sa butée ou sa limite près du plateau
     limite_c,                // C dépasse sa butée
     sous_plateau,            // la pointe de la buse passe sous le plateau
     hors_volume,             // extrusion en dehors du volume d'impression
     dans_matiere,            // cordon imprimé dans de la matière déjà posée
     sous_matiere,            // cordon imprimé sous de la matière déjà posée
+    collision_matiere,       // la tête ou le bras touche la matière déjà imprimée
+    collision_plateau,       // la tête ou le bras touche le plateau
+    collision_machine,       // la tête, le bras ou le module Z touche la machine
+    modele_machine,          // le modèle de machine est illisible ou incohérent
 };
 
 struct ErreurVerification {
