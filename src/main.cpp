@@ -1,11 +1,17 @@
 // ArtPrint Slicer - licence AGPL v3
+#include <algorithm>
 #include <exception>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #include "maillage.hpp"
+#include "reglages.hpp"
 #include "stl.hpp"
+#include "verificateur.hpp"
 #include "version.hpp"
 
 #ifdef _WIN32
@@ -51,15 +57,70 @@ int analyser(const std::filesystem::path& chemin) {
     }
 }
 
-int lancer(int nombre_arguments, const std::filesystem::path& chemin) {
+// Vérifie un fichier G-code et affiche le rapport. Renvoie le code de sortie :
+// 0 si le G-code est accepté, 1 s'il est refusé.
+int verifier(const std::filesystem::path& chemin_gcode,
+             const std::filesystem::path& chemin_reglages) {
+    using namespace artprint;
+    try {
+        const Reglages reglages =
+            chemin_reglages.empty() ? Reglages{} : lire_reglages(chemin_reglages);
+
+        std::ifstream fichier(chemin_gcode, std::ios::binary);
+        if (!fichier) {
+            std::cerr << std::format("Erreur : impossible d'ouvrir « {} ».\n",
+                                     chemin_en_texte(chemin_gcode));
+            return 1;
+        }
+        const RapportVerification rapport = verifier_gcode(fichier, reglages);
+
+        std::cout << std::format("Fichier : {}\n", chemin_en_texte(chemin_gcode));
+        std::cout << std::format("Lignes lues : {}\n", rapport.lignes);
+        std::cout << std::format("Extrusions : {} ({:.1f} mm)\n", rapport.extrusions,
+                                 rapport.longueur_extrusions);
+        std::cout << std::format("Déplacements à vide : {} ({:.1f} mm)\n",
+                                 rapport.deplacements_a_vide, rapport.longueur_a_vide);
+        std::cout << std::format("Rétractions : {}\n\n", rapport.retractions);
+
+        if (rapport.valide()) {
+            std::cout << "G-code ACCEPTÉ : aucune règle physique n'est violée.\n";
+            return 0;
+        }
+        for (const ErreurVerification& erreur : rapport.erreurs) {
+            std::cout << decrire(erreur) << '\n';
+        }
+        if (rapport.nombre_erreurs > rapport.erreurs.size()) {
+            std::cout << std::format("... et {} autre(s) erreur(s) du même genre.\n\n",
+                                     rapport.nombre_erreurs - rapport.erreurs.size());
+        }
+        std::cout << std::format("G-code REFUSÉ : {} erreur(s).\n", rapport.nombre_erreurs);
+        return 1;
+    } catch (const std::exception& erreur) {
+        std::cerr << "Erreur : " << erreur.what() << '\n';
+        return 1;
+    }
+}
+
+int lancer(const std::vector<std::filesystem::path>& arguments) {
     std::cout << artprint::presentation() << '\n';
     std::cout << "Version " << artprint::version() << "\n\n";
 
-    if (nombre_arguments < 2) {
-        std::cerr << "Utilisation : artprint-slicer <fichier.stl>\n";
-        return 2;
+    if (!arguments.empty() && arguments[0] == "verifier") {
+        if (arguments.size() == 2) {
+            return verifier(arguments[1], {});
+        }
+        if (arguments.size() == 3) {
+            return verifier(arguments[1], arguments[2]);
+        }
+    } else if (arguments.size() == 1) {
+        return analyser(arguments[0]);
     }
-    return analyser(chemin);
+    std::cerr << "Utilisation :\n"
+                 "  artprint-slicer <fichier.stl>\n"
+                 "      affiche le résumé d'un modèle 3D\n"
+                 "  artprint-slicer verifier <fichier.gcode> [reglages.txt]\n"
+                 "      vérifie qu'un G-code respecte les règles physiques\n";
+    return 2;
 }
 
 }  // namespace
@@ -69,10 +130,10 @@ int lancer(int nombre_arguments, const std::filesystem::path& chemin) {
 // avec accents fonctionnent.
 int wmain(int argc, wchar_t* argv[]) {
     SetConsoleOutputCP(CP_UTF8);  // affichage correct des accents
-    return lancer(argc, argc >= 2 ? std::filesystem::path(argv[1]) : std::filesystem::path());
+    return lancer(std::vector<std::filesystem::path>(argv + std::min(argc, 1), argv + argc));
 }
 #else
 int main(int argc, char* argv[]) {
-    return lancer(argc, argc >= 2 ? std::filesystem::path(argv[1]) : std::filesystem::path());
+    return lancer(std::vector<std::filesystem::path>(argv + std::min(argc, 1), argv + argc));
 }
 #endif

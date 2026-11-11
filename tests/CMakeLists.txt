@@ -9,3 +9,15 @@ add_executable(test_stl
     test_stl.cpp)
 target_link_libraries(test_stl PRIVATE artprint_core)
 add_test(NAME stl COMMAND test_stl)
+
+# Cinématique 5 axes : calcul direct, calcul inverse et chemin le plus court de C.
+add_executable(test_cinematique
+    test_cinematique.cpp)
+target_link_libraries(test_cinematique PRIVATE artprint_core)
+add_test(NAME cinematique COMMAND test_cinematique)
+
+# Vérificateur de G-code : un G-code correct passe, chaque faute est attrapée.
+add_executable(test_verificateur
+    test_verificateur.cpp)
+target_link_libraries(test_verificateur PRIVATE artprint_core)
+add_test(NAME verificateur COMMAND test_verificateur)

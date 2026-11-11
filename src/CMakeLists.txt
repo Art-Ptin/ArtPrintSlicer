@@ -2,7 +2,12 @@
 add_library(artprint_core
     version.cpp
     maillage.cpp
-    stl.cpp)
+    stl.cpp
+    reglages.cpp
+    cinematique.cpp
+    gcode.cpp
+    matiere.cpp
+    verificateur.cpp)
 target_include_directories(artprint_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # La version vient de project() dans le CMakeLists.txt principal.

@@ -1,0 +1,41 @@
+# ArtPrint Slicer - exemple de fichier de réglages.
+# Copier ce fichier, puis remplacer les valeurs par celles de la machine.
+# Une ligne par réglage : nom = valeur. Le signe # commence un commentaire.
+# La virgule ou le point sont acceptés pour les décimales.
+
+# --- Machine ---------------------------------------------------------------
+
+rayon_plateau = 150
+hauteur_impression = 281
+
+# Distance entre le pivot B et la pointe de la buse, en mm.
+# À MESURER sur la machine, puis enlever le # devant la ligne.
+# distance_pivot_buse =
+
+# Axe autour duquel la tête s'incline : X ou Y. À confirmer sur la machine.
+axe_pivot_b = Y
+# Sens des axes : 1 ou -1. À confirmer sur la machine.
+sens_b = 1
+sens_c = 1
+
+# Position X et Y (machine) du centre du plateau.
+centre_plateau_x = 0
+centre_plateau_y = 0
+
+# Butées de B, en degrés.
+b_min = -90
+b_max = 90
+# Inclinaison maximale près du plateau, en degrés.
+b_limite_pres_plateau = 55
+# Hauteur (mm) au-dessus de laquelle B peut dépasser cette limite.
+# À MESURER sur la machine. Sans ce réglage, la limite s'applique partout.
+# hauteur_bascule_b =
+
+# Butées de C, en degrés. Sans ces réglages, le plateau tourne sans limite.
+# c_min =
+# c_max =
+
+# --- Vérificateur ----------------------------------------------------------
+
+largeur_extrusion = 0,45
+hauteur_couche = 0,2
