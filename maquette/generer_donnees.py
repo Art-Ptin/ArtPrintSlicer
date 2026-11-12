@@ -50,7 +50,11 @@ def main():
                 tranchees.append(strategie)
                 continue
             reponse = appeler(programme, ouvrir + [{"commande": "trancher", "strategie": strategie["type"]}])[-1]
-            if reponse["ok"]:
+            if reponse["ok"] and not reponse["resultat"]["verification"]["valide"]:
+                # Le slicer refuserait ce tranchage : la simulation ne le propose pas.
+                print(f"  {strategie['nom']} : refusé par le vérificateur "
+                      f"({reponse['resultat']['verification']['nombre_erreurs']} faute(s))")
+            elif reponse["ok"]:
                 tranchees.append(strategie)
                 (dossier / f"{nom}-{strategie['type']}.json").write_text(
                     json.dumps(reponse["resultat"], ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

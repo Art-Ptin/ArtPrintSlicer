@@ -234,19 +234,55 @@ AnalyseBranches analyser_branches(const Maillage& pose, double pas, const std::s
     }
     const auto hauteur = [&](int k) { return champ.origine.z + (k + 0.5) * pas; };
 
-    // 1. Le tronc : les colonnes de matière qui montent du plateau sans interruption.
-    std::vector<std::uint8_t> tronc(total, 0);
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            int k = 0;
-            while (k < nz && !matiere[indice(i, j, k)]) {
-                ++k;
+    // 1. Le tronc : la matière qui monte du plateau sans interruption, en
+    // colonnes. D'ordinaire les colonnes sont verticales. Mais un tronc peut
+    // pencher un peu : on essaie donc aussi des colonnes penchées (jusqu'à
+    // 27° environ, une pente qu'une impression en couches horizontales tient
+    // sans peine), et on garde la direction qui donne le plus gros tronc,
+    // si elle fait nettement mieux que la verticale. Une seule direction
+    // pour tout le modèle : une branche, plus inclinée, n'en fait pas partie.
+    // Une colonne penchée se décale d'un cube toutes les « periode » couches.
+    const auto colonnes = [&](int di, int dj, int periode, std::vector<std::uint8_t>& resultat) {
+        resultat.assign(total, 0);
+        std::size_t volume = 0;
+        for (int k = 0; k < nz; ++k) {
+            // Le cube du dessous dans la même colonne penchée.
+            const bool decale = periode > 0 && k % periode == 0;
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    if (!matiere[indice(i, j, k)]) {
+                        continue;
+                    }
+                    bool porte = hauteur(k) <= 1.5 * pas;
+                    if (!porte && k > 0) {
+                        const int a = decale ? i - di : i, b = decale ? j - dj : j;
+                        porte = dedans(a, b, k - 1) && resultat[indice(a, b, k - 1)];
+                    }
+                    resultat[indice(i, j, k)] = porte;
+                    volume += porte;
+                }
             }
-            if (k == nz || hauteur(k) > 1.5 * pas) {
-                continue;
-            }
-            for (; k < nz && matiere[indice(i, j, k)]; ++k) {
-                tronc[indice(i, j, k)] = 1;
+        }
+        return volume;
+    };
+    std::vector<std::uint8_t> tronc;
+    std::size_t volume_tronc = colonnes(0, 0, 0, tronc);
+    {
+        std::vector<std::uint8_t> essai;
+        const std::size_t volume_droit = volume_tronc;
+        for (const int periode : {2, 3, 4, 6}) {
+            for (int dj = -1; dj <= 1; ++dj) {
+                for (int di = -1; di <= 1; ++di) {
+                    if (di == 0 && dj == 0) {
+                        continue;
+                    }
+                    const std::size_t volume = colonnes(di, dj, periode, essai);
+                    // (Il faut un gain net : au moins 15 % de plus que la verticale.)
+                    if (volume > volume_tronc && static_cast<double>(volume) > 1.15 * static_cast<double>(volume_droit)) {
+                        volume_tronc = volume;
+                        tronc.swap(essai);
+                    }
+                }
             }
         }
     }

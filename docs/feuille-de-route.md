@@ -106,6 +106,9 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Branche impossible en couches courbes rendue au tronc, les autres gardées | ✅ | une remarque dit laquelle et pourquoi ; chandelier : ses trois bras en couches courbes |
 | Déplacements stratégiques : chaque branche essayée à blanc dans plusieurs positions | 🟡 | côté et inclinaison de la tête ; pas encore l'ordre ni les trajets |
 | Petits chevauchements réparés (le bout de cordon n'est pas imprimé) | ✅ | une trentaine au plus, avec une remarque |
-| Couches en plusieurs morceaux (drone, crochet, champignon, tuyau en Y, anse) | ⬜ | la première couche s'enroule sur plusieurs faces |
+| Premières couches trop enroulées : découpées au lieu d'abandonner la branche | ✅ | les bords très enroulés restent au tronc |
+| Vingt modèles d'essai des couches courbes | 🟡 | treize vérifiés ; voir `docs/essais-vingt-modeles.md` |
+| Tronc qui penche (jusqu'à 27° environ) | 🟡 | la branche placée sous lui n'est pas encore traitée |
+| Fourche où le tronc s'arrête, arche, anse, chapeau, table, bras près du plateau | ⬜ | voir `docs/essais-vingt-modeles.md` |
 | Peau courbe : une dernière passe suit la forme du dessus (option) | 🟡 | tête d'aplomb sur la surface ; abandonnée si elle provoquerait un contact |
 | Vérificateur : croisement de cordons sur une couche inclinée | ✅ | toléré sur une courte longueur, comme à plat |

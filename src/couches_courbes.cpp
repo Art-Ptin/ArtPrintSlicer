@@ -331,6 +331,77 @@ bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, doub
         // bombées. C'est permis pour elles, et pour les toutes dernières
         // (le bout arrondi de la tige, tout petit) ; entre les deux, une
         // couche trop bombée ne peut plus être dessinée sur une carte plane.
+        // Tout près du tronc (les quatre ou cinq premières couches), une
+        // couche qui s'enroule trop autour de lui n'est pas abandonnée : on
+        // n'en garde que la partie que la tête peut atteindre depuis la
+        // direction de la carte (là où la surface penche de moins de 72°).
+        // Le reste, les bords très enroulés, n'est qu'une fine pellicule
+        // posée sur le tronc : c'est lui qui l'imprime, avec sa propre paroi.
+        Polygones atteignable;
+        bool decoupee = false;
+        if (couche.bombement > 75.0 && couches.size() < 5) {
+            double niveau = 0.0, haut = -1e9;
+            std::size_t mesures = 0;
+            for (const std::vector<Vec3>& boucle : brut.boucles) {
+                for (const Vec3& p : boucle) {
+                    double v = 0.0;
+                    if (champ.valeur(p, v)) {
+                        niveau += v;
+                        ++mesures;
+                    }
+                    haut = std::max(haut, produit_scalaire(p - couche.origine, couche.w));
+                }
+            }
+            if (mesures > 0) {
+                niveau /= static_cast<double>(mesures);
+                // L'ombre de la couche sur la carte (les replis comptent une seule fois).
+                Polygones ombre;
+                for (Contour contour : dessin) {
+                    if (Clipper2Lib::Area(contour) < 0.0) {
+                        std::reverse(contour.begin(), contour.end());
+                    }
+                    ombre.push_back(std::move(contour));
+                }
+                ombre = Clipper2Lib::Union(ombre, Clipper2Lib::FillRule::NonZero);
+                const Clipper2Lib::Rect64 boite = Clipper2Lib::GetBounds(ombre);
+                const double fin = std::max(0.2, 0.5 * champ.pas);
+                const double x0 = static_cast<double>(boite.left) / unites_par_mm;
+                const double y0 = static_cast<double>(boite.top) / unites_par_mm;
+                const double x1 = static_cast<double>(boite.right) / unites_par_mm;
+                const double y1 = static_cast<double>(boite.bottom) / unites_par_mm;
+                const double seuil = std::cos(en_radians(72.0));
+                Polygones bandes;
+                for (double y = std::min(y0, y1); y < std::max(y0, y1); y += fin) {
+                    double debut_bande = 0.0;
+                    bool dans_une_bande = false;
+                    for (double x = x0;; x += fin) {
+                        bool bon = false;
+                        if (x < x1) {
+                            double hauteur = haut + champ.pas;
+                            Vec3 ici, d;
+                            double pente = 1.0;
+                            bon = poser_sur_la_surface(champ, couche, {x + 0.5 * fin, y + 0.5 * fin}, niveau, hauteur, ici) &&
+                                  champ.gradient(ici, d, pente) && produit_scalaire(d, couche.w) >= seuil;
+                        }
+                        if (bon && !dans_une_bande) {
+                            debut_bande = x;
+                            dans_une_bande = true;
+                        } else if (!bon && dans_une_bande) {
+                            bandes.push_back({en_unites(Point2{debut_bande, y}), en_unites(Point2{x, y}),
+                                              en_unites(Point2{x, y + fin}), en_unites(Point2{debut_bande, y + fin})});
+                            dans_une_bande = false;
+                        }
+                        if (x >= x1) {
+                            break;
+                        }
+                    }
+                }
+                const Polygones zone = Clipper2Lib::Union(bandes, Clipper2Lib::FillRule::NonZero);
+                atteignable = intersecter(ombre, decaler_arrondi(decaler_arrondi(zone, fin), -fin));
+                decoupee = true;
+                couche.bombement = 75.0;
+            }
+        }
         const std::size_t restantes = bruts.size() - static_cast<std::size_t>(&brut - bruts.data());
         if (couche.bombement > (couches.size() < 12 || restantes <= 12 ? 86.0 : 80.0)) {
             raison = std::format("sa couche {} sur {} est trop bombée ({:.0f}°)", couches.size() + 1, bruts.size(),
@@ -345,7 +416,7 @@ bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, doub
             return false;
         }
         couche.contour = Clipper2Lib::SimplifyPaths(
-            Clipper2Lib::Union(dessin, Clipper2Lib::FillRule::EvenOdd), 0.005 * unites_par_mm);
+            decoupee ? atteignable : Clipper2Lib::Union(dessin, Clipper2Lib::FillRule::EvenOdd), 0.005 * unites_par_mm);
         // Là où la peau de la branche rejoint le tronc en biseau, la couche
         // finit en pointe très fine : les parois s'y chevaucheraient. Ce qui
         // est plus étroit qu'un cordon environ est retiré (la couche est

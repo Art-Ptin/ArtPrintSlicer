@@ -19,6 +19,7 @@
 
 #include "decoupe.hpp"
 #include "formes_organiques.hpp"
+#include "modeles_vingt.hpp"
 #include "modeles_essai.hpp"
 #include "multiaxe.hpp"
 #include "slicer.hpp"
@@ -86,11 +87,18 @@ int main(int argc, char** argv) {
         {"buisson", essai::buisson},
         {"potence", essai::potence},
     };
+    // Et les vingt modèles d'essai des couches courbes (noms en « v01_ »... « v20_ »).
+    std::vector<std::pair<std::string, std::function<Maillage()>>> tous(objets.begin(), objets.end());
+    for (auto& modele : essai::les_vingt()) {
+        tous.push_back(std::move(modele));
+    }
+    // Quatrième argument « stl » : écrire seulement les fichiers STL, sans trancher.
+    const bool stl_seulement = argc > 4 && std::string(argv[4]) == "stl";
 
     // Troisième argument (facultatif) : ne traiter que les objets dont le nom contient ce texte.
     const std::string filtre = argc > 3 ? argv[3] : "";
     int refus = 0;
-    for (const auto& [nom, fabriquer] : objets) {
+    for (const auto& [nom, fabriquer] : tous) {
         if (!filtre.empty() && nom.find(filtre) == std::string::npos) {
             continue;
         }
@@ -103,6 +111,9 @@ int main(int argc, char** argv) {
                                  fermeture.ferme && fermeture.orientation_coherente ? "" : "  !! MODELE OUVERT");
         if (!dossier.empty()) {
             ecrire_stl(modele, dossier / (nom + ".stl"));
+        }
+        if (stl_seulement) {
+            continue;
         }
         auto debut = std::chrono::steady_clock::now();
         std::vector<Strategie> strategies;

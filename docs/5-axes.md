@@ -344,11 +344,10 @@ tranchable, et contrôlent le pivot continu (jamais plus de 0,25° par ligne).
   d'une tête, une branche basse ou serrée contre un tronc haut est souvent
   refusée (voir plus haut).
 - **Couches courbes : des formes ne sont pas encore traitées** : une
-  branche dont la première couche s'enroule sur deux faces du tronc à la
-  fois (bras de drone, crochet, sorties d'un tuyau en Y), un chapeau qui
-  fait tout le tour d'un pied, une anse (attaquée par ses deux bouts). Ces
-  morceaux sont imprimés avec le tronc, en couches horizontales ; si rien
-  d'autre ne reste, seule la stratégie classique est proposée.
+  fourche où le tronc s'arrête, une arche ou une anse (attaquées par leurs
+  deux bouts), un chapeau ou un plateau qui fait tout le tour d'un pied,
+  des bras qui partent tout près du plateau. Vingt modèles d'essai suivent
+  ces progrès : voir [essais-vingt-modeles.md](essais-vingt-modeles.md).
 - **Couches courbes : proposées seulement si elles servent** (au moins 20 %
   de surface en surplomb en moins que l'impression classique).
 - **Couches courbes : la branche se soude sur un remplissage aéré.** Il n'y

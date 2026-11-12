@@ -2,10 +2,10 @@
 // Analyse des branches : sépare le modèle en un « tronc » et des « branches »,
 // et prépare les couches courbes des branches.
 //
-// Le tronc est tout ce qui tient debout tout seul : chaque point du tronc a
-// de la matière sous lui, sans interruption, jusqu'au plateau. Il est imprimé
-// en couches horizontales, sans aucune amorce de branche : sa surface reste
-// lisse.
+// Le tronc est tout ce qui tient debout tout seul : la matière qui monte du
+// plateau sans interruption, en colonnes droites (ou un peu penchées, si le
+// tronc penche : jusqu'à 27° environ depuis la verticale). Il est imprimé en couches horizontales, sans
+// aucune amorce de branche : sa surface reste lisse.
 //
 // Une branche est un morceau en surplomb, accroché au tronc. Elle est
 // imprimée après lui, CONTRE lui : pour chaque point de la branche, on

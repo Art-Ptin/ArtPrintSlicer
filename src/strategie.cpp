@@ -1131,7 +1131,9 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
 
         // --- 4. Couches courbes : le tronc d'abord, lisse ; puis chaque
         // branche, imprimée contre lui en couches qui épousent sa surface.
-        {
+        // (Si l'impression classique ne laisse rien dans le vide, les couches
+        // courbes ne serviraient à rien : inutile de les calculer.)
+        if (surplomb_classique > 1.0) {
             const PlanBranches plan = preparer_branches(pose, reglages.impression.hauteur_couche,
                                                         0.45 * reglages.impression.largeur_extrusion);
             if (!plan.vide()) {

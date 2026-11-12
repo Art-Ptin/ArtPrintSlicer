@@ -368,7 +368,21 @@ private:
 
     Vec3 sur_la_surface(const Point2& p) {
         Vec3 resultat;
-        if (!surface_->poser(p, hauteur_surface_, resultat)) {
+        bool pose = surface_->poser(p, hauteur_surface_, resultat);
+        // La recherche part de la hauteur du point précédent ; si elle
+        // échoue, on réessaie en partant d'ailleurs (du dessus de la couche,
+        // de la carte) avant de renoncer.
+        for (const double depart : {hauteur_trajet_ - r_.levee_z, 0.0, 0.5 * (hauteur_trajet_ - r_.levee_z)}) {
+            if (pose) {
+                break;
+            }
+            double hauteur = depart;
+            pose = surface_->poser(p, hauteur, resultat);
+            if (pose) {
+                hauteur_surface_ = hauteur;
+            }
+        }
+        if (!pose) {
             throw ErreurTranchage(
                 "Une trajectoire sort de la surface d'une couche courbe : cette partie ne peut "
                 "pas être imprimée en couches courbes.");
@@ -582,7 +596,12 @@ private:
             if (profondeur < 12 && longueur > 0.3) {
                 Etape milieu;
                 milieu.q = {(a.q.x + b.q.x) / 2.0, (a.q.y + b.q.y) / 2.0};
-                milieu.point = sur_la_surface(milieu.q);
+                // (Un milieu qui frôle le bord de la couche peut ne pas
+                // trouver la surface : le segment est alors tracé tel quel.)
+                if (!surface_->poser(milieu.q, hauteur_surface_, milieu.point)) {
+                    emettre(a, b);
+                    return;
+                }
                 const Orientation au_milieu = orientation_locale(milieu.point);
                 milieu.b = au_milieu.b, milieu.c = au_milieu.c;
                 const double fleche = norme(milieu.point - (a.point + b.point) * 0.5);
@@ -957,33 +976,124 @@ static bool point_dans(const Polygones& polygones, const Point2& q) {
     return dedans % 2 == 1;
 }
 
+// Donne le type « paroi externe » aux morceaux de trait pour lesquels
+// « visible » est vrai, parmi les traits que « concerne » désigne. L'ordre
+// d'impression ne change pas : seul le type des morceaux change.
+static void en_paroi_externe(std::vector<Trait>& anciens, const std::function<bool(const Trait&)>& concerne,
+                             const std::function<bool(const Point2&)>& visible) {
+    std::vector<Trait> traits;
+    for (Trait& trait : anciens) {
+        if (!concerne(trait)) {
+            traits.push_back(std::move(trait));
+            continue;
+        }
+        // Le trait est recoupé finement, puis partagé en suites visibles et cachées.
+        std::vector<Point2> points;
+        const std::size_t nombre = trait.points.size() + (trait.ferme ? 1 : 0);
+        for (std::size_t i = 0; i < nombre; ++i) {
+            const Point2& q = trait.points[i % trait.points.size()];
+            if (!points.empty()) {
+                const Point2 avant = points.back();
+                const int morceaux = std::max(1, static_cast<int>(std::ceil(distance(avant, q) / 0.4)));
+                for (int k = 1; k < morceaux; ++k) {
+                    const double f = static_cast<double>(k) / morceaux;
+                    points.push_back({avant.x + (q.x - avant.x) * f, avant.y + (q.y - avant.y) * f});
+                }
+            }
+            points.push_back(q);
+        }
+        std::vector<std::uint8_t> vu(points.size());
+        std::size_t nombre_vus = 0;
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            vu[i] = visible(points[i]);
+            nombre_vus += vu[i];
+        }
+        if (nombre_vus == 0) {
+            traits.push_back(std::move(trait));
+            continue;
+        }
+        if (nombre_vus == points.size()) {
+            trait.type = TypeTrait::paroi_externe;
+            traits.push_back(std::move(trait));
+            continue;
+        }
+        // Une boucle est ouverte à un changement : aucune suite n'est coupée en deux.
+        std::size_t debut = 0;
+        if (trait.ferme) {
+            points.pop_back();
+            vu.pop_back();
+            for (std::size_t i = 0; i < points.size(); ++i) {
+                if (vu[i] != vu[(i + points.size() - 1) % points.size()]) {
+                    debut = i;
+                    break;
+                }
+            }
+        }
+        Trait morceau;
+        for (std::size_t n = 0; n < points.size(); ++n) {
+            const std::size_t i = (debut + n) % points.size();
+            if (!morceau.points.empty() && (vu[i] != 0) != (morceau.type == TypeTrait::paroi_externe)) {
+                // Les deux morceaux se touchent : le cordon ne s'interrompt pas.
+                morceau.points.push_back(points[i]);
+                traits.push_back(morceau);
+                morceau.points.clear();
+            }
+            morceau.type = vu[i] ? TypeTrait::paroi_externe : trait.type;
+            morceau.points.push_back(points[i]);
+        }
+        if (trait.ferme && !morceau.points.empty()) {
+            morceau.points.push_back(points[debut]);
+        }
+        if (morceau.points.size() > 1) {
+            traits.push_back(morceau);
+        }
+    }
+    anciens = std::move(traits);
+}
+
 // Couches courbes : les cordons qui resteront visibles sont imprimés comme
 // des parois extérieures. Quand une couche courbe arrive en biais sur la
 // surface de la pièce (au pied d'une branche, par exemple), elle dépasse de
 // la couche suivante sur une bande parfois large : ses parois intérieures et
 // son remplissage plein y sont à l'air libre. Sur cette bande, ils prennent
 // le type « paroi externe » (même soin, même vitesse, même couleur).
+// « poser » : repose un point d'une carte sur la surface de sa couche.
 static void peau_des_couches_courbes(const std::vector<CoucheCourbe>& cartes, std::vector<CoucheTrajectoires>& couches,
-                              double largeur) {
+                              double largeur,
+                              const std::function<bool(const CoucheCourbe&, const Point2&, Vec3&)>& poser) {
     // Contour d'une couche voisine, redessiné sur la carte de la couche « c ».
     const auto reporte = [&](std::size_t autre, std::size_t c) {
         Polygones resultat;
         for (const Contour& contour : cartes[autre].contour) {
             Contour copie;
-            for (const PointEntier& sommet : contour) {
-                const Point2 q = en_mm(sommet);
-                const Vec3 p = cartes[autre].origine + cartes[autre].u * q.x + cartes[autre].v * q.y - cartes[c].origine;
-                copie.push_back(en_unites(Point2{produit_scalaire(p, cartes[c].u), produit_scalaire(p, cartes[c].v)}));
+            for (std::size_t n = 0; n < contour.size(); ++n) {
+                // Le bord est suivi de près (tous les demi-millimètres), et
+                // chaque point passe par la vraie surface de sa couche : sur
+                // une couche bombée, les deux cartes ne se superposent pas.
+                const Point2 a = en_mm(contour[n]), b = en_mm(contour[(n + 1) % contour.size()]);
+                const int morceaux = std::max(1, static_cast<int>(std::ceil(distance(a, b) / 0.5)));
+                for (int k = 0; k < morceaux; ++k) {
+                    const double f = static_cast<double>(k) / morceaux;
+                    const Point2 q{a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f};
+                    Vec3 ici;
+                    if (!poser(cartes[autre], q, ici)) {
+                        ici = cartes[autre].origine + cartes[autre].u * q.x + cartes[autre].v * q.y;
+                    }
+                    const Vec3 p = ici - cartes[c].origine;
+                    copie.push_back(en_unites(Point2{produit_scalaire(p, cartes[c].u), produit_scalaire(p, cartes[c].v)}));
+                }
             }
             resultat.push_back(std::move(copie));
         }
-        return decaler(resultat, -0.5 * largeur);
+        return decaler(resultat, -1.0 * largeur);
     };
     for (std::size_t c = 0; c < couches.size() && c < cartes.size(); ++c) {
         // Ce qui recouvre la couche (la suivante) et ce qui la porte (la précédente).
         std::vector<Polygones> voisines;
         if (c + 1 < cartes.size()) {
             voisines.push_back(reporte(c + 1, c));
+        } else {
+            voisines.emplace_back();  // la dernière couche : rien ne la recouvre, tout est visible
         }
         if (c > 0) {
             voisines.push_back(reporte(c - 1, c));
@@ -999,75 +1109,11 @@ static void peau_des_couches_courbes(const std::vector<CoucheCourbe>& cartes, st
             }
             return false;
         };
-        std::vector<Trait> traits;
-        for (Trait& trait : couches[c].traits) {
-            if (trait.type != TypeTrait::paroi_interne && trait.type != TypeTrait::remplissage_plein) {
-                traits.push_back(std::move(trait));
-                continue;
-            }
-            // Le trait est recoupé finement, puis partagé en suites visibles et cachées.
-            std::vector<Point2> points;
-            const std::size_t nombre = trait.points.size() + (trait.ferme ? 1 : 0);
-            for (std::size_t i = 0; i < nombre; ++i) {
-                const Point2& q = trait.points[i % trait.points.size()];
-                if (!points.empty()) {
-                    const Point2 avant = points.back();
-                    const int morceaux = std::max(1, static_cast<int>(std::ceil(distance(avant, q) / 0.4)));
-                    for (int k = 1; k < morceaux; ++k) {
-                        const double f = static_cast<double>(k) / morceaux;
-                        points.push_back({avant.x + (q.x - avant.x) * f, avant.y + (q.y - avant.y) * f});
-                    }
-                }
-                points.push_back(q);
-            }
-            std::vector<std::uint8_t> vu(points.size());
-            std::size_t nombre_vus = 0;
-            for (std::size_t i = 0; i < points.size(); ++i) {
-                vu[i] = visible(points[i]);
-                nombre_vus += vu[i];
-            }
-            if (nombre_vus == 0) {
-                traits.push_back(std::move(trait));
-                continue;
-            }
-            if (nombre_vus == points.size()) {
-                trait.type = TypeTrait::paroi_externe;
-                traits.push_back(std::move(trait));
-                continue;
-            }
-            // Une boucle est ouverte à un changement : aucune suite n'est coupée en deux.
-            std::size_t debut = 0;
-            if (trait.ferme) {
-                points.pop_back();
-                vu.pop_back();
-                for (std::size_t i = 0; i < points.size(); ++i) {
-                    if (vu[i] != vu[(i + points.size() - 1) % points.size()]) {
-                        debut = i;
-                        break;
-                    }
-                }
-            }
-            Trait morceau;
-            for (std::size_t n = 0; n < points.size(); ++n) {
-                const std::size_t i = (debut + n) % points.size();
-                if (!morceau.points.empty() && (vu[i] != 0) != (morceau.type == TypeTrait::paroi_externe)) {
-                    // Les deux morceaux se touchent : le cordon ne s'interrompt pas.
-                    morceau.points.push_back(points[i]);
-                    traits.push_back(morceau);
-                    morceau.points.clear();
-                }
-                morceau.type = vu[i] ? TypeTrait::paroi_externe : trait.type;
-                morceau.points.push_back(points[i]);
-            }
-            if (trait.ferme && !morceau.points.empty()) {
-                morceau.points.push_back(points[debut]);
-            }
-            if (morceau.points.size() > 1) {
-                traits.push_back(morceau);
-            }
-        }
-        // L'ordre d'impression ne change pas : seul le type des morceaux visibles change.
-        couches[c].traits = std::move(traits);
+        en_paroi_externe(couches[c].traits,
+                         [](const Trait& trait) {
+                             return trait.type == TypeTrait::paroi_interne || trait.type == TypeTrait::remplissage_plein;
+                         },
+                         visible);
     }
 }
 
@@ -1267,7 +1313,11 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             reglages_courbe.jupe_boucles = 0;
             reglages_courbe.hauteur_premiere_couche = r.hauteur_couche;
             t.couches = calculer_trajectoires(contours, reglages_courbe);
-            peau_des_couches_courbes(t.cartes, t.couches, r.largeur_extrusion);
+            peau_des_couches_courbes(t.cartes, t.couches, r.largeur_extrusion,
+                                     [&](const CoucheCourbe& carte, const Point2& q, Vec3& ici) {
+                                         return poser_sur_la_surface(plan.analyse.champ, carte, q,
+                                                                     plan.dessus[carte.niveau], ici);
+                                     });
             t.origine = t.cartes.front().origine, t.u = t.cartes.front().u;
             t.v = t.cartes.front().v, t.w = t.cartes.front().w;
             nombre_couches += t.couches.size();
@@ -1372,6 +1422,18 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             }
         }
         t.couches = calculer_trajectoires(coupe.couches, reglages_partie);
+        if (partie.tronc_lisse && courbes) {
+            // Sur un dessus arrondi, chaque couche dépasse de la suivante :
+            // ses parois intérieures y sont à l'air libre. Elles sont
+            // imprimées comme des parois extérieures.
+            for (std::size_t c = 0; c < t.couches.size() && c < coupe.couches.size(); ++c) {
+                const Polygones dessus_couvert =
+                    c + 1 < coupe.couches.size() ? decaler(coupe.couches[c + 1], -r.largeur_extrusion) : Polygones{};
+                en_paroi_externe(t.couches[c].traits,
+                                 [](const Trait& trait) { return trait.type == TypeTrait::paroi_interne; },
+                                 [&](const Point2& q) { return !point_dans(dessus_couvert, q); });
+            }
+        }
         // Surface à nu : les morceaux de paroi qui tombent dans la zone d'une
         // branche sont retirés. Il reste le remplissage, apparent.
         std::unordered_map<const CoucheCourbe*, Polygones> contours_elargis, contours_etroits;
@@ -1471,6 +1533,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                 }
                 return false;
             };
+            std::vector<Point2> peau_retiree;  // points de paroi extérieure retirés
             std::vector<Trait> gardes;
             for (Trait& trait : t.couches[c].traits) {
                 if (trait.type != TypeTrait::paroi_externe && trait.type != TypeTrait::paroi_interne) {
@@ -1497,6 +1560,9 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                 for (std::size_t i = 0; i < points.size(); ++i) {
                     retire[i] = dans_la_zone(points[i]);
                     touche = touche || retire[i];
+                    if (retire[i] && trait.type == TypeTrait::paroi_externe) {
+                        peau_retiree.push_back(points[i]);
+                    }
                 }
                 if (!touche) {
                     gardes.push_back(std::move(trait));
@@ -1533,6 +1599,17 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                     }
                 }
                 finir();
+            }
+            // Là où la paroi extérieure a été retirée et où la paroi
+            // intérieure reste, c'est elle la peau du tronc : elle est
+            // imprimée comme une paroi extérieure.
+            if (!peau_retiree.empty()) {
+                const double pres = 1.3 * r.largeur_extrusion;
+                en_paroi_externe(gardes, [](const Trait& trait) { return trait.type == TypeTrait::paroi_interne; },
+                                 [&](const Point2& q) {
+                                     return std::any_of(peau_retiree.begin(), peau_retiree.end(),
+                                                        [&](const Point2& a) { return distance(a, q) < pres; });
+                                 });
             }
             // Les traits restent groupés par type, dans l'ordre d'origine.
             std::stable_sort(gardes.begin(), gardes.end(), [](const Trait& a, const Trait& b) {
@@ -1667,26 +1744,51 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             // à vide) et point le plus bas au-dessus du plateau.
             double hauteur_trajet = -std::numeric_limits<double>::max();
             double z_min = std::numeric_limits<double>::max(), hauteur = 0.0;
-            // Un trait dont un point ne trouve pas la surface (un éclat au
-            // tout début ou au bout de la partie) est retiré ; s'il y en a
-            // beaucoup, la partie ne peut pas être imprimée ainsi.
+            // Là où un trait ne trouve pas la surface (un éclat au tout début
+            // ou au bout de la partie, le bord d'une couche découpée), ce
+            // morceau de trait est retiré ; s'il y en a beaucoup loin du
+            // pied, la partie ne peut pas être imprimée ainsi.
             double garde = 0.0, retire = 0.0;
-            std::erase_if(couche.traits, [&](const Trait& trait) {
-                double longueur = 0.0;
-                bool pose = true;
-                for (std::size_t i = 0; i < trait.points.size() && pose; ++i) {
-                    Vec3 ici;
-                    pose = poser_sur_la_surface(champ, carte, trait.points[i], dessus[carte.niveau], hauteur, ici);
-                    if (pose) {
-                        hauteur_trajet = std::max(hauteur_trajet, hauteur);
-                        z_min = std::min(z_min, ici.z);
-                        longueur += i > 0 ? distance(trait.points[i - 1], trait.points[i]) : 0.0;
+            {
+                const auto longueur_de = [](const Trait& trait) {
+                    double longueur = 0.0;
+                    for (std::size_t i = 1; i < trait.points.size(); ++i) {
+                        longueur += distance(trait.points[i - 1], trait.points[i]);
+                    }
+                    if (trait.ferme && trait.points.size() > 2) {
+                        longueur += distance(trait.points.back(), trait.points.front());
+                    }
+                    return longueur;
+                };
+                std::vector<Trait> poses;
+                for (const Trait& trait : couche.traits) {
+                    const double avant = longueur_de(trait);
+                    double apres = 0.0;
+                    for (Trait& morceau : sans_les_points(
+                             trait,
+                             [&](const Point2& q) {
+                                 Vec3 ici;
+                                 return !poser_sur_la_surface(champ, carte, q, dessus[carte.niveau], hauteur, ici);
+                             },
+                             r.largeur_extrusion)) {
+                        apres += longueur_de(morceau);
+                        poses.push_back(std::move(morceau));
+                    }
+                    garde += apres;
+                    retire += std::max(0.0, avant - apres);
+                }
+                couche.traits = std::move(poses);
+                for (const Trait& trait : couche.traits) {
+                    for (const Point2& q : trait.points) {
+                        Vec3 ici;
+                        if (poser_sur_la_surface(champ, carte, q, dessus[carte.niveau], hauteur, ici)) {
+                            hauteur_trajet = std::max(hauteur_trajet, hauteur);
+                            z_min = std::min(z_min, ici.z);
+                        }
                     }
                 }
-                (pose ? garde : retire) += longueur;
-                return !pose;
-            });
-            if (retire > 2.0 + 0.2 * garde) {
+            }
+            if (c >= 5 && retire > 2.0 + 0.2 * garde) {
                 throw ErreurTranchage(std::format(
                     "Des trajectoires de la partie {} sortent de la surface de leur couche courbe.", p + 1));
             }
