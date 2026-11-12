@@ -202,9 +202,42 @@ class DecoupeParBranches {
 public:
     DecoupeParBranches(const Maillage& pose, const Squelette& squelette, const Reglages& reglages,
                        const OptionsStrategie& options, const ControleMachine& controle,
-                       double hauteur_sure, std::vector<std::string>& remarques)
+                       const GrilleVoxels& matiere, double hauteur_sure,
+                       std::vector<std::string>& remarques)
         : squelette_(squelette), machine_(reglages.machine), options_(options),
-          controle_(controle), hauteur_sure_(hauteur_sure), remarques_(remarques) {
+          controle_(controle), matiere_(matiere), hauteur_sure_(hauteur_sure), remarques_(remarques) {
+        // Chaque face du modèle est rattachée à la branche dont une tranche
+        // est la plus proche : on saura ainsi ce que chaque branche coûte en
+        // surplomb selon la direction dans laquelle elle est imprimée.
+        faces_.reserve(pose.triangles.size());
+        for (const Triangle& t : pose.triangles) {
+            const Vec3 a = en_vec(pose.sommets[t.sommets[0]]);
+            const Vec3 b = en_vec(pose.sommets[t.sommets[1]]);
+            const Vec3 c = en_vec(pose.sommets[t.sommets[2]]);
+            const Vec3 croix = produit_vectoriel(b - a, c - a);
+            const double double_aire = norme(croix);
+            if (double_aire < 1e-12) {
+                continue;
+            }
+            const Vec3 centre = (a + b + c) * (1.0 / 3.0);
+            const Vec3 normale = croix * (1.0 / double_aire);
+            // Face cachée dans la matière, ou posée sur le plateau : elle ne coûte rien.
+            if (centre.z < 0.3 || matiere.contient(centre + normale * (1.5 * matiere.pas))) {
+                continue;
+            }
+            int proche = -1;
+            double meilleure = std::numeric_limits<double>::max();
+            for (std::size_t n = 0; n < squelette_.branches.size(); ++n) {
+                for (const TrancheSquelette& tranche : squelette_.branches[n].tranches) {
+                    const double d = norme(centre - tranche.centre);
+                    if (d < meilleure) {
+                        meilleure = d;
+                        proche = static_cast<int>(n);
+                    }
+                }
+            }
+            faces_.push_back({normale, 0.5 * double_aire, proche});
+        }
         PartieImpression tronc;
         tronc.maillage = pose;
         parties_.push_back(std::move(tronc));
@@ -227,16 +260,67 @@ private:
         });
         for (const int enfant : enfants) {
             const BrancheSquelette& b = squelette_.branches[enfant];
-            const double ecart = angle_entre(b.direction, parties_[partie].direction);
-            const double rayon = b.tranches.front().rayon;
-            // Une branche courte ou peu écartée s'imprime bien avec sa mère.
-            if (ecart <= options_.surplomb_max || b.longueur < 2.0 * rayon) {
+            // Une branche qui s'imprime sans surplomb avec la partie qui la
+            // porte y reste : moins il y a de parties, mieux c'est. Une excroissance
+            // plus courte que son rayon n'est pas une branche.
+            if (surplomb_de(enfant, parties_[partie].direction) <= seuil_de(enfant) ||
+                b.longueur < b.tranches.front().rayon) {
                 parcourir(enfant, partie);
                 continue;
             }
+            // Essai : on détache la branche, on traite celles qu'elle porte,
+            // puis on regarde si le surplomb total a vraiment baissé. Sinon
+            // tout est remis comme avant et la branche reste avec sa mère.
+            const std::size_t parties_avant = parties_.size();
+            const std::size_t remarques_avant = remarques_.size();
+            const Maillage mere_avant = parties_[partie].maillage;
+            const double surplomb_avant = surplomb_partie(partie);
             const int nouvelle = detacher(enfant, partie);
-            parcourir(enfant, nouvelle >= 0 ? nouvelle : partie);
+            if (nouvelle < 0) {
+                parcourir(enfant, partie);
+                continue;
+            }
+            parcourir(enfant, nouvelle);
+            double surplomb_apres = surplomb_partie(partie);
+            for (std::size_t p = parties_avant; p < parties_.size(); ++p) {
+                surplomb_apres += surplomb_partie(static_cast<int>(p));
+            }
+            if (surplomb_avant - surplomb_apres <= seuil_de(enfant)) {
+                parties_.resize(parties_avant);
+                remarques_.resize(remarques_avant);
+                parties_[partie].maillage = mere_avant;
+                parcourir(enfant, partie);
+            }
         }
+    }
+
+    // Surface (mm²) qu'il faudrait soutenir pour imprimer cette partie, telle
+    // qu'elle est découpée en ce moment, dans sa direction.
+    double surplomb_partie(int partie) const {
+        const PartieImpression& p = parties_[partie];
+        const Vec3 base = p.parent < 0 ? Vec3{} : p.base;
+        return surface_en_surplomb(p.maillage, p.direction, base, options_.surplomb_max, 0.3, &matiere_);
+    }
+
+    // Surface (mm²) de la branche qui serait imprimée dans le vide en
+    // empilant les couches le long de « direction ».
+    double surplomb_de(int branche, const Vec3& direction) const {
+        const double seuil = std::sin(en_radians(options_.surplomb_max));
+        double total = 0.0;
+        for (const Face& face : faces_) {
+            if (face.branche == branche && -produit_scalaire(face.normale, direction) > seuil) {
+                total += face.aire;
+            }
+        }
+        return total;
+    }
+
+    // En dessous de cette surface, le surplomb d'une branche est négligé :
+    // quelques pour cent de sa surface, et jamais moins de quelques mm².
+    double seuil_de(int branche) const {
+        const BrancheSquelette& b = squelette_.branches[branche];
+        const double surface = 2.0 * std::numbers::pi * b.tranches.front().rayon * b.longueur;
+        return std::max(6.0, 0.04 * surface);
     }
 
     // Tranches de la branche et de toutes celles qu'elle porte.
@@ -278,6 +362,17 @@ private:
             direction = *libre;
         }
         const double redressement = angle_entre(direction, b.direction);
+        // La direction retenue doit vraiment réduire le surplomb de la branche.
+        const double avant = surplomb_de(branche, parties_[partie].direction);
+        if (avant - surplomb_de(branche, direction) <= seuil_de(branche)) {
+            if (angle_entre(b.direction, {0.0, 0.0, 1.0}) > 90.0) {
+                remarques_.push_back(std::format(
+                    "Une branche (vers {:.0f} mm de haut) redescend : la buse ne peut pas imprimer "
+                    "vers le haut. Elle reste avec la partie qui la porte et demandera des supports.",
+                    depart.centre.z));
+            }
+            return -1;
+        }
         const double ep = squelette_.epaisseur_tranche;
         const double section = std::numbers::pi * depart.rayon * depart.rayon;
         // La section d'une branche coupée de biais est plus grande.
@@ -334,10 +429,17 @@ private:
         return -1;
     }
 
+    struct Face {
+        Vec3 normale;
+        double aire;
+        int branche;  // branche du squelette la plus proche
+    };
+    std::vector<Face> faces_;
     const Squelette& squelette_;
     const ReglagesMachine machine_;
     const OptionsStrategie options_;
     const ControleMachine& controle_;
+    const GrilleVoxels& matiere_;
     const double hauteur_sure_;
     std::vector<std::string>& remarques_;
     std::vector<PartieImpression> parties_;
@@ -502,18 +604,18 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
         const ControleMachine controle(reglages, matiere, branches.remarques);
         // Hauteur où la tête change d'orientation (voir multiaxe.hpp : 20 mm au-dessus du modèle).
         const double hauteur_sure = boite.max.z + 20.0;
-        DecoupeParBranches decoupe(pose, squelette, reglages, options, controle, hauteur_sure,
-                                   branches.remarques);
+        DecoupeParBranches decoupe(pose, squelette, reglages, options, controle, matiere,
+                                   hauteur_sure, branches.remarques);
         if (!controle.actif() && !reglages.machine.modele_machine.empty() &&
             !reglages.machine.distance_pivot_buse) {
             branches.remarques.push_back("Les collisions ne sont pas prises en compte pour choisir les inclinaisons tant que « distance_pivot_buse » n'est pas renseigné.");
         }
         std::vector<PartieImpression> parties = ordonner(decoupe.prendre());
+        for (PartieImpression& partie : parties) {
+            mesurer(partie, options.surplomb_max, matiere);
+            branches.surplomb += partie.surplomb;
+        }
         if (parties.size() > 1) {
-            for (PartieImpression& partie : parties) {
-                mesurer(partie, options.surplomb_max, matiere);
-                branches.surplomb += partie.surplomb;
-            }
             branches.description = std::format(
                 "Le modèle est découpé en {} parties : le tronc, imprimé à la verticale, puis "
                 "chaque branche, imprimée le long de sa propre direction avec la tête inclinée "

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <numbers>
 #include <queue>
@@ -316,7 +317,6 @@ Squelette calculer_squelette(const Maillage& pose, double pas) {
             tranche.volume = voxels * volume_voxel;
             tranche.rayon = std::sqrt(static_cast<double>(noeuds[n].voxels) * volume_voxel /
                                       (std::numbers::pi * squelette.epaisseur_tranche));
-            branche.volume += tranche.volume;
             branche.tranches.push_back(tranche);
             if (suites.size() == 1) {
                 n = suites.front();
@@ -327,26 +327,106 @@ Squelette calculer_squelette(const Maillage& pose, double pas) {
             }
             break;
         }
-        for (std::size_t t = 1; t < branche.tranches.size(); ++t) {
-            branche.longueur += norme(branche.tranches[t].centre - branche.tranches[t - 1].centre);
-        }
-        branche.direction = branche.tranches.size() >= 2
-                                ? normaliser(branche.tranches.back().centre - branche.tranches.front().centre)
-                                : Vec3{0.0, 0.0, 1.0};
-        if (norme(branche.direction) == 0.0) {
-            branche.direction = {0.0, 0.0, 1.0};
-        }
         if (branche.parent >= 0) {
             squelette.branches[branche.parent].enfants.push_back(numero);
         }
         squelette.branches.push_back(std::move(branche));
     }
+
+    // Au bout d'une branche, les dernières tranches sont souvent incomplètes
+    // (bout arrondi, tube ouvert coupé de biais) : leur centre est décalé et
+    // fausserait la direction. Leur matière est rattachée à la tranche d'avant.
+    for (BrancheSquelette& branche : squelette.branches) {
+        if (!branche.enfants.empty() || branche.tranches.size() < 4) {
+            continue;
+        }
+        // On remonte depuis le bout tant que chaque tranche est nettement
+        // plus petite que la précédente : ce sont les tranches incomplètes.
+        std::size_t garde = branche.tranches.size();
+        while (garde > 3 && branche.tranches[garde - 1].volume < 0.85 * branche.tranches[garde - 2].volume) {
+            --garde;
+        }
+        for (std::size_t t = garde; t < branche.tranches.size(); ++t) {
+            branche.tranches[garde - 1].volume += branche.tranches[t].volume;
+        }
+        branche.tranches.resize(garde);
+    }
+
+    // Une branche courbe est partagée en tronçons à peu près droits : dès que
+    // sa direction a tourné de plus de « courbure_max », un nouveau tronçon
+    // commence. Il devient une branche portée par le tronçon précédent.
+    const double courbure_max = 25.0;
+    const std::size_t fenetre = 2, longueur_min = 4;
+    const auto tangente = [&](const BrancheSquelette& b, std::size_t t) {
+        const std::size_t avant = t >= fenetre ? t - fenetre : 0;
+        const std::size_t apres = std::min(t + fenetre, b.tranches.size() - 1);
+        return normaliser(b.tranches[apres].centre - b.tranches[avant].centre);
+    };
+    for (std::size_t numero = 0; numero < squelette.branches.size(); ++numero) {
+        const std::size_t n = squelette.branches[numero].tranches.size();
+        if (n < 2 * longueur_min) {
+            continue;
+        }
+        const Vec3 depart = tangente(squelette.branches[numero], std::min(fenetre, n - 1));
+        std::size_t coupure = 0;
+        for (std::size_t t = longueur_min; t + longueur_min <= n; ++t) {
+            const double cosinus = std::clamp(produit_scalaire(tangente(squelette.branches[numero], t), depart), -1.0, 1.0);
+            if (en_degres(std::acos(cosinus)) > courbure_max) {
+                coupure = t;
+                break;
+            }
+        }
+        if (coupure == 0) {
+            continue;
+        }
+        BrancheSquelette suite;
+        suite.parent = static_cast<int>(numero);
+        const int numero_suite = static_cast<int>(squelette.branches.size());
+        {
+            BrancheSquelette& b = squelette.branches[numero];
+            suite.tranches.assign(b.tranches.begin() + static_cast<std::ptrdiff_t>(coupure), b.tranches.end());
+            b.tranches.resize(coupure);
+            suite.enfants = std::move(b.enfants);
+            b.enfants = {numero_suite};
+        }
+        for (const int enfant : suite.enfants) {
+            squelette.branches[enfant].parent = numero_suite;
+        }
+        squelette.branches.push_back(std::move(suite));  // sera examinée à son tour
+    }
+
+    // Mesures de chaque branche : longueur, direction, volume.
+    for (BrancheSquelette& branche : squelette.branches) {
+        branche.longueur = 0.0;
+        branche.volume = 0.0;
+        Vec3 somme{};
+        for (std::size_t t = 0; t < branche.tranches.size(); ++t) {
+            branche.volume += branche.tranches[t].volume;
+            if (t > 0) {
+                const Vec3 pas_centre = branche.tranches[t].centre - branche.tranches[t - 1].centre;
+                branche.longueur += norme(pas_centre);
+                somme = somme + pas_centre;
+            }
+        }
+        branche.direction = normaliser(somme);
+        if (norme(branche.direction) == 0.0) {
+            // Une seule tranche : la direction de la branche qui la porte, ou la verticale.
+            branche.direction = branche.parent >= 0 ? squelette.branches[branche.parent].direction
+                                                    : Vec3{0.0, 0.0, 1.0};
+        }
+    }
     // Volume total de chaque branche, avec celles qu'elle porte.
-    for (std::size_t b = squelette.branches.size(); b-- > 0;) {
-        BrancheSquelette& branche = squelette.branches[b];
-        branche.volume_total += branche.volume;
-        if (branche.parent >= 0) {
-            squelette.branches[branche.parent].volume_total += branche.volume_total;
+    const std::function<double(int)> volume_total = [&](int numero) {
+        BrancheSquelette& branche = squelette.branches[numero];
+        branche.volume_total = branche.volume;
+        for (const int enfant : branche.enfants) {
+            branche.volume_total += volume_total(enfant);
+        }
+        return branche.volume_total;
+    };
+    for (std::size_t b = 0; b < squelette.branches.size(); ++b) {
+        if (squelette.branches[b].parent < 0) {
+            volume_total(static_cast<int>(b));
         }
     }
     return squelette;

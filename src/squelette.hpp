@@ -7,6 +7,8 @@
 // tranches ; quand une tranche se sépare en plusieurs morceaux, c'est qu'une
 // branche part. Chaque branche est décrite par la suite des centres de ses
 // tranches : cela donne sa direction, sa longueur et son épaisseur.
+// Une branche courbe est partagée en tronçons à peu près droits, chacun porté
+// par le précédent.
 #pragma once
 
 #include <cmath>
@@ -65,7 +67,7 @@ struct BrancheSquelette {
 };
 
 struct Squelette {
-    std::vector<BrancheSquelette> branches;  // une mère est toujours avant ses filles
+    std::vector<BrancheSquelette> branches;  // reliées par « parent » et « enfants »
     double pas = 0.0;            // côté d'un voxel, en mm
     double epaisseur_tranche = 0.0;  // mm
     std::size_t voxels = 0;      // nombre de voxels de matière

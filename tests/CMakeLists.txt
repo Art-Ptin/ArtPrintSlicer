@@ -45,3 +45,8 @@ add_executable(test_strategie
     test_strategie.cpp)
 target_link_libraries(test_strategie PRIVATE artprint_core)
 add_test(NAME strategie COMMAND test_strategie)
+
+# Banc d'essai des stratégies sur une série d'objets (long : lancé à la main).
+add_executable(banc_strategies
+    banc_strategies.cpp)
+target_link_libraries(banc_strategies PRIVATE artprint_core)

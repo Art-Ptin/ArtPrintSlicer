@@ -272,8 +272,13 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
 
         // Parois : de l'intérieur vers l'extérieur. L'axe du cordon extérieur
         // est à une demi-largeur du bord de la pièce.
+        // Là où deux portions d'une boucle seraient à moins d'une
+        // demi-largeur l'une de l'autre (passage étroit), le cordon se
+        // recouvrirait lui-même : ces portions sont retirées en rétrécissant
+        // puis en regonflant le tracé d'un quart de largeur.
         for (int i = r.nombre_parois - 1; i >= 0; --i) {
-            ajouter_boucles(couche.traits, decaler(matiere, -(0.5 + i) * largeur),
+            const Polygones trace = decaler(decaler(matiere, -(0.75 + i) * largeur), 0.25 * largeur);
+            ajouter_boucles(couche.traits, trace,
                             i == 0 ? TypeTrait::paroi_externe : TypeTrait::paroi_interne,
                             2.0 * largeur, largeur);
         }
