@@ -125,8 +125,12 @@ public:
     // qui laisse la tête libre le long de la branche. « tranches » : la
     // branche et celles qu'elle porte. Renvoie « rien » si même une faible
     // inclinaison provoque un contact.
-    std::optional<Vec3> direction_libre(const std::vector<TrancheSquelette>& tranches,
-                                        const Vec3& voulue, double hauteur_sure) const {
+    struct Choix {
+        Vec3 direction;
+        int cote = 0;
+    };
+    std::optional<Choix> direction_libre(const std::vector<TrancheSquelette>& tranches,
+                                         const Vec3& voulue, double hauteur_sure) const {
         // Matière déjà imprimée au moment d'attaquer la branche : tout le
         // modèle sauf la branche elle-même.
         DetecteurCollisions detecteur(*modele_, machine_);
@@ -147,8 +151,11 @@ public:
         for (double inclinaison = depart; inclinaison >= 15.0; inclinaison -= 5.0) {
             const double i = en_radians(inclinaison);
             const Vec3 direction{std::sin(i) * std::cos(azimut), std::sin(i) * std::sin(azimut), std::cos(i)};
-            if (libre(detecteur, tranches, direction, hauteur_sure)) {
-                return direction;
+            // Les deux façons de pencher la tête sont essayées.
+            for (const int cote : {1, -1}) {
+                if (libre(detecteur, tranches, direction, hauteur_sure, cote)) {
+                    return Choix{direction, cote};
+                }
             }
         }
         return std::nullopt;
@@ -157,12 +164,12 @@ public:
 private:
     // Essaie la tête en plusieurs points de la branche, et pendant sa descente d'approche.
     bool libre(DetecteurCollisions& detecteur, const std::vector<TrancheSquelette>& tranches,
-               const Vec3& direction, double hauteur_sure) const {
+               const Vec3& direction, double hauteur_sure, int cote) const {
         Vec3 u, v;
         repere_autour(direction, u, v);
         double c = 0.0;
         const auto essayer = [&](const Vec3& pointe) {
-            const auto position = position_machine(machine_, {pointe, direction}, c);
+            const auto position = position_machine(machine_, {pointe, direction}, c, cote);
             if (!position) {
                 return false;
             }
@@ -349,6 +356,7 @@ private:
         // Avec la vraie forme de la machine : l'inclinaison est réduite tant
         // que la tête ou le bras toucherait ce qui est déjà imprimé.
         bool reduite_pour_collision = false;
+        int cote = 0;
         if (controle_.actif()) {
             const auto libre = controle_.direction_libre(tranches, direction, hauteur_sure_);
             if (!libre) {
@@ -358,8 +366,9 @@ private:
                     depart.centre.z));
                 return -1;
             }
-            reduite_pour_collision = angle_entre(*libre, direction) > 0.5;
-            direction = *libre;
+            reduite_pour_collision = angle_entre(libre->direction, direction) > 0.5;
+            direction = libre->direction;
+            cote = libre->cote;
         }
         const double redressement = angle_entre(direction, b.direction);
         // La direction retenue doit vraiment réduire le surplomb de la branche.
@@ -404,6 +413,7 @@ private:
             PartieImpression nouvelle;
             nouvelle.maillage = std::move(coupe->partie);
             nouvelle.direction = direction;
+            nouvelle.cote = cote;
             nouvelle.base = coupe->centre_coupe;
             nouvelle.parent = partie;
             parties_[partie].maillage = std::move(coupe->reste);

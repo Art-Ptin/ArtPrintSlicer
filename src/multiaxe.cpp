@@ -33,8 +33,10 @@ public:
 
     // Commence une partie : son repère est (origine, u, v, w), w étant la
     // direction d'impression. La tête ne bouge qu'au prochain déplacement.
-    void partie(const Vec3& origine, const Vec3& u, const Vec3& v, const Vec3& w) {
+    // « cote » : côté vers lequel la tête penche (0 : le plus proche).
+    void partie(const Vec3& origine, const Vec3& u, const Vec3& v, const Vec3& w, int cote) {
         origine_ = origine, u_ = u, v_ = v, w_ = w;
+        cote_ = cote;
         oriente_ = false;
         ++partie_;
     }
@@ -150,7 +152,7 @@ private:
     // de la couche en cours. Renvoie la hauteur (dans le repère de la partie)
     // où la buse s'arrête, prête à descendre le long de son axe.
     double changer_orientation(const Point2& p) {
-        const auto cible = position_machine(machine_, {point(p, z_), w_}, c_);
+        const auto cible = position_machine(machine_, {point(p, z_), w_}, c_, cote_);
         if (!cible) {
             throw ErreurTranchage(std::format(
                 "La machine ne peut pas orienter la tête pour une partie penchée de {:.0f}° : "
@@ -221,6 +223,7 @@ private:
     double duree_ = 0.0;
     std::size_t changements_ = 0;
     int partie_ = -1;  // numéro de la partie en cours
+    int cote_ = 0;     // côté imposé pour pencher la tête (0 : libre)
     std::uint8_t type_ = 0;
     std::vector<CoucheApercu> apercu_;
 };
@@ -274,6 +277,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     // Trajectoires de chaque partie, dans son propre repère.
     struct PartieTranchee {
         Vec3 origine, u, v, w;
+        int cote = 0;
         std::vector<CoucheTrajectoires> couches;
     };
     std::vector<PartieTranchee> tranchees;
@@ -289,6 +293,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
             repere_autour(t.w, t.u, t.v);
         }
         const bool sur_plateau = partie.parent < 0;
+        t.cote = partie.cote;
         t.origine = sur_plateau ? Vec3{} : partie.base;
         const Maillage local = dans_repere(partie.maillage, t.origine, t.u, t.v, t.w);
         const double haut = calculer_boite(local).max.z;
@@ -340,7 +345,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     for (std::size_t p = 0; p < tranchees.size(); ++p) {
         PartieTranchee& t = tranchees[p];
         ecrivain.ligne(std::format(";PARTIE:{} direction {:.4f} {:.4f} {:.4f}", p + 1, t.w.x, t.w.y, t.w.z));
-        ecrivain.partie(t.origine, t.u, t.v, t.w);
+        ecrivain.partie(t.origine, t.u, t.v, t.w, t.cote);
         for (std::size_t c = 0; c < t.couches.size(); ++c) {
             CoucheTrajectoires& couche = t.couches[c];
             ecrivain.ligne(std::format(";COUCHE:{}", ++numero));

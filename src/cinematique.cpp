@@ -55,7 +55,8 @@ double angle_le_plus_proche(double angle, double reference) {
 }
 
 std::optional<PositionMachine> position_machine(const ReglagesMachine& machine,
-                                                const PoseOutil& pose, double c_precedent) {
+                                                const PoseOutil& pose, double c_precedent,
+                                                int cote) {
     const Vec3 d = normaliser(pose.direction);
     const double inclinaison = en_degres(std::acos(std::clamp(d.z, -1.0, 1.0)));
 
@@ -87,6 +88,9 @@ std::optional<PositionMachine> position_machine(const ReglagesMachine& machine,
         // Deux solutions : pencher d'un côté, ou de l'autre avec le plateau
         // tourné d'un demi-tour.
         for (const double signe : {1.0, -1.0}) {
+            if (cote != 0 && signe * cote < 0.0) {
+                continue;  // ce côté n'est pas celui demandé
+            }
             const double b = signe * inclinaison * machine.sens_b;
             const double cible = azimut_machine + (signe > 0.0 ? 0.0 : 180.0);
             const double c = machine.sens_c * (cible - azimut);

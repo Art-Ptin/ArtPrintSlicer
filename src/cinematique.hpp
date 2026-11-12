@@ -51,8 +51,12 @@ PoseOutil pose_dans_piece(const ReglagesMachine& machine, const PositionMachine&
 // la pièce, avec cette orientation. Parmi les solutions possibles, choisit
 // celle dont C est le plus proche de « c_precedent » (chemin le plus court).
 // Renvoie « rien » si aucune solution ne respecte les butées de B et C.
+// « cote » : une même orientation s'obtient en penchant la tête d'un côté,
+// ou de l'autre avec le plateau tourné d'un demi-tour. 0 laisse le choix
+// (C le plus proche) ; +1 ou -1 impose le côté.
 std::optional<PositionMachine> position_machine(const ReglagesMachine& machine,
-                                                const PoseOutil& pose, double c_precedent);
+                                                const PoseOutil& pose, double c_precedent,
+                                                int cote = 0);
 
 // Position des axes qui amène la pointe de la buse à cet endroit de la pièce
 // quand B et C sont déjà choisis (par exemple au milieu d'une rotation).

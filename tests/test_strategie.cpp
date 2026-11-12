@@ -231,6 +231,22 @@ void test_cinematique() {
             VERIFIER(proche(en_degres(std::acos(pose.direction.z)), std::abs(b), 1e-9));
         }
     }
+    // Une même orientation s'obtient en penchant la tête d'un côté ou de
+    // l'autre : les deux solutions amènent la buse au même endroit, avec B
+    // de signe opposé et le plateau tourné d'un demi-tour.
+    const PoseOutil voulue{pointe, essai::direction(40.0, 25.0)};
+    const auto d_un_cote = position_machine(machine, voulue, 0.0, +1);
+    const auto de_l_autre = position_machine(machine, voulue, 0.0, -1);
+    VERIFIER(d_un_cote.has_value() && de_l_autre.has_value());
+    if (d_un_cote && de_l_autre) {
+        VERIFIER(proche(d_un_cote->b, 40.0, 1e-9) && proche(de_l_autre->b, -40.0, 1e-9));
+        VERIFIER(proche(std::abs(angle_le_plus_proche(d_un_cote->c - de_l_autre->c, 180.0)), 180.0, 1e-9));
+        for (const auto& solution : {*d_un_cote, *de_l_autre}) {
+            const PoseOutil pose = pose_dans_piece(machine, solution);
+            VERIFIER(norme(pose.pointe - pointe) < 1e-9);
+            VERIFIER(norme(pose.direction - voulue.direction) < 1e-9);
+        }
+    }
 }
 
 }  // namespace

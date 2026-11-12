@@ -4,9 +4,10 @@
 Utilisation :
     python maquette/generer_donnees.py chemin/vers/artprint-slicer piece1.stl piece2.stl ...
 
-Écrit maquette/donnees/base.json (version et réglages) et un fichier par pièce
-(modèle, résultat du tranchage classique, stratégies proposées et résultat de
-chacune). Ces fichiers ne sont pas versionnés.
+Écrit maquette/donnees/base.json (version et réglages), un fichier par pièce
+(modèle, résultat du tranchage classique, stratégies proposées) et un fichier
+par autre stratégie (« piece-par_branches.json »...). Ces fichiers ne sont
+pas versionnés.
 Le nom des pièces attendues par la maquette est dans maquette/pont.js.
 
 Pour les stratégies 5 axes, la machine a besoin de deux réglages qui se
@@ -42,19 +43,23 @@ def main():
             sys.exit(f"{piece} : {modele.get('erreur') or tranche.get('erreur')}")
         ouvrir = [{"commande": "charger_modele", "chemin": piece}, exemple]
         strategies = appeler(programme, ouvrir + [{"commande": "strategies"}])[-1]["strategies"]
-        resultats = {}
+        nom = pathlib.Path(piece).stem
+        tranchees = []
         for strategie in strategies:
             if strategie["type"] == "classique":
+                tranchees.append(strategie)
                 continue
             reponse = appeler(programme, ouvrir + [{"commande": "trancher", "strategie": strategie["type"]}])[-1]
             if reponse["ok"]:
-                resultats[strategie["type"]] = reponse["resultat"]
+                tranchees.append(strategie)
+                (dossier / f"{nom}-{strategie['type']}.json").write_text(
+                    json.dumps(reponse["resultat"], ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             else:
                 print(f"  {strategie['nom']} : {reponse['erreur']}")
-        nom = pathlib.Path(piece).stem
+        strategies = tranchees
         (dossier / f"{nom}.json").write_text(
-            json.dumps({"modele": modele["modele"], "resultat": tranche["resultat"], "strategies": strategies,
-                        "resultats_strategies": resultats}, ensure_ascii=False, separators=(",", ":")),
+            json.dumps({"modele": modele["modele"], "resultat": tranche["resultat"], "strategies": strategies},
+                       ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8")
         print(f"{nom} : {tranche['resultat']['couches']} couches, {len(strategies)} stratégie(s)")
 

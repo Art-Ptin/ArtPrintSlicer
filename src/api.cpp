@@ -124,6 +124,7 @@ Json decrire_strategie(const Strategie& strategie) {
         reponse["parties"].push_back(
             {{"direction", {partie.direction.x, partie.direction.y, partie.direction.z}},
              {"inclinaison", std::round(partie.inclinaison * 10.0) / 10.0},
+             {"cote", partie.cote},
              {"volume_cm3", std::round(partie.volume) / 1000.0},
              {"surplomb_mm2", std::round(partie.surplomb)},
              {"parent", partie.parent}});
@@ -145,6 +146,7 @@ Json decrire_resultat(const ResultatTranchage& resultat) {
     verification["extrusions"] = v.extrusions;
     verification["deplacements_a_vide"] = v.deplacements_a_vide;
     verification["retractions"] = v.retractions;
+    verification["dans_le_vide_mm"] = std::round(v.longueur_dans_le_vide);
     verification["erreurs"] = Json::array();
     for (const ErreurVerification& e : v.erreurs) {
         verification["erreurs"].push_back(

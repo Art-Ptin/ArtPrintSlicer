@@ -76,6 +76,12 @@ public:
         }
         ++rapport_.lignes;
 
+        // Le commentaire « ;TYPE: » annonce le genre des traits qui suivent.
+        // Seules les parois comptent pour la mesure « dans le vide » : le
+        // remplissage enjambe normalement du vide à l'intérieur de la pièce.
+        if (texte_ligne_.rfind(";TYPE:", 0) == 0) {
+            paroi_en_cours_ = texte_ligne_.find("paroi") != std::string::npos;
+        }
         LigneGcode ligne;
         try {
             ligne = lire_ligne_gcode(texte);
@@ -469,6 +475,13 @@ private:
                            bool& dessus_signale) {
         const double hauteur = hauteur_;
 
+        // « Dans le vide » : rien sous le cordon. On regarde un peu plus bas
+        // que la couche en cours, le long de la buse, au centre et sur les
+        // bords du cordon ; le plateau compte comme un appui.
+        if (paroi_en_cours_ && !soutenu(pose, hauteur)) {
+            rapport_.longueur_dans_le_vide += avance;
+        }
+
         // « Dans » : le cœur du cordon, un quart de couche sous la pointe.
         if (grille_.occupe(pose.pointe - pose.direction * (hauteur / 4.0))) {
             longueur_dans_ += avance;
@@ -505,6 +518,25 @@ private:
                 return;
             }
         }
+    }
+
+    // Vrai si le cordon déposé ici repose sur le plateau ou sur de la matière.
+    bool soutenu(const PoseOutil& pose, double hauteur) const {
+        // Deux directions perpendiculaires à la buse, pour viser les bords du cordon.
+        const Vec3 aide = std::abs(pose.direction.z) < 0.9 ? Vec3{0.0, 0.0, 1.0} : Vec3{1.0, 0.0, 0.0};
+        const Vec3 u = normaliser(produit_vectoriel(aide, pose.direction));
+        const Vec3 v = produit_vectoriel(pose.direction, u);
+        const double bord = 0.5 * largeur_;
+        const Vec3 decalages[5] = {Vec3{}, u * bord, u * -bord, v * bord, v * -bord};
+        for (const double profondeur : {1.15, 1.4, 1.7, 2.0}) {
+            for (const Vec3& decalage : decalages) {
+                const Vec3 point = pose.pointe + decalage - pose.direction * (profondeur * hauteur);
+                if (point.z <= 0.05 || grille_.occupe(point)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     void deposer(const Depot& depot) {
@@ -550,6 +582,9 @@ private:
 
     std::shared_ptr<const ModeleMachine> modele_;
     std::unique_ptr<DetecteurCollisions> detecteur_;
+    // Vrai tant que les traits lus sont des parois (ou que le fichier ne dit
+    // pas le genre des traits).
+    bool paroi_en_cours_ = true;
     int collisions_ = 0;
 
     std::deque<Depot> attente_;

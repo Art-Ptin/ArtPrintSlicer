@@ -63,6 +63,10 @@ struct RapportVerification {
     std::size_t deplacements_a_vide = 0;  // mouvements sans dépôt
     std::size_t retractions = 0;
     double longueur_extrusions = 0.0;     // en mm, mesurée sur la pièce
+    // Longueur de paroi déposée sans rien dessous (ni plateau, ni matière),
+    // en mm. Ce n'est pas une erreur : c'est la mesure de ce qui demanderait
+    // des supports. Le remplissage n'est pas compté ; un pont l'est.
+    double longueur_dans_le_vide = 0.0;
     double longueur_a_vide = 0.0;
 
     bool valide() const { return nombre_erreurs == 0; }

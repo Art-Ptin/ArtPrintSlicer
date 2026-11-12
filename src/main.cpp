@@ -154,9 +154,12 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
         std::cout << std::format("Filament : {:.2f} m\n", resultat.longueur_filament / 1000.0);
         std::cout << std::format("Durée estimée : {} h {:02} min (sans les accélérations)\n",
                                  minutes / 60, minutes % 60);
-        std::cout << std::format("Extrusions : {}   Déplacements à vide : {}\n\n",
+        std::cout << std::format("Extrusions : {}   Déplacements à vide : {}\n",
                                  resultat.verification.extrusions,
                                  resultat.verification.deplacements_a_vide);
+        std::cout << std::format("Parois imprimées dans le vide (à soutenir) : {:.0f} mm sur {:.0f} mm de cordon\n\n",
+                                 resultat.verification.longueur_dans_le_vide,
+                                 resultat.verification.longueur_extrusions);
 
         if (!resultat.verification.valide()) {
             afficher_erreurs(resultat.verification);

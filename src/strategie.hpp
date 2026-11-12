@@ -28,6 +28,9 @@ struct PartieImpression {
     Vec3 base;                 // un point de la surface de départ
     int parent = -1;           // numéro de la partie qui la porte (-1 : le plateau)
     double inclinaison = 0.0;  // angle avec la verticale, en degrés
+    // Côté vers lequel la tête penche pour cette partie : 0 laisse le slicer
+    // choisir ; +1 ou -1 l'impose (choisi pour éviter une collision).
+    int cote = 0;
     double volume = 0.0;       // mm³
     double surplomb = 0.0;     // mm² à soutenir quand on l'imprime dans sa direction
 };

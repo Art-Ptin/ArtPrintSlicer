@@ -8,6 +8,10 @@ const PIECES = [
   { fichier: 'marches.stl', donnees: 'marches', nom: 'Pièce à marches', detail: '30 × 30 × 16 mm, 80 couches' },
   { fichier: 'arbre.stl', donnees: 'arbre', nom: 'Arbre (un tronc, deux branches)', detail: '55 × 27 × 60 mm, à essayer avec la stratégie « Par branches »' },
   { fichier: 'arbre_plat.stl', donnees: 'arbre_plat', nom: 'Arbre plat (une seule pièce)', detail: '60 × 10 × 50 mm, trois stratégies proposées' },
+  { fichier: 'arbre_organique.stl', donnees: 'arbre_organique', nom: 'Arbre organique', detail: '51 × 34 × 74 mm, trois branches et une brindille' },
+  { fichier: 'chassis_drone.stl', donnees: 'chassis_drone', nom: 'Châssis de drone', detail: '88 × 88 × 32 mm, quatre bras qui montent' },
+  { fichier: 'chandelier.stl', donnees: 'chandelier', nom: 'Chandelier', detail: '51 × 46 × 52 mm, trois bras courbes' },
+  { fichier: 'tuyau_en_y.stl', donnees: 'tuyau_en_y', nom: 'Tuyau en Y (creux)', detail: '54 × 16 × 51 mm, deux sorties inclinées' },
 ];
 
 const base = fetch('./donnees/base.json').then((r) => r.json());
@@ -142,6 +146,7 @@ export async function appeler(commande, parametres = {}) {
         pieces[trouvee.donnees] = await fetch(`./donnees/${trouvee.donnees}.json`).then((r) => r.json());
       }
       piece = pieces[trouvee.donnees];
+      piece.nom_donnees = trouvee.donnees;
       return { ok: true, modele: structuredClone(piece.modele) };
     }
     case 'strategies':
@@ -151,9 +156,14 @@ export async function appeler(commande, parametres = {}) {
       if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
       await pause(700);
       const strategie = parametres.strategie || 'classique';
-      const resultat = strategie === 'classique' ? piece.resultat : piece.resultats_strategies?.[strategie];
-      if (!resultat) return { ok: false, erreur: `La stratégie « ${strategie} » n'est pas proposée pour ce modèle.` };
-      return { ok: true, resultat, strategie };
+      if (strategie === 'classique') return { ok: true, resultat: piece.resultat, strategie };
+      if (!(piece.strategies ?? []).some((s) => s.type === strategie)) {
+        return { ok: false, erreur: `La stratégie « ${strategie} » n'est pas proposée pour ce modèle.` };
+      }
+      // Le résultat de chaque autre stratégie est dans son propre fichier, chargé à la demande.
+      piece.resultats ??= {};
+      piece.resultats[strategie] ??= await fetch(`./donnees/${piece.nom_donnees}-${strategie}.json`).then((r) => r.json());
+      return { ok: true, resultat: piece.resultats[strategie], strategie };
     }
     default:
       return { ok: false, erreur: `Commande inconnue : « ${commande} ».` };
