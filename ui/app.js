@@ -15,6 +15,9 @@ const etat = {
   saisies: {},         // texte tapé pour les réglages refusés
   modele: null,
   resultat: null,
+  strategies: [],      // façons d'imprimer proposées pour le modèle ouvert
+  strategie: 'classique',
+  strategiesPerimees: false,  // vrai si un réglage a changé depuis qu'elles ont été proposées
 };
 
 // --- Messages ----------------------------------------------------------------
@@ -143,6 +146,11 @@ async function changerReglage(cle, valeur) {
   } else {
     delete etat.refus[cle];
     delete etat.saisies[cle];
+    // Les stratégies proposées dépendent des réglages (limites de la machine...).
+    if (etat.strategies.length > 1) {
+      etat.strategiesPerimees = true;
+      afficherStrategies();
+    }
   }
   recevoirReglages(reponse.reglages);
   perimerResultat();
@@ -201,6 +209,56 @@ async function ouvrirModele() {
 
   $('btn-trancher').disabled = false;
   perimerResultat();
+  await proposerStrategies();
+}
+
+// --- Stratégies d'impression ---------------------------------------------------
+
+// Demande au slicer les façons d'imprimer le modèle ouvert.
+async function proposerStrategies() {
+  etat.strategies = [];
+  etat.strategie = 'classique';
+  etat.strategiesPerimees = false;
+  if (etat.modele && etat.modele.ferme) {
+    occuper('Recherche des façons d\'imprimer ce modèle…');
+    await new Promise((suite) => setTimeout(suite, 30));
+    const reponse = await demander('strategies');
+    liberer();
+    if (reponse) etat.strategies = reponse.strategies;
+  }
+  afficherStrategies();
+}
+
+function afficherStrategies() {
+  const liste = $('strategie');
+  const detail = $('strategie-detail');
+  if (!etat.strategies.length) {
+    liste.replaceChildren(new Option('Classique (3 axes)', 'classique'));
+    detail.textContent = etat.modele
+      ? 'Tout le modèle est imprimé en couches horizontales, la tête à la verticale.'
+      : 'Ouvre un modèle : le slicer proposera les façons de l\'imprimer (3 axes, ou 5 axes par branches).';
+    return;
+  }
+  liste.replaceChildren(...etat.strategies.map((s) => new Option(
+    `${s.nom} · ${entier(s.surplomb_mm2)} mm² à soutenir`, s.type, false, s.type === etat.strategie)));
+  const choisie = etat.strategies.find((s) => s.type === etat.strategie) || etat.strategies[0];
+  detail.replaceChildren(document.createTextNode(choisie.description));
+  if (choisie.parties.length > 1) {
+    const inclinaisons = document.createElement('b');
+    inclinaisons.textContent = choisie.parties.map((p) =>
+      (p.courbe ? `jusqu'à ${Math.round(p.inclinaison)}° (courbe)` : `${Math.round(p.inclinaison)}°`)).join(', ');
+    detail.append(document.createTextNode(' Inclinaisons : '), inclinaisons, document.createTextNode('.'));
+  }
+  const remarques = [...choisie.remarques];
+  if (etat.strategiesPerimees) {
+    remarques.push('Un réglage a changé : les stratégies seront recalculées au moment de trancher.');
+  }
+  for (const texte of remarques) {
+    const remarque = document.createElement('span');
+    remarque.className = 'remarque';
+    remarque.textContent = texte;
+    detail.append(remarque);
+  }
 }
 
 // Le modèle ou un réglage a changé : l'ancien résultat n'est plus valable.
@@ -228,7 +286,7 @@ async function trancher() {
   occuper('Tranchage et vérification en cours…');
   // Laisse l'écran afficher le message avant le calcul.
   await new Promise((suite) => setTimeout(suite, 30));
-  const reponse = await demander('trancher');
+  const reponse = await demander('trancher', { strategie: etat.strategie });
   liberer();
   if (!reponse) {
     definirEtat('mauvais', 'Tranchage impossible', 'Voir le message en haut de la vue.');
@@ -369,6 +427,11 @@ async function remettreDefaut() {
 $('btn-ouvrir').addEventListener('click', ouvrirModele);
 $('btn-ouvrir-2').addEventListener('click', ouvrirModele);
 $('btn-trancher').addEventListener('click', trancher);
+$('strategie').addEventListener('change', (e) => {
+  etat.strategie = e.target.value;
+  afficherStrategies();
+  perimerResultat();
+});
 $('btn-exporter').addEventListener('click', exporter);
 $('btn-charger-reglages').addEventListener('click', chargerReglages);
 $('btn-enregistrer-reglages').addEventListener('click', enregistrerReglages);

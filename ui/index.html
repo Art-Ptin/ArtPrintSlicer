@@ -30,11 +30,11 @@
 <main class="corps">
   <aside class="panneau" aria-label="Réglages">
     <div class="mode">
-      <label for="mode-tranchage">Mode de tranchage</label>
-      <select id="mode-tranchage">
-        <option value="3axes" selected>3 axes (tête verticale)</option>
-        <option value="5axes" disabled>5 axes continu (à venir)</option>
+      <label for="strategie">Stratégie d'impression</label>
+      <select id="strategie">
+        <option value="classique" selected>Classique (3 axes)</option>
       </select>
+      <p class="mode-detail" id="strategie-detail">Ouvre un modèle : le slicer proposera les façons de l'imprimer (3 axes, ou 5 axes par branches).</p>
     </div>
     <div class="onglets" id="onglets" role="tablist" aria-label="Groupes de réglages"></div>
     <div class="reglages" id="reglages"></div>

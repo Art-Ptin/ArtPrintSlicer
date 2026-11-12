@@ -135,6 +135,7 @@ int main(int argc, char** argv) {
             for (const std::string& remarque : strategie.remarques) {
                 std::cout << "        note : " << remarque << '\n';
             }
+            std::cout << std::flush;  // pour suivre l'avancement d'un banc long
         }
     }
     std::cout << std::format("\n{} tranchage(s) refusé(s).\n", refus);
