@@ -1,4 +1,5 @@
 // ArtPrint Slicer - licence AGPL v3
+#include <cstdlib>
 #include <algorithm>
 #include <exception>
 #include <filesystem>
@@ -196,6 +197,12 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
 
         if (!resultat.verification.valide()) {
             afficher_erreurs(resultat.verification);
+            // Pour le diagnostic seulement : la variable d'environnement
+            // ARTPRINT_GCODE_REFUSE donne un fichier où garder le G-code
+            // refusé, pour l'étudier. Il ne doit jamais être imprimé.
+            if (const char* diagnostic = std::getenv("ARTPRINT_GCODE_REFUSE")) {
+                std::ofstream(diagnostic, std::ios::binary) << "; G-CODE REFUSE - NE PAS IMPRIMER\n" << resultat.gcode;
+            }
             std::cout << std::format(
                 "Tranchage REFUSÉ : le G-code viole {} règle(s) physique(s). "
                 "Aucun fichier n'a été écrit.\n",

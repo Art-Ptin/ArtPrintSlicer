@@ -33,6 +33,7 @@ public:
     // déplacement.
     void couche(double z, double hauteur) {
         z_ = z;
+        hauteur_ = hauteur;
         apercu_.push_back({z, 0, {}});
         // Section du cordon : un rectangle aux bouts arrondis.
         const double section = (r_.largeur_extrusion - hauteur) * hauteur +
@@ -82,6 +83,15 @@ public:
         place_ = true;
     }
 
+    // Largeur du cordon du trait qui commence (0 : celle des réglages) : la
+    // quantité de matière suit la section du cordon.
+    void largeur_du_trait(double largeur) {
+        const auto section = [&](double l) {
+            return std::max(l - hauteur_, 0.0) * hauteur_ + std::numbers::pi * hauteur_ * hauteur_ / 4.0;
+        };
+        debit_du_trait_ = largeur > 0.0 ? section(largeur) / section(r_.largeur_extrusion) : 1.0;
+    }
+
     // Extrusion en ligne droite jusqu'au point, à la vitesse donnée (mm/s).
     void extruder_vers(const Point2& p, double vitesse) {
         const double longueur = distance(position_, p);
@@ -94,7 +104,7 @@ public:
             retracte_ = false;
             duree_ += r_.retraction_longueur / r_.retraction_vitesse;
         }
-        const double e = longueur * e_par_mm_;
+        const double e = longueur * e_par_mm_ * debit_du_trait_;
         ligne(std::format("G1 {} E{:.5f} F{:.0f}", axes(p, z_), e, vitesse * 60.0));
         noter(position_, z_, p, z_, type_);
         filament_ += e;
@@ -152,6 +162,8 @@ private:
     double z_ = 0.0;         // hauteur de la couche en cours
     double z_machine_ = 0.0; // hauteur réelle de la buse
     double e_par_mm_ = 0.0;
+    double hauteur_ = 0.2;          // épaisseur de la couche en cours
+    double debit_du_trait_ = 1.0;   // part de matière du trait en cours (cordon plus étroit ou plus large)
     bool retracte_ = false;
     double filament_ = 0.0;
     double duree_ = 0.0;

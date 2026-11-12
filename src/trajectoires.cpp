@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <unordered_map>
 
 #include "geometrie.hpp"
 
@@ -64,6 +65,182 @@ void ajouter_boucles(std::vector<Trait>& traits, const Polygones& contours, Type
             continue;
         }
         traits.push_back(boucle(contour, type));
+    }
+}
+
+// Cordons uniques au milieu des passages étroits. « libre » : la zone où ce
+// niveau de paroi peut se poser. Là où elle fait moins de deux largeurs de
+// cordon, deux parois ne tiennent pas côte à côte : elles se recouvriraient.
+// On y pose un seul cordon, au milieu, de la largeur du passage (entre une
+// demi-largeur et deux largeurs ; plus étroit, rien n'est imprimé).
+void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, double largeur, TypeTrait type) {
+    const double jeu = 0.03 * largeur;
+    const Polygones couvert = decaler(decaler(libre, -(largeur - jeu)), largeur - jeu);
+    Polygones etroit = soustraire(libre, couvert);
+    etroit = decaler(decaler(etroit, -0.2 * largeur), 0.2 * largeur);  // les miettes sont retirées
+    if (etroit.empty()) {
+        return;
+    }
+    struct Arete {
+        Point2 a, b;
+    };
+    std::vector<Arete> aretes;
+    for (const Contour& contour : etroit) {
+        for (std::size_t i = 0; i < contour.size(); ++i) {
+            aretes.push_back({en_mm(contour[i]), en_mm(contour[(i + 1) % contour.size()])});
+        }
+    }
+    // Grille : pour chaque case, les arêtes qui la traversent (à une case près).
+    const double case_grille = 2.5 * largeur;
+    const auto cle = [&](double x, double y) {
+        return (static_cast<std::int64_t>(std::floor(x / case_grille)) << 32) ^
+               (static_cast<std::int64_t>(std::floor(y / case_grille)) & 0xffffffffLL);
+    };
+    std::unordered_map<std::int64_t, std::vector<std::uint32_t>> cases;
+    for (std::uint32_t n = 0; n < aretes.size(); ++n) {
+        const Arete& a = aretes[n];
+        const int pas = std::max(1, static_cast<int>(std::ceil(distance(a.a, a.b) / (0.5 * case_grille))));
+        std::int64_t derniere = std::numeric_limits<std::int64_t>::min();
+        for (int k = 0; k <= pas; ++k) {
+            const double t = static_cast<double>(k) / pas;
+            const std::int64_t c = cle(a.a.x + (a.b.x - a.a.x) * t, a.a.y + (a.b.y - a.a.y) * t);
+            if (c != derniere) {
+                cases[c].push_back(n);
+                derniere = c;
+            }
+        }
+    }
+    // Distance, le long de la demi-droite (q, n), jusqu'au bord d'en face.
+    const auto en_face = [&](const Point2& q, const Point2& n, std::uint32_t propre) {
+        double plus_pres = std::numeric_limits<double>::max();
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                const auto trouve = cases.find(cle(q.x + dx * case_grille, q.y + dy * case_grille));
+                if (trouve == cases.end()) {
+                    continue;
+                }
+                for (const std::uint32_t k : trouve->second) {
+                    if (k == propre) {
+                        continue;
+                    }
+                    const Arete& a = aretes[k];
+                    const double ex = a.b.x - a.a.x, ey = a.b.y - a.a.y;
+                    const double det = ex * n.y - ey * n.x;
+                    if (std::abs(det) < 1e-12) {
+                        continue;
+                    }
+                    const double ax = a.a.x - q.x, ay = a.a.y - q.y;
+                    const double t = (ex * ay - ey * ax) / det;       // le long de la demi-droite
+                    const double s = (n.x * ay - n.y * ax) / det;     // le long de l'arête
+                    if (t > 0.02 * largeur && s >= -1e-9 && s <= 1.0 + 1e-9) {
+                        plus_pres = std::min(plus_pres, t);
+                    }
+                }
+            }
+        }
+        return plus_pres;
+    };
+    // Points déjà posés : un passage n'est suivi qu'une fois (ses deux bords
+    // donnent le même milieu).
+    struct Pose {
+        Point2 p;
+        double passage;
+        std::size_t chaine, rang;
+    };
+    const double case_points = 1.8 * largeur;
+    const auto cle_point = [&](double x, double y) {
+        return (static_cast<std::int64_t>(std::floor(x / case_points)) << 32) ^
+               (static_cast<std::int64_t>(std::floor(y / case_points)) & 0xffffffffLL);
+    };
+    std::unordered_map<std::int64_t, std::vector<Pose>> poses;
+    std::size_t numero_chaine = 0;
+    struct Milieu {
+        Point2 p;
+        double passage;
+    };
+    std::vector<Milieu> chaine;
+    const auto finir = [&]() {
+        // La chaîne est découpée là où la largeur du passage change beaucoup :
+        // chaque morceau a une seule largeur de cordon.
+        std::size_t debut = 0;
+        while (debut + 1 < chaine.size()) {
+            std::size_t fin = debut + 1;
+            double somme = chaine[debut].passage, longueur = 0.0;
+            while (fin < chaine.size() && std::abs(chaine[fin].passage - chaine[debut].passage) <= 0.3 * chaine[debut].passage) {
+                somme += chaine[fin].passage;
+                longueur += distance(chaine[fin - 1].p, chaine[fin].p);
+                ++fin;
+            }
+            if (longueur >= largeur) {
+                Trait trait;
+                trait.type = type;
+                trait.largeur = std::clamp(somme / static_cast<double>(fin - debut), 0.5 * largeur, 1.9 * largeur);
+                for (std::size_t k = debut; k < fin; ++k) {
+                    trait.points.push_back(chaine[k].p);
+                }
+                traits.push_back(std::move(trait));
+            }
+            debut = fin < chaine.size() ? fin - 1 : fin;
+            if (fin - debut <= 1 && fin < chaine.size()) {
+                debut = fin;
+            }
+        }
+        chaine.clear();
+        ++numero_chaine;
+    };
+    const double pas = 0.4 * largeur;
+    std::uint32_t numero_arete = 0;
+    for (const Contour& contour : etroit) {
+        for (std::size_t i = 0; i < contour.size(); ++i, ++numero_arete) {
+            const Arete& arete = aretes[numero_arete];
+            const double longueur = distance(arete.a, arete.b);
+            if (longueur < 1e-6) {
+                continue;
+            }
+            const Point2 d{(arete.b.x - arete.a.x) / longueur, (arete.b.y - arete.a.y) / longueur};
+            const Point2 n{-d.y, d.x};  // vers l'intérieur de la zone
+            const int nombre = std::max(1, static_cast<int>(std::floor(longueur / pas)));
+            for (int k = 0; k < nombre; ++k) {
+                const double t = (k + 0.5) / nombre;
+                const Point2 q{arete.a.x + (arete.b.x - arete.a.x) * t, arete.a.y + (arete.b.y - arete.a.y) * t};
+                const double passage = en_face(q, n, numero_arete);
+                if (passage < 0.5 * largeur || passage > 2.1 * largeur) {
+                    finir();
+                    continue;
+                }
+                const Point2 milieu{q.x + n.x * passage / 2.0, q.y + n.y * passage / 2.0};
+                bool deja = false;
+                for (int dx = -1; dx <= 1 && !deja; ++dx) {
+                    for (int dy = -1; dy <= 1 && !deja; ++dy) {
+                        const auto trouve = poses.find(cle_point(milieu.x + dx * case_points, milieu.y + dy * case_points));
+                        if (trouve == poses.end()) {
+                            continue;
+                        }
+                        for (const Pose& pose : trouve->second) {
+                            const bool voisin = pose.chaine == numero_chaine && pose.rang + 5 >= chaine.size();
+                            // Deux cordons côte à côte ne doivent pas se recouvrir.
+                            const double ecart = std::max(0.6 * largeur, 0.45 * (std::min(passage, 1.9 * largeur) +
+                                                                                 std::min(pose.passage, 1.9 * largeur)));
+                            if (!voisin && distance(pose.p, milieu) < ecart) {
+                                deja = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (deja) {
+                    finir();
+                    continue;
+                }
+                // Un saut (le bord tourne brusquement) coupe aussi la chaîne.
+                if (!chaine.empty() && distance(chaine.back().p, milieu) > 1.5 * largeur) {
+                    finir();
+                }
+                poses[cle_point(milieu.x, milieu.y)].push_back({milieu, passage, numero_chaine, chaine.size()});
+                chaine.push_back({milieu, passage});
+            }
+        }
+        finir();
     }
 }
 
@@ -273,15 +450,17 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
 
         // Parois : de l'intérieur vers l'extérieur. L'axe du cordon extérieur
         // est à une demi-largeur du bord de la pièce.
-        // Là où deux portions d'une boucle seraient à moins d'une
-        // demi-largeur l'une de l'autre (passage étroit), le cordon se
-        // recouvrirait lui-même : ces portions sont retirées en rétrécissant
-        // puis en regonflant le tracé d'un quart de largeur.
+        // Un cordon n'est posé que là où il tient en entier : dans un passage
+        // de moins de deux largeurs, les cordons des deux bords se
+        // recouvriraient. Le tracé est donc rétréci d'une largeur, puis
+        // regonflé d'une demi-largeur. Dans ces passages étroits, un cordon
+        // unique est posé au milieu (voir ajouter_comblements).
+        const double jeu = 0.03 * largeur;
         for (int i = r.nombre_parois - 1; i >= 0; --i) {
-            const Polygones trace = decaler(decaler(matiere, -(0.75 + i) * largeur), 0.25 * largeur);
-            ajouter_boucles(couche.traits, trace,
-                            i == 0 ? TypeTrait::paroi_externe : TypeTrait::paroi_interne,
-                            2.0 * largeur, largeur);
+            const TypeTrait type = i == 0 ? TypeTrait::paroi_externe : TypeTrait::paroi_interne;
+            const Polygones trace = decaler(decaler(matiere, -((1.0 + i) * largeur - jeu)), 0.5 * largeur - jeu);
+            ajouter_boucles(couche.traits, trace, type, 2.0 * largeur, largeur);
+            ajouter_comblements(couche.traits, i == 0 ? matiere : decaler(matiere, -i * largeur), largeur, type);
         }
 
         // Intérieur : ce qui reste une fois les parois posées.

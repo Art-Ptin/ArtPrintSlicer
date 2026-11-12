@@ -67,6 +67,7 @@ void ecrire_groupe(Ecrivain& ecrivain, std::vector<Trait>& traits, std::size_t d
             std::reverse(trait.points.begin(), trait.points.end());
         }
         ecrivain.aller_a(trait.points.front());
+        ecrivain.largeur_du_trait(trait.largeur);
         for (std::size_t i = 1; i < trait.points.size(); ++i) {
             ecrivain.extruder_vers(trait.points[i], vitesse);
         }

@@ -27,6 +27,10 @@ struct Trait {
     TypeTrait type{};
     std::vector<Point2> points;
     bool ferme = false;  // vrai : boucle, le dernier point rejoint le premier
+    // Largeur du cordon de ce trait, en mm. 0 : la largeur d'extrusion des
+    // réglages. Autre valeur : un cordon unique, plus étroit ou plus large,
+    // posé au milieu d'un passage où deux cordons ne tiennent pas.
+    double largeur = 0.0;
 };
 
 struct CoucheTrajectoires {

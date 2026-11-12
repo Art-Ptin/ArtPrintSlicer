@@ -207,8 +207,17 @@ public:
     }
     void pivoter_entre_les_couches() { continu_ = a_preparer_ = false; }
 
+    // Largeur du cordon du trait qui commence (0 : celle des réglages).
+    void largeur_du_trait(double largeur) {
+        const auto section = [&](double l) {
+            return std::max(l - hauteur_, 0.0) * hauteur_ + std::numbers::pi * hauteur_ * hauteur_ / 4.0;
+        };
+        debit_du_trait_ = largeur > 0.0 ? section(largeur) / section(r_.largeur_extrusion) : 1.0;
+    }
+
     void couche(double z, double hauteur) {
         z_ = z;
+        hauteur_ = hauteur;
         apercu_.push_back({(origine_ + w_ * z).z, partie_, {}});
         const double section = (r_.largeur_extrusion - hauteur) * hauteur +
                                std::numbers::pi * hauteur * hauteur / 4.0;
@@ -284,7 +293,7 @@ public:
                                        std::numbers::pi * epaisseur * epaisseur / 4.0;
                 e_par_mm = section / (std::numbers::pi * r_.diametre_filament * r_.diametre_filament / 4.0) * r_.debit;
             }
-            const double e = longueur / morceaux * e_par_mm;
+            const double e = longueur / morceaux * e_par_mm * debit_du_trait_;
             if (continu_) {
                 const double f = avant + (apres - avant) * t;
                 b_ = b_debut_ + (b_fin_ - b_debut_) * f;
@@ -591,7 +600,7 @@ private:
                 largeur *= std::clamp(1.0 / (biais * allongement), 0.8, 1.5);
             }
             const double section = (largeur - epaisseur) * epaisseur + std::numbers::pi * epaisseur * epaisseur / 4.0;
-            const double e = longueur * section / section_filament * r_.debit;
+            const double e = longueur * section / section_filament * r_.debit * debit_du_trait_;
             if (e < 1e-5) {
                 return;  // morceau trop court pour être écrit : il est joint au suivant
             }
@@ -856,6 +865,8 @@ private:
     Vec3 o_dessous_, n_dessous_{0, 0, 1};  // plan de la couche du dessous
     double h_nominale_ = 0.2;
     double e_par_mm_ = 0.0;
+    double hauteur_ = 0.2;          // épaisseur de la couche en cours
+    double debit_du_trait_ = 1.0;   // part de matière du trait en cours (cordon plus étroit ou plus large)
     bool retracte_ = false;
     double filament_ = 0.0;
     double duree_ = 0.0;
@@ -1044,6 +1055,7 @@ static void en_paroi_externe(std::vector<Trait>& anciens, const std::function<bo
             }
         }
         Trait morceau;
+        morceau.largeur = trait.largeur;
         for (std::size_t n = 0; n < points.size(); ++n) {
             const std::size_t i = (debut + n) % points.size();
             if (!morceau.points.empty() && (vu[i] != 0) != (morceau.type == TypeTrait::paroi_externe)) {
@@ -1190,6 +1202,7 @@ std::vector<Trait> sans_les_points(const Trait& trait, const std::function<bool(
     std::vector<Trait> morceaux;
     Trait morceau;
     morceau.type = trait.type;
+    morceau.largeur = trait.largeur;
     const auto finir = [&]() {
         double longueur = 0.0;
         for (std::size_t i = 1; i < morceau.points.size(); ++i) {
@@ -1612,6 +1625,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                 }
                 Trait morceau;
                 morceau.type = trait.type;
+                morceau.largeur = trait.largeur;
                 const auto finir = [&]() {
                     double longueur = 0.0;
                     for (std::size_t i = 1; i < morceau.points.size(); ++i) {
