@@ -88,6 +88,12 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Cinématique 5 axes (tête B, plateau C) | ✅ | |
 | Vérificateur des règles physiques | ✅ | |
 | Collisions avec la forme réelle de la machine | ✅ | à accélérer |
-| Trajets à vide sûrs en 5 axes (lever, reculer, tourner) | ⬜ | prochaine étape |
-| Tranchage 3+2 (plans inclinés) | ⬜ | |
+| Stratégies d'impression proposées (classique, autre pose, par branches) | ✅ | voir `docs/5-axes.md` |
+| Squelette du modèle (tronc et branches) | ✅ | formes en arbre ; les anses sont signalées |
+| Découpe par plans, une direction par partie | ✅ | découpe automatique |
+| Tranchage multi-directions (tête inclinée, plateau tourné) | ✅ | B et C fixes pendant une partie |
+| Inclinaisons choisies avec la forme réelle de la machine | ✅ | une seule façon de pencher est essayée |
+| Changement d'orientation sûr (reculer, monter, tourner, approcher) | 🟡 | passe toujours par le haut |
+| Contrôle « cordon posé sur quelque chose » | ⬜ | prochaine étape |
+| Couches qui pivotent le long d'une branche courbe | ⬜ | |
 | Tranchage 5 axes continu (couches courbes) | ⬜ | recherche |

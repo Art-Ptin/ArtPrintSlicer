@@ -6,6 +6,8 @@ const PIECES = [
   { fichier: 'vase.stl', donnees: 'vase', nom: 'Vase bosselé', detail: '50 × 51 × 60 mm, 300 couches' },
   { fichier: 'tube.stl', donnees: 'tube', nom: 'Tube', detail: '30 × 30 × 12 mm, 60 couches' },
   { fichier: 'marches.stl', donnees: 'marches', nom: 'Pièce à marches', detail: '30 × 30 × 16 mm, 80 couches' },
+  { fichier: 'arbre.stl', donnees: 'arbre', nom: 'Arbre (un tronc, deux branches)', detail: '55 × 27 × 60 mm, à essayer avec la stratégie « Par branches »' },
+  { fichier: 'arbre_plat.stl', donnees: 'arbre_plat', nom: 'Arbre plat (une seule pièce)', detail: '60 × 10 × 50 mm, trois stratégies proposées' },
 ];
 
 const base = fetch('./donnees/base.json').then((r) => r.json());
@@ -142,10 +144,17 @@ export async function appeler(commande, parametres = {}) {
       piece = pieces[trouvee.donnees];
       return { ok: true, modele: structuredClone(piece.modele) };
     }
-    case 'trancher':
+    case 'strategies':
+      if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
+      return { ok: true, strategies: structuredClone(piece.strategies ?? []) };
+    case 'trancher': {
       if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
       await pause(700);
-      return { ok: true, resultat: piece.resultat };
+      const strategie = parametres.strategie || 'classique';
+      const resultat = strategie === 'classique' ? piece.resultat : piece.resultats_strategies?.[strategie];
+      if (!resultat) return { ok: false, erreur: `La stratégie « ${strategie} » n'est pas proposée pour ce modèle.` };
+      return { ok: true, resultat, strategie };
+    }
     default:
       return { ok: false, erreur: `Commande inconnue : « ${commande} ».` };
   }

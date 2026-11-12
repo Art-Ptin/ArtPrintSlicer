@@ -120,12 +120,17 @@
         <h2><button class="replier" aria-expanded="true" aria-controls="corps-procede" title="Replier" data-icone="chevron-bas"><span>Procédé</span></button></h2>
         <div class="pilule" role="group" aria-label="Mode de tranchage">
           <button id="mode-3axes" class="actif" aria-pressed="true">3 axes</button>
-          <button id="mode-5axes" aria-pressed="false" disabled title="À venir">5 axes continu</button>
+          <button id="mode-5axes" aria-pressed="false" title="5 axes : chaque partie du modèle est imprimée dans sa direction. Le 5 axes continu (tête et plateau qui bougent pendant l'extrusion) est à venir.">5 axes</button>
         </div>
         <span class="ressort"></span>
         <label class="interrupteur-libelle" for="mode-avance">Avancé<input type="checkbox" class="interrupteur" id="mode-avance"></label>
       </header>
       <div class="section-corps procede-corps" id="corps-procede">
+        <div class="strategie" id="bloc-strategie" hidden>
+          <label class="sous-titre" for="strategie">Stratégie d'impression</label>
+          <span class="deroulant" data-icone="chevron-bas"><select id="strategie"></select></span>
+          <p class="strategie-detail" id="strategie-detail"></p>
+        </div>
         <div class="ligne-profil">
           <span class="deroulant" data-icone="chevron-bas"><select id="profil-procede" aria-label="Profil de procédé"></select></span>
           <button class="bouton-icone" id="btn-retablir-tout" title="Rétablir toutes les valeurs du profil" aria-label="Rétablir toutes les valeurs du profil" data-icone="retablir" disabled></button>

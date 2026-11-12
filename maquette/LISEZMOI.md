@@ -13,6 +13,9 @@ reporter dans le vrai logiciel (dossier `ui/`).
 - Préparation et Aperçu : colonne des réglages à gauche (Imprimante, Filament,
   Procédé, chacune repliable par la flèche de son bandeau), vue 3D, barre
   d'outils, trajectoires de l'aperçu, ligne d'état en bas.
+- Stratégie d'impression : pour chaque modèle, les façons de l'imprimer
+  proposées par le slicer (classique, autre pose, par branches) ; la pastille
+  « 3 axes | 5 axes » suit ce choix. Pièces d'exemple : deux arbres.
 - Imprimante : caméra, progression de l'impression, températures et
   déplacements des cinq axes X, Y, Z, B, C. C'est une **simulation** : les
   touches ne changent que les valeurs affichées, rien n'est envoyé à une

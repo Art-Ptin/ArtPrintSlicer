@@ -227,6 +227,11 @@ input.interrupteur {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--e-1); align-items: center; flex: none;
   padding: var(--e-2) var(--e-2) var(--e-1) var(--e-8);
 }
+/* Stratégie d'impression : classique, autre pose, par branches */
+.strategie { display: grid; gap: var(--e-1); flex: none; padding: var(--e-2) var(--e-2) 0 var(--e-8); }
+.strategie-detail { margin: 0; font-size: var(--t-11); line-height: var(--interligne-serre); color: var(--c-texte-2); }
+.strategie-detail b { color: var(--c-texte); font-weight: var(--g-fort); }
+.strategie-detail .remarque { display: block; margin-top: var(--e-1); color: var(--c-attention); }
 .procede-corps > .champ { flex: none; width: auto; height: var(--h-champ-serre); margin: 0 var(--e-2) var(--e-1) var(--e-8); }
 .onglets { display: flex; gap: var(--e-4); flex: none; padding: 0 var(--e-3); border-bottom: var(--bord); overflow-x: auto; }
 .onglets button {

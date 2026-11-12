@@ -44,6 +44,8 @@ const etat = {
   modele: null,
   resultat: null,
   page: 'preparer',     // page affichée (onglet de la barre du haut)
+  strategies: [],       // façons d'imprimer proposées pour le modèle ouvert
+  strategie: 'classique',
 };
 
 // --- Nombres -------------------------------------------------------------------
@@ -618,6 +620,30 @@ function afficherProcede() {
   zone.scrollTop = defilement;
 }
 
+// --- Stratégies d'impression ------------------------------------------------------
+
+// Liste des façons d'imprimer le modèle ouvert, avec ce qu'il resterait à soutenir.
+function afficherStrategies() {
+  const cinqAxes = etat.strategie === 'par_branches';
+  for (const [id, actif] of [['mode-3axes', !cinqAxes], ['mode-5axes', cinqAxes]]) {
+    $(id).classList.toggle('actif', actif);
+    $(id).setAttribute('aria-pressed', String(actif));
+  }
+  const bloc = $('bloc-strategie');
+  bloc.hidden = !etat.modele || !etat.strategies.length;
+  if (bloc.hidden) return;
+  $('strategie').replaceChildren(...etat.strategies.map((s) => new Option(
+    `${s.nom} · ${entier(s.surplomb_mm2)} mm² à soutenir`, s.type, false, s.type === etat.strategie)));
+  const choisie = etat.strategies.find((s) => s.type === etat.strategie) || etat.strategies[0];
+  const detail = $('strategie-detail');
+  detail.replaceChildren(document.createTextNode(choisie.description));
+  if (choisie.parties.length > 1) {
+    detail.append(document.createTextNode(' Inclinaisons : '),
+      el('b', '', choisie.parties.map((p) => `${fr(p.inclinaison, 0)}°`).join(', ')), document.createTextNode('.'));
+  }
+  for (const remarque of choisie.remarques) detail.append(el('span', 'remarque', remarque));
+}
+
 // --- Relevés, modèle, tranchage --------------------------------------------------
 
 const ICONES_ETAT = { bon: 'ok', mauvais: 'erreur', perime: 'attention' };
@@ -666,6 +692,10 @@ async function ouvrirModele() {
   $('r-modele').textContent = etat.modele.nom;
   $('r-dimensions').textContent = `${fr(x)} × ${fr(y)} × ${fr(z)} mm · ${entier(etat.modele.triangles)} triangles`;
   $('titre-document').textContent = etat.modele.nom.replace(/\.[^.]+$/, '');
+  const proposees = await demander('strategies');
+  etat.strategies = proposees?.strategies ?? [];
+  etat.strategie = 'classique';
+  afficherStrategies();
   if (!etat.modele.ferme) dire(etat.modele.message_fermeture);
   $('btn-trancher').disabled = false;
   perimer();
@@ -736,7 +766,7 @@ async function trancher() {
   if (etat.page !== 'preparer' && etat.page !== 'apercu') choisirVue('preparer');   // pour voir l'attente
   occuper('Tranchage et vérification en cours…');
   await new Promise((suite) => setTimeout(suite, 30));
-  const reponse = await demander('trancher');
+  const reponse = await demander('trancher', { strategie: etat.strategie });
   liberer();
   if (!reponse) { definirEtat('mauvais', 'Tranchage impossible', 'Voir le message en haut de la vue.'); return; }
 
@@ -753,7 +783,9 @@ async function trancher() {
   $('r-cout').textContent = b ? `${fr(grammes * b.prix_kg / 1000, 2)} €` : '';
   $('r-duree').textContent = duree(resultat.duree_s);
   $('etat-resultat').hidden = false;
+  const parties = new Set(resultat.apercu.map((couche) => couche.partie ?? 0)).size;
   $('trajectoires-note').textContent = `Couches de ${ecrire(etat.valeurs.hauteur_couche)} mm · ` +
+    (parties > 1 ? `${parties} parties, chacune dans sa direction · ` : '') +
     `${entier(verification.deplacements_a_vide)} déplacements à vide · ${entier(verification.retractions)} rétractions`;
 
   if (verification.valide) definirEtat('bon', 'G-code vérifié', 'Aucune règle physique violée. Prêt à exporter.');
@@ -862,6 +894,16 @@ function dessinerOutils() {
         bouton.title = 'Ouvrir un modèle…';
         bouton.setAttribute('aria-label', bouton.title);
         bouton.addEventListener('click', ouvrirModele);
+      } else if (nom === 'strategie-5-axes') {
+        // Mène au choix de la stratégie, dans la section Procédé.
+        bouton.title = 'Stratégie d\'impression';
+        bouton.setAttribute('aria-label', bouton.title);
+        bouton.addEventListener('click', () => {
+          if (!etat.modele) { dire('Ouvre d\'abord un modèle : les stratégies dépendent de sa forme.', { info: true }); return; }
+          const replier = document.querySelector('.replier[aria-controls="corps-procede"]');
+          if (replier.getAttribute('aria-expanded') !== 'true') replier.click();
+          $('strategie').focus();
+        });
       } else {
         bouton.title = `${libelle} (à venir)`;
         bouton.setAttribute('aria-label', `${libelle} (à venir)`);
@@ -1011,6 +1053,22 @@ for (const bouton of document.querySelectorAll('.replier')) {
 }
 $('btn-retablir-tout').addEventListener('click', () => choisirProfil(etat.profil));
 $('profil-procede').addEventListener('change', (e) => choisirProfil(e.target.value));
+$('strategie').addEventListener('change', (e) => { etat.strategie = e.target.value; afficherStrategies(); perimer(); });
+// La pastille « 3 axes | 5 axes » choisit la stratégie correspondante.
+function choisirMode(cinqAxes) {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle : le 5 axes dépend de sa forme.', { info: true }); return; }
+  if (cinqAxes && !etat.strategies.some((s) => s.type === 'par_branches')) {
+    dire('Ce modèle n\'a pas de branche à imprimer dans une autre direction : il reste en 3 axes.', { info: true });
+    return;
+  }
+  const voulue = cinqAxes ? 'par_branches' : 'classique';
+  if (voulue === etat.strategie || (!cinqAxes && etat.strategie !== 'par_branches')) return;
+  etat.strategie = voulue;
+  afficherStrategies();
+  perimer();
+}
+$('mode-3axes').addEventListener('click', () => choisirMode(false));
+$('mode-5axes').addEventListener('click', () => choisirMode(true));
 $('mode-avance').addEventListener('change', (e) => { etat.avance = e.target.checked; afficherProcede(); });
 $('recherche').addEventListener('input', (e) => { etat.recherche = e.target.value; afficherProcede(); });
 $('vue-preparer').addEventListener('click', () => choisirVue('preparer'));
