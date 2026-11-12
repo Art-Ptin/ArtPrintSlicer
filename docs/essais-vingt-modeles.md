@@ -37,6 +37,15 @@ résultat, 52 en couches courbes et 8 en classique, tous vérifiés. Mais sur
 s'arrête à 50°, elle n'est pas d'aplomb sur ces couches, et le slicer le
 signale. Le rendu réel de ces branches reste à juger sur la machine.
 
+Avec une machine dont la tête peut basculer jusqu'à 110° (butées et
+inclinaison maximale de B réglées à 110), les soixante modèles sont encore
+tous vérifiés : 53 en couches courbes (l'arc en demi-tour s'y ajoute), 7 en
+classique. Sur 14 modèles, la tête dépasse 90° à certains endroits (jusqu'à
+110° pour la branche qui retombe, le tronc penché et l'arc en demi-tour), et
+plus aucune branche n'est bridée par la limite. Ces essais sont faits sans
+le modèle de la machine : les collisions du corps de la tête, qui passe plus
+bas que la buse à ces angles, restent à contrôler avec la vraie forme.
+
 Parmi les 52, quelques-uns ont une ou plusieurs branches imprimées **à plat,
 avec le tronc** : le socle à quatre bras (ses quatre bras, trop près du
 plateau), le tronc penché (une branche), le banc d'essai (un morceau). C'est
