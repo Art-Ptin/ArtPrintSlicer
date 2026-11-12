@@ -2014,18 +2014,18 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
 
 }  // namespace
 
-ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reglages) {
+ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reglages, bool deja_pose) {
     if (!reglages.impression.peau_courbe) {
-        return trancher(modele, reglages);
+        return trancher(modele, reglages, deja_pose);
     }
     const RapportFermeture fermeture = verifier_fermeture(modele);
     if (modele.triangles.empty() || !fermeture.ferme || !fermeture.orientation_coherente) {
-        return trancher(modele, reglages);  // le tranchage classique explique ce qui ne va pas
+        return trancher(modele, reglages, deja_pose);  // le tranchage classique explique ce qui ne va pas
     }
     Strategie classique;
     classique.type = TypeStrategie::classique;
     classique.parties.emplace_back();
-    classique.parties.back().maillage = poser_au_centre(modele);
+    classique.parties.back().maillage = deja_pose ? modele : poser_au_centre(modele);
     return trancher_strategie(classique, reglages);
 }
 
@@ -2033,7 +2033,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
                                      const OptionsMultiaxe& options) {
     // Ondulation sans aucune branche : c'est une impression classique.
     if (strategie.type == TypeStrategie::couches_courbes && strategie.parties.size() == 1) {
-        ResultatTranchage simple = trancher_classique(strategie.modele, reglages);
+        ResultatTranchage simple = trancher_classique(strategie.modele, reglages, true);
         simple.remarques.push_back(
             "Ondulation : aucune partie n'est imprimée la tête inclinée sur ce modèle ; c'est le même "
             "tranchage qu'en classique.");

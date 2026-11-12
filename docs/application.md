@@ -53,21 +53,41 @@ d'avancement, et tout à droite le bouton des **messages** du tranchage.
 | Outil | Ce qu'il fait |
 |---|---|
 | Ajouter un objet | ouvre un modèle dans le plateau courant |
-| Ajouter un plateau | crée un plateau de plus ; chaque plateau a son modèle |
-| Orientation automatique, Poser sur une face | retourne le modèle dans la pose qui demande le moins de supports (commande `transformer_modele`) |
+| Ajouter un plateau | crée un plateau de plus, dessiné à côté, presque transparent, avec son numéro ; un clic dessus (ou sur son bouton) le choisit |
+| Orientation automatique | retourne le modèle dans la pose qui demande le moins de supports |
+| Agencer les objets | remet l'objet au centre du plateau |
+| Déplacer | place la pièce à une distance donnée du centre, en X et en Y |
+| Tourner | trois angles, autour de X, de Y et de Z, depuis la pose du fichier |
 | Mettre à l'échelle | échelle en pour cent de la taille d'origine |
-| Agencer les objets | recentre l'objet sur le plateau |
+| Poser sur une face | choisit laquelle des six faces va contre le plateau, ou la pose automatique |
+| Mesurer | dimensions, volume, poids plein, position, surface à soutenir |
+| Stratégie de tranchage | mène au choix de la stratégie |
 | Direction d'impression par zone | lance l'ondulation et sa fenêtre d'options |
+| Simulation de la machine | fait défiler les couches du G-code, de la première à la dernière |
 
-Les autres outils (déplacer, tourner à la main, couper, booléens, texte,
-peinture des supports et de la couture, mesure...) affichent encore « à
-venir ».
+Toutes ces transformations passent par la commande `transformer_modele` du
+slicer (échelle, rotation, déplacement, orientation automatique) : le
+tranchage se fait sur la pièce telle qu'elle est posée.
+
+**Sept outils affichent encore « à venir »** : hauteur de couche variable,
+couper, opérations booléennes, assembler, texte en relief, peindre les
+supports, peindre la couture. Ils demandent des fonctions que le cœur du
+slicer n'a pas (plusieurs objets, découpe de maillage, supports).
+
+La stratégie se choisit avec deux cartes, « Classique » et « Ondulation »,
+qui disent chacune ce qu'elle laisserait à soutenir.
+
+Dans la vue 3D, la pièce non tranchée est montrée **lisse** (on ne voit pas
+les triangles du fichier, seulement ses vraies arêtes). Le plateau est noir,
+gradué tous les 25 mm à partir de 50 mm, avec le nom du logiciel à l'avant.
 
 ## Limites connues
 
 - **Un seul objet par plateau.** « Agencer » ne fait donc que recentrer.
-- **Poser sur une face** choisit la pose tout seul ; on ne clique pas encore
-  la face voulue.
+- **Poser sur une face** propose les six faces de la boîte de la pièce ; on
+  ne clique pas encore une face quelconque dans la vue.
+- **Les plateaux voisins** sont dessinés vides : leur pièce n'apparaît que
+  lorsqu'on les choisit.
 - **La barre d'avancement** ne montre pas un pourcentage réel : elle est
   animée pendant le calcul, pleine quand c'est fini.
 - **Supports** : toujours 0 g, le slicer n'en fabrique pas.

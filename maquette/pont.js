@@ -158,18 +158,20 @@ export async function appeler(commande, parametres = {}) {
       return { ok: true, modele: structuredClone(piece.modele) };
     }
     case 'transformer_modele': {
-      // La simulation agrandit ou réduit l'image du modèle ; le tranchage, lui, reste celui enregistré.
+      // La simulation agrandit, réduit ou déplace l'image du modèle ; le
+      // tranchage, lui, reste celui enregistré. Tourner demande le vrai slicer.
       if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
       const echelle = parametres.echelle ?? piece.echelle ?? 1;
+      const decalage = parametres.decalage ?? piece.decalage ?? [0, 0];
       piece.echelle = echelle;
+      piece.decalage = decalage;
       const modele = structuredClone(piece.modele);
-      modele.positions = modele.positions.map((v) => Math.round(v * echelle * 1000) / 1000);
+      modele.positions = modele.positions.map((v, i) => Math.round((v * echelle + (i % 3 === 0 ? decalage[0] : i % 3 === 1 ? decalage[1] : 0)) * 1000) / 1000);
       modele.dimensions = modele.dimensions.map((v) => Math.round(v * echelle * 100) / 100);
-      const orientation = parametres.orientation ?? 'origine';
-      return { ok: true, modele, echelle, orientation: 'origine',
-        note: orientation === 'auto'
-          ? 'Simulation : l\'orientation automatique est calculée par le vrai slicer, dans l\'application.'
-          : (echelle !== 1 ? 'Simulation : le modèle est affiché à la nouvelle échelle, mais le tranchage reste celui enregistré.' : '') };
+      if (modele.volume_cm3 !== undefined) modele.volume_cm3 = Math.round(modele.volume_cm3 * echelle ** 3 * 1000) / 1000;
+      const tourne = parametres.orientation === 'auto' || (parametres.rotation ?? []).some((v) => v !== 0);
+      return { ok: true, modele, echelle, decalage, rotation: [0, 0, 0], orientation: 'origine',
+        note: tourne ? 'Simulation : tourner ou réorienter la pièce demande le vrai slicer, dans l\'application.' : '' };
     }
     case 'strategies':
       if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };

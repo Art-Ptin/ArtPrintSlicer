@@ -160,6 +160,20 @@ void test_parcours_complet() {
     const Json normal = appeler(session, {{"commande", "transformer_modele"}, {"echelle", 1.0}, {"orientation", "auto"}});
     VERIFIER(normal["ok"] == true && normal["modele"]["dimensions"] == Json::array({10.0, 10.0, 10.0}));
     VERIFIER(appeler(session, {{"commande", "transformer_modele"}, {"orientation", "origine"}})["ok"] == true);
+    // Déplacer la pièce sur le plateau : elle n'est plus au centre, et le
+    // tranchage la laisse là où elle est.
+    const Json deplace = appeler(session, {{"commande", "transformer_modele"}, {"decalage", Json::array({30.0, -20.0})}});
+    VERIFIER(deplace["ok"] == true && deplace["modele"]["positions"][0] == 25.0 && deplace["modele"]["positions"][1] == -25.0);
+    VERIFIER(deplace["modele"]["volume_cm3"] == 1.0);
+    const Json a_cote = appeler(session, {{"commande", "trancher"}});
+    VERIFIER(a_cote["ok"] == true && a_cote["resultat"]["verification"]["valide"] == true);
+    VERIFIER(a_cote["resultat"]["apercu"][1]["m"][0].get<double>() > 20.0);
+    // Tourner : trois angles, sinon refus ; puis retour au centre, sans rotation.
+    VERIFIER(appeler(session, {{"commande", "transformer_modele"}, {"rotation", Json::array({90.0})}})["ok"] == false);
+    const Json remis = appeler(session, {{"commande", "transformer_modele"}, {"rotation", Json::array({90.0, 0.0, 45.0})},
+                                         {"decalage", Json::array({0.0, 0.0})}});
+    VERIFIER(remis["ok"] == true && remis["modele"]["dimensions"][2] == 10.0);
+    VERIFIER(appeler(session, {{"commande", "transformer_modele"}, {"rotation", Json::array({0.0, 0.0, 0.0})}})["ok"] == true);
 
     const Json tranche = appeler(session, {{"commande", "trancher"}});
     VERIFIER(tranche["ok"] == true);

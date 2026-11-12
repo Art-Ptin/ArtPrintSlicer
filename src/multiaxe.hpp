@@ -64,7 +64,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
 
 // Tranchage classique d'un modèle entier (3 axes). Si le réglage
 // « peau_courbe » est coché, une dernière passe suit la forme du dessus.
-ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reglages);
+ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reglages, bool deja_pose = false);
 
 // Vrai si les couches d'une partie courbe (qui a un « guide ») peuvent être
 // calculées : la courbe ne tourne pas trop serré pour l'épaisseur de la partie.

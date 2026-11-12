@@ -118,16 +118,22 @@
     <section class="section procede" id="section-procede">
       <header class="bandeau">
         <h2><button class="replier" aria-expanded="true" aria-controls="corps-procede" title="Replier" data-icone="chevron-bas"><span>Procédé</span></button></h2>
-        <div class="pilule" role="group" aria-label="Mode de tranchage">
-          <button id="mode-3axes" class="actif" aria-pressed="true">3 axes</button>
-          <button id="mode-5axes" aria-pressed="false" title="5 axes : chaque partie du modèle est imprimée dans sa direction. Le 5 axes continu (tête et plateau qui bougent pendant l'extrusion) est à venir.">5 axes</button>
-        </div>
         <span class="ressort"></span>
         <label class="interrupteur-libelle" for="mode-avance">Avancé<input type="checkbox" class="interrupteur" id="mode-avance"></label>
       </header>
       <div class="section-corps procede-corps" id="corps-procede">
-        <div class="strategie" id="bloc-strategie" hidden>
+        <div class="strategie" id="bloc-strategie">
           <label class="sous-titre" for="strategie">Stratégie d'impression</label>
+          <div class="cartes-strategie" role="group" aria-label="Stratégie d'impression">
+            <button id="mode-3axes" class="carte-strategie actif" aria-pressed="true">
+              <span class="carte-icone" data-icone="couches-variables"></span>
+              <span class="carte-texte"><b>Classique</b><span>3 axes</span><span class="carte-note">couches horizontales</span></span>
+            </button>
+            <button id="mode-5axes" class="carte-strategie" aria-pressed="false" title="Ondulation : les parties inclinées sont imprimées la tête penchée et le plateau tourné, en 5 axes continu.">
+              <span class="carte-icone" data-icone="strategie-5-axes"></span>
+              <span class="carte-texte"><b>Ondulation</b><span>5 axes continu</span><span class="carte-note">tête et plateau inclinés</span></span>
+            </button>
+          </div>
           <span class="deroulant" data-icone="chevron-bas"><select id="strategie"></select></span>
           <p class="strategie-detail" id="strategie-detail"></p>
         </div>

@@ -50,6 +50,9 @@ const etat = {
   chemin: null,         // fichier du modèle ouvert
   echelle: 1,           // facteur d'échelle du modèle (1 : taille d'origine)
   orientation: 'origine',
+  rotation: [0, 0, 0],  // rotation du modèle autour de X, Y, Z, en degrés
+  decalage: [0, 0],     // déplacement du modèle sur le plateau, en mm
+  lecture: 0,           // minuterie de la simulation d'impression (0 : arrêtée)
   plateaux: [{}],       // un modèle par plateau : { chemin, echelle, orientation }
   plateau: 0,
   remarques: [],        // remarques du dernier tranchage
@@ -640,8 +643,18 @@ function afficherStrategies() {
     $(id).setAttribute('aria-pressed', String(actif));
   }
   const bloc = $('bloc-strategie');
-  bloc.hidden = !etat.modele || !etat.strategies.length;
-  if (bloc.hidden) return;
+  bloc.hidden = false;
+  // Les deux cartes : ce que chaque stratégie laisserait à soutenir.
+  for (const [id, type] of [['mode-3axes', 'classique'], ['mode-5axes', 'couches_courbes']]) {
+    const proposee = etat.strategies.find((st) => st.type === type);
+    $(id).querySelector('.carte-note').textContent = proposee ? `${entier(proposee.surplomb_mm2)} mm² à soutenir`
+      : (type === 'classique' ? 'couches horizontales' : 'tête et plateau inclinés');
+  }
+  $('strategie').parentElement.hidden = !etat.strategies.length;
+  if (!etat.modele || !etat.strategies.length) {
+    $('strategie-detail').textContent = 'Ouvre un modèle : le slicer dira ce que chaque stratégie laisse à soutenir.';
+    return;
+  }
   $('strategie').replaceChildren(...etat.strategies.map((s) => new Option(
     `${s.nom} · ${entier(s.surplomb_mm2)} mm² à soutenir`, s.type, false, s.type === etat.strategie)));
   const choisie = etat.strategies.find((s) => s.type === etat.strategie) || etat.strategies[0];
@@ -711,7 +724,9 @@ async function chargerModele(chemin) {
   etat.chemin = chemin;
   etat.echelle = 1;
   etat.orientation = 'origine';
-  etat.plateaux[etat.plateau] = { chemin, echelle: 1, orientation: 'origine' };
+  etat.rotation = [0, 0, 0];
+  etat.decalage = [0, 0];
+  etat.plateaux[etat.plateau] = { chemin, echelle: 1, orientation: 'origine', rotation: [0, 0, 0], decalage: [0, 0] };
   await poserModele(reponse.modele);
   return true;
 }
@@ -754,9 +769,12 @@ async function transformer(parametres, message) {
   if (!reponse) return;
   etat.echelle = reponse.echelle ?? etat.echelle;
   etat.orientation = reponse.orientation ?? etat.orientation;
-  etat.plateaux[etat.plateau] = { chemin: etat.chemin, echelle: etat.echelle, orientation: etat.orientation };
+  etat.rotation = reponse.rotation ?? etat.rotation;
+  etat.decalage = reponse.decalage ?? etat.decalage;
+  etat.plateaux[etat.plateau] = { chemin: etat.chemin, echelle: etat.echelle, orientation: etat.orientation,
+    rotation: etat.rotation, decalage: etat.decalage };
   await poserModele(reponse.modele);
-  dire((parametres.orientation && reponse.note) || message, { info: true });
+  dire(((parametres.orientation || parametres.rotation) && reponse.note) || message, { info: true });
 }
 
 function fenetreOptions(titre, contenu, libelleAction, idAction) {
@@ -807,7 +825,109 @@ async function outilOrienter() {
   }
 }
 
+// Un champ de nombre avec son étiquette, pour les fenêtres d'outils.
+function champNombre(id, libelle, valeur) {
+  const etiquette = el('label', '', libelle);
+  const champ = el('input');
+  champ.type = 'text';
+  champ.id = id;
+  champ.inputMode = 'decimal';
+  champ.value = ecrire(valeur);
+  etiquette.append(champ);
+  return [etiquette, champ];
+}
+
+async function outilDeplacer() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  const [ex, cx] = champNombre('deplacer-x', 'Vers la droite (X), en mm depuis le centre du plateau', etat.decalage[0]);
+  const [ey, cy] = champNombre('deplacer-y', 'Vers l\'arrière (Y), en mm depuis le centre du plateau', etat.decalage[1]);
+  const aide = el('p', 'aide', '0 et 0 remettent la pièce au centre. Le slicer refuse le tranchage si la pièce dépasse du plateau.');
+  if (!(await fenetreOptions('Déplacer', [ex, ey, aide], 'Appliquer', 'deplacer-appliquer'))) return;
+  const x = lireNombre(cx.value), y = lireNombre(cy.value);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) { dire('Les deux distances doivent être des nombres.'); return; }
+  await transformer({ decalage: [x, y] }, `Pièce placée à ${fr(x)} mm en X et ${fr(y)} mm en Y du centre.`);
+}
+
+async function outilTourner() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  const [ex, cx] = champNombre('tourner-x', 'Autour de X (bascule vers l\'avant ou l\'arrière), en degrés', etat.rotation[0]);
+  const [ey, cy] = champNombre('tourner-y', 'Autour de Y (bascule à gauche ou à droite), en degrés', etat.rotation[1]);
+  const [ez, cz] = champNombre('tourner-z', 'Autour de Z (tourne à plat sur le plateau), en degrés', etat.rotation[2]);
+  const aide = el('p', 'aide', 'Les angles sont comptés depuis la pose d\'origine du fichier. La pièce est ensuite reposée sur le plateau.');
+  if (!(await fenetreOptions('Tourner', [ex, ey, ez, aide], 'Appliquer', 'tourner-appliquer'))) return;
+  const angles = [cx, cy, cz].map((c) => lireNombre(c.value));
+  if (angles.some((a) => !Number.isFinite(a))) { dire('Les trois angles doivent être des nombres.'); return; }
+  await transformer({ rotation: angles }, `Pièce tournée de ${angles.map((a) => fr(a, 0) + '°').join(', ')}.`);
+}
+
+// Poser sur une face : laquelle des six faces de la pièce va contre le plateau.
+const FACES = [
+  ['origine', 'Le dessous (comme dans le fichier)', [0, 0, 0]],
+  ['dessus', 'Le dessus (pièce retournée)', [180, 0, 0]],
+  ['avant', 'L\'avant', [-90, 0, 0]],
+  ['arriere', 'L\'arrière', [90, 0, 0]],
+  ['gauche', 'Le côté gauche', [0, 90, 0]],
+  ['droite', 'Le côté droit', [0, -90, 0]],
+  ['auto', 'Automatique : la pose qui demande le moins de supports', null],
+];
+
+async function outilPoserFace() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  const choix = el('select');
+  choix.id = 'face-choix';
+  for (const [valeur, texte] of FACES) choix.append(new Option(texte, valeur));
+  const etiquette = el('label', '', 'Face posée contre le plateau');
+  etiquette.append(choix);
+  if (!(await fenetreOptions('Poser sur une face', [etiquette], 'Poser', 'face-appliquer'))) return;
+  const face = FACES.find((f) => f[0] === choix.value);
+  if (face[2]) await transformer({ rotation: face[2] }, `Pièce posée sur : ${face[1].toLowerCase()}.`);
+  else await outilOrienter();
+}
+
+function outilMesurer() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  const [x, y, z] = etat.modele.dimensions;
+  const b = bobineMontee();
+  const lignes = [
+    ['Largeur (X)', `${fr(x, 2)} mm`], ['Profondeur (Y)', `${fr(y, 2)} mm`], ['Hauteur (Z)', `${fr(z, 2)} mm`],
+    ['Volume', etat.modele.volume_cm3 === undefined ? '' : `${fr(etat.modele.volume_cm3, 2)} cm³`],
+    ['Poids si la pièce était pleine', etat.modele.volume_cm3 === undefined ? '' : `${fr(etat.modele.volume_cm3 * (b?.densite ?? 1.24), 1)} g`],
+    ['Triangles', entier(etat.modele.triangles)],
+    ['Échelle', `${fr(etat.echelle * 100, 0)} %`],
+    ['Position sur le plateau', `X ${fr(etat.decalage[0])} mm · Y ${fr(etat.decalage[1])} mm`],
+    ['Surface à soutenir en classique', etat.strategies[0] ? `${entier(etat.strategies[0].surplomb_mm2)} mm²` : ''],
+  ].filter(([, valeur]) => valeur !== '');
+  const table = el('table', 'mesures');
+  table.id = 'mesures';
+  for (const [nom, valeur] of lignes) {
+    const ligne = el('tr');
+    ligne.append(el('td', '', nom), el('td', 'nombre', valeur));
+    table.append(ligne);
+  }
+  ouvrirFeuille('Mesures de la pièce', table, { simple: true });
+}
+
+// Simulation de l'impression : les couches défilent toutes seules, de la première à la dernière.
+function outilSimulation() {
+  if (!etat.resultat) { dire('Tranche d\'abord le modèle : la simulation rejoue les couches du G-code.', { info: true }); return; }
+  if (etat.lecture) { clearInterval(etat.lecture); etat.lecture = 0; dire('Simulation arrêtée.', { info: true }); return; }
+  choisirVue('apercu');
+  const curseur = $('curseur-couche');
+  const total = Number(curseur.max);
+  const pas = Math.max(1, Math.round(total / 240));
+  curseur.value = 1;
+  majCouche();
+  dire('Simulation de l\'impression : les couches défilent. Reclique sur l\'outil pour arrêter.', { info: true });
+  etat.lecture = setInterval(() => {
+    const suivant = Math.min(total, Number(curseur.value) + pas);
+    curseur.value = suivant;
+    majCouche();
+    if (suivant >= total) { clearInterval(etat.lecture); etat.lecture = 0; }
+  }, 50);
+}
+
 function afficherPlateaux() {
+  vue3d.definirPlateaux(etat.plateaux.length, etat.plateau, (numero) => choisirPlateau(numero));
   const barre = $('plateaux');
   barre.hidden = etat.plateaux.length < 2;
   barre.replaceChildren(...etat.plateaux.map((plateau, i) => {
@@ -841,8 +961,11 @@ async function choisirPlateau(numero) {
     return;
   }
   if (!(await chargerModele(plateau.chemin))) return;
-  if (plateau.echelle !== 1 || plateau.orientation !== 'origine') {
-    await transformer({ echelle: plateau.echelle, orientation: plateau.orientation }, `Plateau ${numero + 1}.`);
+  const tourne = (plateau.rotation ?? [0, 0, 0]).some((v) => v !== 0) || (plateau.decalage ?? [0, 0]).some((v) => v !== 0);
+  if (plateau.echelle !== 1 || plateau.orientation !== 'origine' || tourne) {
+    const parametres = { echelle: plateau.echelle, decalage: plateau.decalage ?? [0, 0] };
+    if (plateau.orientation === 'auto') parametres.orientation = 'auto'; else parametres.rotation = plateau.rotation ?? [0, 0, 0];
+    await transformer(parametres, `Plateau ${numero + 1}.`);
   }
 }
 
@@ -850,7 +973,8 @@ function outilAjouterPlateau() {
   if (!etat.plateaux[etat.plateaux.length - 1].chemin) { dire('Le dernier plateau est encore vide : ouvre d\'abord un modèle dedans.', { info: true }); return; }
   etat.plateaux.push({});
   afficherPlateaux();
-  choisirPlateau(etat.plateaux.length - 1);
+  vue3d.voirPlateaux();
+  dire(`Plateau ${etat.plateaux.length} ajouté, à côté. Clique dessus (ou sur son bouton en bas) pour travailler dessus.`, { info: true });
 }
 
 // --- Ondulation : les options demandées au moment de trancher -------------------------
@@ -1111,7 +1235,11 @@ const OUTILS = [
 const OUTILS_BRANCHES = {
   'ajouter-plateau': outilAjouterPlateau,
   orienter: outilOrienter,
-  'poser-face': outilOrienter,
+  'poser-face': outilPoserFace,
+  deplacer: outilDeplacer,
+  tourner: outilTourner,
+  mesurer: outilMesurer,
+  'simulation-machine': outilSimulation,
   echelle: outilEchelle,
   agencer: () => transformer({}, 'L\'objet est recentré sur le plateau. (Un seul objet par plateau pour l\'instant.)'),
   'direction-zone': () => {

@@ -60,6 +60,8 @@ Maillage poser_au_centre(const Maillage& maillage);
 // avant de l'utiliser.
 // Lève ErreurTranchage si le modèle ne peut pas être tranché (modèle ouvert,
 // trop grand pour la machine...).
-ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages);
+// « deja_pose » : vrai si le modèle est déjà à sa place sur le plateau (le
+// dessous à la hauteur zéro) ; il n'est alors pas recentré.
+ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, bool deja_pose = false);
 
 }  // namespace artprint

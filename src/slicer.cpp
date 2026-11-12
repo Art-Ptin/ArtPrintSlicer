@@ -167,7 +167,7 @@ Maillage poser_au_centre(const Maillage& maillage) {
     return pose;
 }
 
-ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages) {
+ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, bool deja_pose) {
     const ReglagesImpression& r = reglages.impression;
     const ReglagesMachine& machine = reglages.machine;
 
@@ -188,7 +188,7 @@ ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages) {
     // Pose le modèle au centre du plateau, le dessous à la hauteur zéro.
     const BoiteEnglobante boite = calculer_boite(maillage);
     const Point3 taille = boite.dimensions();
-    const Maillage pose = poser_au_centre(maillage);
+    const Maillage pose = deja_pose ? maillage : poser_au_centre(maillage);
     double rayon = 0.0;
     for (const Point3& sommet : pose.sommets) {
         rayon = std::max(rayon, std::hypot(static_cast<double>(sommet.x), static_cast<double>(sommet.y)));

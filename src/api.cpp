@@ -1,9 +1,12 @@
 // ArtPrint Slicer - licence AGPL v3
 #include "api.hpp"
+#include "decoupe.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <algorithm>
+#include <numbers>
+#include <array>
 #include <format>
 #include <fstream>
 #include <optional>
@@ -28,6 +31,8 @@ struct Session::Etat {
     std::optional<Maillage> modele;  // posé au centre du plateau
     std::optional<Maillage> origine; // tel qu'il a été lu, avant mise à l'échelle et orientation
     double echelle = 1.0;            // facteur d'échelle demandé (1 : taille d'origine)
+    std::array<double, 3> rotation{0.0, 0.0, 0.0};  // rotation demandée autour de X, Y, Z, en degrés
+    std::array<double, 2> decalage{0.0, 0.0};       // déplacement sur le plateau, en mm
     bool oriente = false;            // vrai : la pose a été choisie par le slicer
     std::optional<ResultatTranchage> resultat;
 };
@@ -97,6 +102,7 @@ Json decrire_modele(const Maillage& modele) {
     }
     Json reponse;
     reponse["triangles"] = modele.triangles.size();
+    reponse["volume_cm3"] = arrondi(volume_maillage(modele) / 1000.0);
     reponse["dimensions"] = {arrondi(taille.x), arrondi(taille.y), arrondi(taille.z)};
     reponse["ferme"] = fermeture.ferme && fermeture.orientation_coherente;
     reponse["message_fermeture"] = fermeture.message;
@@ -244,6 +250,8 @@ std::string Session::executer(std::string_view demande_json) {
             etat.origine = etat.modele;
             etat.echelle = 1.0;
             etat.oriente = false;
+            etat.rotation = {0.0, 0.0, 0.0};
+            etat.decalage = {0.0, 0.0};
             etat.resultat.reset();
             reponse["modele"] = decrire_modele(*etat.modele);
             reponse["modele"]["format"] = nom_format(modele.format);
@@ -270,8 +278,45 @@ std::string Session::executer(std::string_view demande_json) {
                 }
                 etat.oriente = orientation == "auto";
             }
+            //   "rotation" : [x, y, z] en degrés, autour des axes X, Y puis Z,
+            //                  depuis la pose d'origine (annule l'orientation « auto ») ;
+            //   "decalage" : [x, y] en mm, depuis le centre du plateau.
+            if (demande.contains("rotation")) {
+                const std::vector<double> angles = demande["rotation"].get<std::vector<double>>();
+                if (angles.size() != 3) {
+                    throw std::runtime_error("La rotation attend trois angles : autour de X, de Y et de Z.");
+                }
+                etat.rotation = {angles[0], angles[1], angles[2]};
+                etat.oriente = false;
+            }
+            if (demande.contains("decalage")) {
+                const std::vector<double> d = demande["decalage"].get<std::vector<double>>();
+                if (d.size() != 2) {
+                    throw std::runtime_error("Le déplacement attend deux distances : en X et en Y.");
+                }
+                etat.decalage = {d[0], d[1]};
+            }
             Maillage modele = *etat.origine;
             std::string note;
+            if (!etat.oriente) {
+                // Rotations successives autour de X, de Y puis de Z.
+                for (int axe = 0; axe < 3; ++axe) {
+                    const double angle = etat.rotation[static_cast<std::size_t>(axe)] * std::numbers::pi / 180.0;
+                    if (std::abs(angle) < 1e-12) {
+                        continue;
+                    }
+                    const double c = std::cos(angle), s = std::sin(angle);
+                    for (Point3& p : modele.sommets) {
+                        const double x = p.x, y = p.y, z = p.z;
+                        const double nx = axe == 0 ? x : axe == 1 ? c * x + s * z : c * x - s * y;
+                        const double ny = axe == 0 ? c * y - s * z : axe == 1 ? y : s * x + c * y;
+                        const double nz = axe == 0 ? s * y + c * z : axe == 1 ? -s * x + c * z : z;
+                        p.x = static_cast<decltype(p.x)>(nx);
+                        p.y = static_cast<decltype(p.y)>(ny);
+                        p.z = static_cast<decltype(p.z)>(nz);
+                    }
+                }
+            }
             if (etat.oriente) {
                 OptionsStrategie options;
                 options.couches_orientees = true;
@@ -293,8 +338,14 @@ std::string Session::executer(std::string_view demande_json) {
                 }
             }
             etat.modele = poser_au_centre(modele);
+            for (Point3& p : etat.modele->sommets) {
+                p.x = static_cast<decltype(p.x)>(p.x + etat.decalage[0]);
+                p.y = static_cast<decltype(p.y)>(p.y + etat.decalage[1]);
+            }
             etat.resultat.reset();
             reponse["modele"] = decrire_modele(*etat.modele);
+            reponse["rotation"] = etat.rotation;
+            reponse["decalage"] = etat.decalage;
             reponse["echelle"] = etat.echelle;
             reponse["orientation"] = etat.oriente ? "auto" : "origine";
             reponse["note"] = note;
@@ -306,7 +357,7 @@ std::string Session::executer(std::string_view demande_json) {
             // « strategie » (facultatif) : "classique" ou "couches_courbes".
             const std::string voulue = demande.value("strategie", std::string("classique"));
             if (voulue == "classique") {
-                etat.resultat = trancher_classique(*etat.modele, etat.reglages);
+                etat.resultat = trancher_classique(*etat.modele, etat.reglages, true);
             } else {
                 const Strategie* choisie = nullptr;
                 std::vector<Strategie> strategies = proposer_strategies(*etat.modele, etat.reglages);
@@ -384,7 +435,7 @@ std::string Session::executer(std::string_view demande_json) {
                     if (std::none_of(strategies.begin(), strategies.end(), [](const Strategie& strategie) {
                             return strategie.type == TypeStrategie::couches_courbes;
                         })) {
-                        etat.resultat = trancher_classique(*etat.modele, etat.reglages);
+                        etat.resultat = trancher_classique(*etat.modele, etat.reglages, true);
                         etat.resultat->remarques.push_back(
                             "Toutes les branches sont imprimées à plat : c'est une impression classique.");
                         reponse["resultat"] = decrire_resultat(*etat.resultat);
@@ -413,7 +464,7 @@ std::string Session::executer(std::string_view demande_json) {
             // dire ce que l'ondulation ajoute ou enlève.
             if (voulue != "classique") {
                 reponse["resultat"]["duree_classique_s"] =
-                    std::round(trancher_classique(*etat.modele, etat.reglages).duree_estimee);
+                    std::round(trancher_classique(*etat.modele, etat.reglages, true).duree_estimee);
             }
         } else if (commande == "strategies") {
             if (!etat.modele) {

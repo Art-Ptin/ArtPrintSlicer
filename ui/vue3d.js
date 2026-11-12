@@ -22,6 +22,64 @@ export function couleursTrajectoires() {
 }
 const TYPE_VIDE = 5;
 
+// Normales « lissées » d'un maillage (9 nombres par triangle). En chaque
+// sommet, on fait la moyenne des faces qui s'y rejoignent, mais seulement de
+// celles qui tournent de moins de 40° : une surface courbe paraît lisse, une
+// vraie arête (le bord d'un cube) reste vive.
+function normalesLissees(positions) {
+  const normales = new Float32Array(positions.length);
+  const faces = new Float32Array(positions.length / 3);   // une normale (pondérée par l'aire) par triangle
+  const sommes = new Map();
+  const cle = (i) => `${Math.round(positions[i] * 500)},${Math.round(positions[i + 1] * 500)},${Math.round(positions[i + 2] * 500)}`;
+  const cles = new Array(positions.length / 3);
+  for (let t = 0; t < positions.length; t += 9) {
+    const ux = positions[t + 3] - positions[t], uy = positions[t + 4] - positions[t + 1], uz = positions[t + 5] - positions[t + 2];
+    const vx = positions[t + 6] - positions[t], vy = positions[t + 7] - positions[t + 1], vz = positions[t + 8] - positions[t + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    faces[t / 3] = nx; faces[t / 3 + 1] = ny; faces[t / 3 + 2] = nz;
+    for (let k = 0; k < 3; k++) {
+      const c = cle(t + 3 * k);
+      cles[t / 3 + k] = c;
+      let liste = sommes.get(c);
+      if (!liste) { liste = []; sommes.set(c, liste); }
+      liste.push(t / 3);
+    }
+  }
+  const seuil = Math.cos(40 * Math.PI / 180);
+  for (let t = 0; t < positions.length; t += 9) {
+    const f = t / 3;
+    const fl = Math.hypot(faces[f], faces[f + 1], faces[f + 2]) || 1;
+    for (let k = 0; k < 3; k++) {
+      let x = 0, y = 0, z = 0;
+      for (const g of sommes.get(cles[f + k])) {
+        const gl = Math.hypot(faces[g], faces[g + 1], faces[g + 2]) || 1;
+        const accord = (faces[f] * faces[g] + faces[f + 1] * faces[g + 1] + faces[f + 2] * faces[g + 2]) / (fl * gl);
+        if (accord >= seuil) { x += faces[g]; y += faces[g + 1]; z += faces[g + 2]; }
+      }
+      const l = Math.hypot(x, y, z) || 1;
+      normales[t + 3 * k] = x / l; normales[t + 3 * k + 1] = y / l; normales[t + 3 * k + 2] = z / l;
+    }
+  }
+  return normales;
+}
+
+// Une étiquette (texte clair, fond transparent) à poser à plat ou face à la caméra.
+function textureTexte(texte, taille = 96, graisse = 700) {
+  const toile = document.createElement('canvas');
+  const dessin = toile.getContext('2d');
+  const police = `${graisse} ${taille}px Archivo, "Segoe UI", sans-serif`;
+  dessin.font = police;
+  toile.width = Math.ceil(dessin.measureText(texte).width) + 24;
+  toile.height = Math.ceil(taille * 1.3);
+  dessin.font = police;
+  dessin.fillStyle = '#ffffff';
+  dessin.textBaseline = 'middle';
+  dessin.fillText(texte, 12, toile.height / 2);
+  const texture = new THREE.CanvasTexture(toile);
+  texture.anisotropy = 4;
+  return { texture, rapport: toile.width / toile.height };
+}
+
 export class Vue3D {
   constructor(canvas) {
     this.canvas = canvas;
@@ -67,7 +125,12 @@ export class Vue3D {
     new MutationObserver(() => this.rafraichirTheme())
       .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
+    this.nombrePlateaux = 1;
+    this.plateauActif = 0;
+    this.surChoixPlateau = null;
+    this.fantomes = [];
     this.definirVolume(this.rayon, this.hauteur);
+    this.brancherClics();
     new ResizeObserver(() => this.redimensionner()).observe(canvas.parentElement);
     this.redimensionner();
   }
@@ -155,6 +218,20 @@ export class Vue3D {
     cercle(grille, rayon, 0);
     grille.push(-rayon, 0, 0, rayon, 0, 0, 0, -rayon, 0, 0, rayon, 0);
     traits(grille, this.jeton('--c-grille', sombre ? '#4a5462' : '#c3c9d2'));
+    // Graduations : un cercle plus léger entre deux cercles principaux.
+    const graduations = [];
+    for (let r = 25; r < rayon; r += 50) if (r > 50) cercle(graduations, r, 0);
+    traits(graduations, this.jeton('--c-grille', sombre ? '#4a5462' : '#c3c9d2'), 0.5);
+
+    // Le nom du logiciel, à plat sur l'avant du plateau : il montre où est l'avant.
+    const nom = textureTexte('ArtPrint Slicer');
+    const hauteurNom = rayon * 0.13;
+    const etiquette = new THREE.Mesh(
+      new THREE.PlaneGeometry(hauteurNom * nom.rapport, hauteurNom),
+      new THREE.MeshBasicMaterial({ map: nom.texture, transparent: true, opacity: 0.32, depthWrite: false }));
+    etiquette.position.set(0, -rayon * 0.74, 0.03);
+    this.plateau.add(etiquette);
+    this.dessinerPlateaux();
 
     // Axes de la machine au centre du plateau : X rouge, Y vert, Z bleu.
     traits([0, 0, 0.05, 30, 0, 0.05], this.jeton('--axe-x', '#d9342b'));
@@ -175,17 +252,91 @@ export class Vue3D {
     this.demanderRendu();
   }
 
+  // Plusieurs plateaux : celui sur lequel on travaille est au centre ; les
+  // autres sont dessinés à côté, presque transparents, avec leur numéro. Un
+  // clic sur l'un d'eux appelle « surChoix » avec son numéro (à partir de 0).
+  definirPlateaux(nombre, actif, surChoix) {
+    this.nombrePlateaux = nombre;
+    this.plateauActif = actif;
+    this.surChoixPlateau = surChoix;
+    this.definirVolume(this.rayon, this.hauteur);
+  }
+
+  dessinerPlateaux() {
+    this.fantomes = [];
+    const nombre = this.nombrePlateaux || 1;
+    if (nombre < 2) return;
+    const sombre = this.estSombre();
+    const pas = 2 * this.rayon + 46;
+    for (let i = 0; i < nombre; i++) {
+      const x = (i - this.plateauActif) * pas;
+      const numero = textureTexte(String(i + 1), 120);
+      const pastille = new THREE.Sprite(new THREE.SpriteMaterial({ map: numero.texture, transparent: true,
+        opacity: i === this.plateauActif ? 0.95 : 0.6, depthTest: false, color: this.jeton('--c-accent', '#e4572e') }));
+      pastille.scale.set(26 * numero.rapport, 26, 1);
+      pastille.position.set(x - this.rayon * 0.78, -this.rayon * 0.78, 14);
+      this.plateau.add(pastille);
+      if (i === this.plateauActif) continue;
+      const disque = new THREE.Mesh(new THREE.CircleGeometry(this.rayon, 96), new THREE.MeshBasicMaterial({
+        color: this.jeton('--c-plateau', sombre ? '#262c36' : '#101214'), transparent: true, opacity: 0.2,
+        side: THREE.DoubleSide, depthWrite: false }));
+      disque.position.set(x, 0, -0.06);
+      disque.userData.plateau = i;
+      this.plateau.add(disque);
+      this.fantomes.push(disque);
+      const bord = [];
+      for (let k = 0; k < 96; k++) {
+        const a = (k / 96) * Math.PI * 2, b = ((k + 1) / 96) * Math.PI * 2;
+        bord.push(x + this.rayon * Math.cos(a), this.rayon * Math.sin(a), 0, x + this.rayon * Math.cos(b), this.rayon * Math.sin(b), 0);
+      }
+      const geometrie = new THREE.BufferGeometry();
+      geometrie.setAttribute('position', new THREE.Float32BufferAttribute(bord, 3));
+      this.plateau.add(new THREE.LineSegments(geometrie, new THREE.LineBasicMaterial({
+        color: this.jeton('--c-grille', '#4a5462'), transparent: true, opacity: 0.45 })));
+    }
+  }
+
+  // Recule la caméra pour voir tous les plateaux d'un coup.
+  voirPlateaux() {
+    const nombre = this.nombrePlateaux || 1;
+    const pas = 2 * this.rayon + 46;
+    const centre = new THREE.Vector3(((nombre - 1) / 2 - this.plateauActif) * pas, 0, 20);
+    const d = (this.rayon * 2.3 + (nombre - 1) * pas * 0.62) * 1.5;
+    this.controles.target.copy(centre);
+    this.camera.position.set(centre.x + 0.35 * d, centre.y - 0.75 * d, centre.z + 0.56 * d);
+    this.controles.update();
+    this.demanderRendu();
+  }
+
+  // Un clic (sans glisser) sur un plateau voisin le choisit.
+  brancherClics() {
+    let depart = null;
+    this.canvas.addEventListener('pointerdown', (e) => { depart = [e.clientX, e.clientY]; });
+    this.canvas.addEventListener('pointerup', (e) => {
+      if (!depart || Math.hypot(e.clientX - depart[0], e.clientY - depart[1]) > 5) return;
+      if (!this.fantomes || !this.fantomes.length || !this.surChoixPlateau) return;
+      const cadre = this.canvas.getBoundingClientRect();
+      const souris = new THREE.Vector2(((e.clientX - cadre.left) / cadre.width) * 2 - 1, -((e.clientY - cadre.top) / cadre.height) * 2 + 1);
+      const rayon = new THREE.Raycaster();
+      rayon.setFromCamera(souris, this.camera);
+      const touche = rayon.intersectObjects(this.fantomes)[0];
+      if (touche) this.surChoixPlateau(touche.object.userData.plateau);
+    });
+  }
+
   // « positions » : 9 nombres par triangle, modèle déjà posé sur le plateau.
   afficherModele(positions) {
     this.vider(this.modele);
     this.viderApercu();
     const geometrie = new THREE.BufferGeometry();
     geometrie.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometrie.computeVertexNormals();
+    // La pièce est montrée lisse : on ne voit pas les triangles du fichier,
+    // seulement ses vraies arêtes (voir « normalesLissees »).
+    geometrie.setAttribute('normal', new THREE.Float32BufferAttribute(normalesLissees(positions), 3));
     geometrie.computeBoundingBox();
-    this.boite = geometrie.boundingBox.clone();
+    this.boite = positions.length ? geometrie.boundingBox.clone() : null;
     this.modele.add(new THREE.Mesh(geometrie, new THREE.MeshStandardMaterial({
-      color: this.jeton('--c-piece', '#2aa57b'), roughness: 0.6, metalness: 0.05, flatShading: true })));
+      color: this.jeton('--c-piece', '#2aa57b'), roughness: 0.55, metalness: 0.05 })));
     this.montrer('preparer');
     this.pointDeVue('iso');
   }
