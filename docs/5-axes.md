@@ -114,8 +114,9 @@ G1 X… Y… Z… B… C… E… F…
 
 Le vérificateur rejoue ces mouvements par petits pas, collisions comprises,
 et compte les « extrusions en rotation ». C'est le premier vrai mouvement
-5 axes continu du slicer. Pour comparer, l'option `pivot_continu` de
-`OptionsMultiaxe` peut être mise à faux : la tête pivote alors entre deux
+5 axes continu du slicer. Pour comparer, ou pour un premier essai prudent
+sur la machine, le réglage `pivot_continu` (onglet Machine) peut être
+décoché (0 dans le fichier de réglages) : la tête pivote alors entre deux
 couches, pendant un déplacement à vide.
 
 ## L'essayer
@@ -145,6 +146,9 @@ Dans l'interface, la commande `strategies` rend la même liste, et
 - `b_vertical` : valeur de B, dans le G-code, quand la buse est verticale
   (0 par défaut). À régler si la machine affiche une autre valeur pour la
   buse verticale.
+- `pivot_continu` : 1 (oui) par défaut. Sur une branche courbe, la tête
+  pivote pendant qu'elle imprime. Avec 0 (non), elle pivote entre deux
+  couches, sans extruder : plus prudent pour un premier essai sur la machine.
 - `modele_machine` : s'il est renseigné, les inclinaisons sont choisies pour
   éviter tout contact avec la forme réelle de l'imprimante.
 

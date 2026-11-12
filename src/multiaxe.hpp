@@ -28,6 +28,7 @@ struct OptionsMultiaxe {
     double pas_rotation = 5.0;
     // Partie courbe : la tête pivote pendant l'extrusion (5 axes continu).
     // Faux : elle pivote entre deux couches, pendant un déplacement à vide.
+    // Le réglage « pivot_continu » de la machine doit aussi le permettre.
     bool pivot_continu = true;
     // Angle maximal de B ou de C entre deux lignes de G-code pendant l'extrusion, en degrés.
     double pas_pivot_continu = 0.25;

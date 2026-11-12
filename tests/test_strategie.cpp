@@ -317,6 +317,10 @@ void test_couches_pivotantes() {
     VERIFIER_ACCEPTE(a_l_arret.verification);
     VERIFIER(a_l_arret.verification.extrusions_en_rotation == 0);
     VERIFIER(a_l_arret.couches == resultat.couches);
+    // Le réglage « pivot_continu » de la machine fait la même chose.
+    Reglages sans_pivot = r;
+    sans_pivot.machine.pivot_continu = false;
+    VERIFIER(trancher_strategie(courbe, sans_pivot).verification.extrusions_en_rotation == 0);
     VERIFIER(std::abs(a_l_arret.longueur_filament - resultat.longueur_filament) < 0.01 * resultat.longueur_filament);
     // Aucune paroi n'est imprimée dans le vide ; en 3 axes, il y en a.
     VERIFIER(resultat.verification.longueur_dans_le_vide < 1.0);

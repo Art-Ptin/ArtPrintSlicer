@@ -47,6 +47,9 @@ struct ReglagesMachine {
     // les limites de B ci-dessous sont des inclinaisons comptées depuis cette
     // position verticale.
     double b_vertical = 0.0;
+    // Vrai : sur une partie courbe, B et C tournent pendant l'extrusion
+    // (5 axes continu). Faux : ils ne tournent qu'à vide, entre deux couches.
+    bool pivot_continu = true;
     double b_min = -90.0;
     double b_max = 90.0;
     // Inclinaison maximale près du plateau, en degrés.

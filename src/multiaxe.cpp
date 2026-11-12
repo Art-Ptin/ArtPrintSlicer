@@ -111,7 +111,7 @@ public:
     // « z_min » : son point le plus bas au-dessus du plateau.
     void pivoter_en_imprimant(double longueur, const Vec3& w_suivante, double z_min) {
         continu_ = false;
-        a_preparer_ = options_.pivot_continu && longueur > 1e-6;
+        a_preparer_ = options_.pivot_continu && machine_.pivot_continu && longueur > 1e-6;
         longueur_couche_ = longueur;
         parcouru_ = 0.0;
         outil_suivant_ = direction_outil(w_suivante);

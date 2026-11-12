@@ -268,6 +268,10 @@ std::vector<DescriptionReglage> construire() {
         "Hauteur de bascule de B", "mm",
         "Hauteur au-dessus de laquelle B peut dépasser la limite précédente. À mesurer."},
         0.0, 2000.0));
+    d.push_back(booleen(M, &RM::pivot_continu, {"pivot_continu", machine,
+        "Pivot continu (5 axes continu)", "",
+        "Sur une branche courbe, la tête pivote pendant qu'elle imprime. "
+        "Décoché : elle pivote entre deux couches, sans extruder."}));
     d.push_back(facultatif(M, &RM::c_min, {"c_min", machine, "Butée basse de C", "°",
         "Vide : le plateau tourne sans limite."}, -1.0e6, 1.0e6));
     d.push_back(facultatif(M, &RM::c_max, {"c_max", machine, "Butée haute de C", "°",

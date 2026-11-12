@@ -39,6 +39,9 @@ b_limite_pres_plateau = 55
 # Hauteur (mm) au-dessus de laquelle B peut dépasser cette limite.
 # À MESURER sur la machine. Sans ce réglage, la limite s'applique partout.
 # hauteur_bascule_b =
+# Pivot continu : sur une branche courbe, la tête pivote pendant qu'elle
+# imprime (1). Avec 0, elle pivote entre deux couches, sans extruder.
+pivot_continu = 1
 
 # Butées de C, en degrés. Sans ces réglages, le plateau tourne sans limite.
 # c_min =
