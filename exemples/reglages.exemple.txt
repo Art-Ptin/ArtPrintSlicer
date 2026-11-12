@@ -6,7 +6,7 @@
 # --- Machine ---------------------------------------------------------------
 
 rayon_plateau = 150
-hauteur_impression = 281
+hauteur_impression = 260
 
 # Distance entre le pivot B et la pointe de la buse, en mm.
 # À MESURER sur la machine, puis enlever le # devant la ligne.

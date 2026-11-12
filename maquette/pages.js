@@ -42,7 +42,7 @@ function brancherImprimante(app) {
     const rayon = reglage('rayon_plateau', 150);
     if (axe === 'x') return [reglage('course_x_min', -rayon), reglage('course_x_max', rayon)];
     if (axe === 'y') return [reglage('course_y_min', -rayon), reglage('course_y_max', rayon)];
-    if (axe === 'z') return [reglage('course_z_min', 0), reglage('course_z_max', reglage('hauteur_impression', 281))];
+    if (axe === 'z') return [reglage('course_z_min', 0), reglage('course_z_max', reglage('hauteur_impression', 260))];
     if (axe === 'b') return [B_VERTICAL + reglage('b_min', -90), B_VERTICAL + reglage('b_max', 90)];
     return [-Infinity, Infinity];
   }

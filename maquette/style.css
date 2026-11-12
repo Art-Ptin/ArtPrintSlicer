@@ -623,3 +623,11 @@ input.interrupteur {
 .mesures { width: 100%; border-collapse: collapse; font-size: var(--t-13); }
 .mesures td { padding: var(--e-1) 0; border-bottom: var(--bord); }
 .mesures td.nombre { text-align: right; font-weight: var(--g-fort); }
+
+/* --- Paramètres d'un outil : petit rectangle sous la barre d'outils --- */
+.panneau-outil { top: calc(var(--e-3) + var(--l-outil) + var(--e-5)); left: 50%; transform: translateX(-50%); width: min(360px, calc(100% - var(--e-6))); padding: var(--e-3); max-height: 70%; overflow: auto; }
+.panneau-outil[hidden] { display: none; }
+.panneau-tete { display: flex; align-items: center; margin-bottom: var(--e-2); font-size: var(--t-13); }
+.panneau-outil .options-actions { margin-top: var(--e-3); }
+.raccourcis { display: flex; flex-wrap: wrap; gap: var(--e-1); }
+.raccourcis .bouton { flex: 1 1 auto; min-width: 72px; }

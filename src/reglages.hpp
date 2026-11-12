@@ -23,7 +23,7 @@ enum class AxePivot { x, y };
 struct ReglagesMachine {
     // Plateau rond et hauteur d'impression, en millimètres.
     double rayon_plateau = 150.0;
-    double hauteur_impression = 281.0;
+    double hauteur_impression = 260.0;
 
     // Distance entre le pivot B et la pointe de la buse. À MESURER sur la
     // machine : il n'y a volontairement aucune valeur par défaut.

@@ -230,3 +230,15 @@ export const BOBINES_EXEMPLE = [
     densite: 1.24, temp_buse: 215, temp_plateau: 55, debit: 1, retraction: 2, retraction_vitesse: 40,
     ventilation: true, prix_kg: 24, poids_bobine: 750, poids_restant: 96 },
 ];
+
+// Profil de la machine « ArtPrint 5 axes » : les mesures faites sur le
+// prototype par son constructeur. Ce sont des réglages, pas des constantes :
+// ils se changent dans la fiche de l'imprimante. « version » : changer ce
+// texte fait reposer les valeurs une fois chez tout le monde.
+export const PROFIL_MACHINE = {
+  version: 'prototype-2',
+  reglages: {
+    distance_pivot_buse: '55',   // du pivot de la tête à la pointe de la buse, en mm
+    hauteur_impression: '260',   // hauteur imprimable, en mm
+  },
+};

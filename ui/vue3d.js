@@ -118,7 +118,7 @@ export class Vue3D {
     this.coucheSeule = false;
     this.boite = null;          // boîte englobante de la pièce
     this.rayon = 150;
-    this.hauteur = 281;
+    this.hauteur = 260;
     this.sombre = window.matchMedia('(prefers-color-scheme: dark)');
     this.sombre.addEventListener('change', () => this.rafraichirTheme());
     // Un thème choisi explicitement (attribut data-theme) l'emporte sur celui du système.
@@ -255,10 +255,11 @@ export class Vue3D {
   // Plusieurs plateaux : celui sur lequel on travaille est au centre ; les
   // autres sont dessinés à côté, presque transparents, avec leur numéro. Un
   // clic sur l'un d'eux appelle « surChoix » avec son numéro (à partir de 0).
-  definirPlateaux(nombre, actif, surChoix) {
+  definirPlateaux(nombre, actif, surChoix, pieces = []) {
     this.nombrePlateaux = nombre;
     this.plateauActif = actif;
     this.surChoixPlateau = surChoix;
+    this.piecesPlateaux = pieces;   // pour chaque plateau : les triangles de sa pièce, ou rien
     this.definirVolume(this.rayon, this.hauteur);
   }
 
@@ -277,22 +278,45 @@ export class Vue3D {
       pastille.position.set(x - this.rayon * 0.78, -this.rayon * 0.78, 14);
       this.plateau.add(pastille);
       if (i === this.plateauActif) continue;
+      // Le plateau voisin : noir lui aussi, un peu transparent, avec ses cercles.
       const disque = new THREE.Mesh(new THREE.CircleGeometry(this.rayon, 96), new THREE.MeshBasicMaterial({
-        color: this.jeton('--c-plateau', sombre ? '#262c36' : '#101214'), transparent: true, opacity: 0.2,
+        color: this.jeton('--c-plateau', sombre ? '#0b0c0e' : '#0f1113'), transparent: true, opacity: 0.82,
         side: THREE.DoubleSide, depthWrite: false }));
       disque.position.set(x, 0, -0.06);
       disque.userData.plateau = i;
       this.plateau.add(disque);
       this.fantomes.push(disque);
-      const bord = [];
-      for (let k = 0; k < 96; k++) {
-        const a = (k / 96) * Math.PI * 2, b = ((k + 1) / 96) * Math.PI * 2;
-        bord.push(x + this.rayon * Math.cos(a), this.rayon * Math.sin(a), 0, x + this.rayon * Math.cos(b), this.rayon * Math.sin(b), 0);
+      const cercles = [];
+      const rayons = [this.rayon];
+      for (let r = 50; r < this.rayon; r += 25) rayons.push(r);
+      for (const r of rayons) {
+        for (let k = 0; k < 96; k++) {
+          const a = (k / 96) * Math.PI * 2, b = ((k + 1) / 96) * Math.PI * 2;
+          cercles.push(x + r * Math.cos(a), r * Math.sin(a), 0, x + r * Math.cos(b), r * Math.sin(b), 0);
+        }
       }
       const geometrie = new THREE.BufferGeometry();
-      geometrie.setAttribute('position', new THREE.Float32BufferAttribute(bord, 3));
+      geometrie.setAttribute('position', new THREE.Float32BufferAttribute(cercles, 3));
       this.plateau.add(new THREE.LineSegments(geometrie, new THREE.LineBasicMaterial({
-        color: this.jeton('--c-grille', '#4a5462'), transparent: true, opacity: 0.45 })));
+        color: this.jeton('--c-grille', '#4f565f'), transparent: true, opacity: 0.5 })));
+      // Sa pièce, un peu transparente elle aussi.
+      const positions = (this.piecesPlateaux || [])[i];
+      if (positions && positions.length) {
+        if (!this.cachePieces) this.cachePieces = new Map();
+        let forme = this.cachePieces.get(positions);
+        if (!forme) {
+          forme = new THREE.BufferGeometry();
+          forme.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          forme.setAttribute('normal', new THREE.Float32BufferAttribute(normalesLissees(positions), 3));
+          this.cachePieces = new Map([[positions, forme], ...[...this.cachePieces].slice(0, 7)]);
+        }
+        const piece = new THREE.Mesh(forme, new THREE.MeshStandardMaterial({
+          color: this.jeton('--c-piece', '#a2a7ad'), roughness: 0.55, metalness: 0.05, transparent: true, opacity: 0.75 }));
+        piece.position.x = x;
+        piece.userData.plateau = i;
+        this.plateau.add(piece);
+        this.fantomes.push(piece);
+      }
     }
   }
 
@@ -308,25 +332,74 @@ export class Vue3D {
     this.demanderRendu();
   }
 
-  // Un clic (sans glisser) sur un plateau voisin le choisit.
+  // La souris dans la vue : un clic sur un plateau voisin le choisit ; un clic
+  // sur la pièce la sélectionne ; la pièce se fait glisser sur le plateau.
   brancherClics() {
-    let depart = null;
-    this.canvas.addEventListener('pointerdown', (e) => { depart = [e.clientX, e.clientY]; });
-    this.canvas.addEventListener('pointerup', (e) => {
-      if (!depart || Math.hypot(e.clientX - depart[0], e.clientY - depart[1]) > 5) return;
-      if (!this.fantomes || !this.fantomes.length || !this.surChoixPlateau) return;
+    const viser = (e) => {
       const cadre = this.canvas.getBoundingClientRect();
       const souris = new THREE.Vector2(((e.clientX - cadre.left) / cadre.width) * 2 - 1, -((e.clientY - cadre.top) / cadre.height) * 2 + 1);
       const rayon = new THREE.Raycaster();
       rayon.setFromCamera(souris, this.camera);
-      const touche = rayon.intersectObjects(this.fantomes)[0];
-      if (touche) this.surChoixPlateau(touche.object.userData.plateau);
+      return rayon;
+    };
+    const surLePlateau = (rayon) => {
+      const point = new THREE.Vector3();
+      return rayon.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), point) ? point : null;
+    };
+    let depart = null, prise = null;
+    this.canvas.addEventListener('pointerdown', (e) => {
+      depart = [e.clientX, e.clientY];
+      prise = null;
+      if (!this.modele.visible || !this.modele.children.length) return;
+      const rayon = viser(e);
+      if (rayon.intersectObjects(this.modele.children).length) {
+        const point = surLePlateau(rayon);
+        if (point) { prise = point; this.controles.enabled = false; }
+      }
     });
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (!prise) return;
+      const point = surLePlateau(viser(e));
+      if (!point) return;
+      this.modele.position.set(point.x - prise.x, point.y - prise.y, 0);
+      this.demanderRendu();
+    });
+    const lacher = (e) => {
+      this.controles.enabled = true;
+      const bouge = depart && Math.hypot(e.clientX - depart[0], e.clientY - depart[1]) > 5;
+      if (prise) {
+        const dx = this.modele.position.x, dy = this.modele.position.y;
+        prise = null;
+        if (bouge && Math.hypot(dx, dy) > 0.5) { this.surGlisser?.(dx, dy); return; }
+        this.modele.position.set(0, 0, 0);
+        this.selectionner(!this.selection);
+        return;
+      }
+      if (bouge || !depart) return;
+      const touche = this.fantomes && this.fantomes.length ? viser(e).intersectObjects(this.fantomes)[0] : null;
+      if (touche && this.surChoixPlateau) this.surChoixPlateau(touche.object.userData.plateau);
+      else if (this.selection) this.selectionner(false);
+    };
+    this.canvas.addEventListener('pointerup', lacher);
+    this.canvas.addEventListener('pointercancel', () => { prise = null; this.controles.enabled = true; this.modele.position.set(0, 0, 0); this.demanderRendu(); });
+  }
+
+  // Montre que la pièce est sélectionnée (elle prend la couleur de sélection).
+  selectionner(choisie) {
+    this.selection = choisie;
+    for (const objet of this.modele.children) {
+      objet.material.emissive?.set(choisie ? this.jeton('--c-selection', '#cf4a23') : '#000000');
+      if (objet.material.emissiveIntensity !== undefined) objet.material.emissiveIntensity = choisie ? 0.35 : 0;
+    }
+    this.demanderRendu();
+    this.surSelection?.(choisie);
   }
 
   // « positions » : 9 nombres par triangle, modèle déjà posé sur le plateau.
-  afficherModele(positions) {
+  afficherModele(positions, garderVue = false) {
     this.vider(this.modele);
+    this.modele.position.set(0, 0, 0);
+    this.selection = false;
     this.viderApercu();
     const geometrie = new THREE.BufferGeometry();
     geometrie.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -338,7 +411,8 @@ export class Vue3D {
     this.modele.add(new THREE.Mesh(geometrie, new THREE.MeshStandardMaterial({
       color: this.jeton('--c-piece', '#2aa57b'), roughness: 0.55, metalness: 0.05 })));
     this.montrer('preparer');
-    this.pointDeVue('iso');
+    if (!garderVue) this.pointDeVue('iso');
+    this.demanderRendu();
   }
 
   // Place la caméra : « iso », « dessus », « face », « droite ». La pièce
