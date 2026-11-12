@@ -1,22 +1,23 @@
 /* ArtPrint Slicer - licence AGPL v3
    VARIABLES DE DESIGN : la seule source des couleurs, tailles, espacements et
    formes de l'interface. Aucune autre feuille de style n'écrit de valeur en dur.
-   Identité ArtPrint : graphite #1F2429, orange filament #E4572E, crème #F4F1EC,
+   Identité ArtPrint : graphite #1F2429, orange filament #E4572E, blanc #FFFFFF,
    nuit #15181B, police Archivo. Deux thèmes, mêmes noms de variables. */
 
 :root {
-  /* --- Neutres : fenêtre, panneau, champ, survol (jamais noir ni blanc pur) --- */
-  --c-fenetre: #e8e4dc;
-  --c-panneau: #f4f1ec;
-  --c-champ: #fbfaf7;
-  --c-survol: #ebe7e0;
-  --c-bord: #d6d0c6;
-  --c-bord-fort: #857e73;
+  /* --- Neutres : fenêtre, panneau, champ, survol. Du blanc franc, des gris
+     neutres pour les bords : aucun ton beige ou crème. --- */
+  --c-fenetre: #ffffff;
+  --c-panneau: #ffffff;
+  --c-champ: #ffffff;
+  --c-survol: #f0f1f3;
+  --c-bord: #d9dce0;
+  --c-bord-fort: #7b8187;
 
   /* --- Barres du haut : sombres dans les deux thèmes --- */
   --c-barre: #15181b;
   --c-barre-2: #1f2429;
-  --c-barre-texte: #f4f1ec;
+  --c-barre-texte: #ffffff;
   --c-barre-texte-2: #aab0b6;
   --c-barre-texte-3: #747c85;   /* élément désactivé sur la barre (la barre est sombre dans les deux thèmes) */
 
@@ -37,16 +38,16 @@
   --c-ok: #17703f;
   --c-ok-voile: #dceee2;
   --c-attention: #755200;
-  --c-attention-voile: #f5e9c6;
+  --c-attention-voile: #fff3c2;
   --c-erreur: #b3142b;
   --c-erreur-voile: #f8dee1;
 
   /* --- Vue 3D --- */
-  --c-scene: #e8e4dc;
+  --c-scene: #ffffff;
   --c-plateau: #252a30;
   --c-grille: #4a515a;
   --c-plateau-bord: #15181b;
-  --c-piece: #a39e96;
+  --c-piece: #a2a7ad;
   --c-selection: #cf4a23;
   --axe-x: #d4313a;
   --axe-y: #2e9a55;
@@ -60,7 +61,7 @@
   --seg-supports: #946fff;
   --seg-ponts: #00e3ff;
   --seg-jupe: #ab8735;
-  --seg-deplacement: #ddd8d9;
+  --seg-deplacement: #b4b9bf;
 
   /* --- Ombres : deux niveaux, pour les éléments flottants seulement --- */
   --o-1: 0 1px 2px rgb(21 24 27 / 0.14), 0 2px 6px rgb(21 24 27 / 0.10);
@@ -149,14 +150,14 @@
 /* Thème sombre : choisi par le système, sauf si le thème clair est demandé. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --c-fenetre: #15181b; --c-panneau: #1f2429; --c-champ: #282e35; --c-survol: #323a42; --c-bord: #3b434c; --c-bord-fort: #7d8691; --c-barre: #101214; --c-barre-2: #15181b; --c-barre-texte: #f4f1ec; --c-barre-texte-2: #a3aab1; --c-texte: #f4f1ec; --c-texte-2: #b3b8bd; --c-texte-3: #7b838b; --c-accent: #e4572e; --c-accent-survol: #ee6a43; --c-accent-appui: #de5229; --c-accent-texte: #ff8a66; --c-sur-accent: #15181b; --c-accent-voile: #3d2118; --c-ok: #57c48d; --c-ok-voile: #16301f; --c-attention: #e9bc45; --c-attention-voile: #332a0f; --c-erreur: #ff7088; --c-erreur-voile: #3a161d; --c-scene: #15181b; --c-plateau: #262c33; --c-grille: #46505b; --c-plateau-bord: #6c7682; --c-piece: #8f969d; --c-selection: #ff8a66; --axe-x: #ee5a62; --axe-y: #4cc07a; --axe-z: #5b98ef;
+    --c-fenetre: #15181b; --c-panneau: #1f2429; --c-champ: #282e35; --c-survol: #323a42; --c-bord: #3b434c; --c-bord-fort: #7d8691; --c-barre: #101214; --c-barre-2: #15181b; --c-barre-texte: #ffffff; --c-barre-texte-2: #a3aab1; --c-texte: #ffffff; --c-texte-2: #b3b8bd; --c-texte-3: #7b838b; --c-accent: #e4572e; --c-accent-survol: #ee6a43; --c-accent-appui: #de5229; --c-accent-texte: #ff8a66; --c-sur-accent: #15181b; --c-accent-voile: #3d2118; --c-ok: #57c48d; --c-ok-voile: #16301f; --c-attention: #e9bc45; --c-attention-voile: #332a0f; --c-erreur: #ff7088; --c-erreur-voile: #3a161d; --c-scene: #15181b; --c-plateau: #262c33; --c-grille: #46505b; --c-plateau-bord: #6c7682; --c-piece: #8f969d; --c-selection: #ff8a66; --axe-x: #ee5a62; --axe-y: #4cc07a; --axe-z: #5b98ef;
     --o-1: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.35);
     --o-2: 0 4px 12px rgb(0 0 0 / 0.55), 0 12px 32px rgb(0 0 0 / 0.45);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --c-fenetre: #15181b; --c-panneau: #1f2429; --c-champ: #282e35; --c-survol: #323a42; --c-bord: #3b434c; --c-bord-fort: #7d8691; --c-barre: #101214; --c-barre-2: #15181b; --c-barre-texte: #f4f1ec; --c-barre-texte-2: #a3aab1; --c-texte: #f4f1ec; --c-texte-2: #b3b8bd; --c-texte-3: #7b838b; --c-accent: #e4572e; --c-accent-survol: #ee6a43; --c-accent-appui: #de5229; --c-accent-texte: #ff8a66; --c-sur-accent: #15181b; --c-accent-voile: #3d2118; --c-ok: #57c48d; --c-ok-voile: #16301f; --c-attention: #e9bc45; --c-attention-voile: #332a0f; --c-erreur: #ff7088; --c-erreur-voile: #3a161d; --c-scene: #15181b; --c-plateau: #262c33; --c-grille: #46505b; --c-plateau-bord: #6c7682; --c-piece: #8f969d; --c-selection: #ff8a66; --axe-x: #ee5a62; --axe-y: #4cc07a; --axe-z: #5b98ef;
+  --c-fenetre: #15181b; --c-panneau: #1f2429; --c-champ: #282e35; --c-survol: #323a42; --c-bord: #3b434c; --c-bord-fort: #7d8691; --c-barre: #101214; --c-barre-2: #15181b; --c-barre-texte: #ffffff; --c-barre-texte-2: #a3aab1; --c-texte: #ffffff; --c-texte-2: #b3b8bd; --c-texte-3: #7b838b; --c-accent: #e4572e; --c-accent-survol: #ee6a43; --c-accent-appui: #de5229; --c-accent-texte: #ff8a66; --c-sur-accent: #15181b; --c-accent-voile: #3d2118; --c-ok: #57c48d; --c-ok-voile: #16301f; --c-attention: #e9bc45; --c-attention-voile: #332a0f; --c-erreur: #ff7088; --c-erreur-voile: #3a161d; --c-scene: #15181b; --c-plateau: #262c33; --c-grille: #46505b; --c-plateau-bord: #6c7682; --c-piece: #8f969d; --c-selection: #ff8a66; --axe-x: #ee5a62; --axe-y: #4cc07a; --axe-z: #5b98ef;
   --o-1: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.35);
   --o-2: 0 4px 12px rgb(0 0 0 / 0.55), 0 12px 32px rgb(0 0 0 / 0.45);
   color-scheme: dark;
