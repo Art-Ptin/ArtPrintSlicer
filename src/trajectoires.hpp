@@ -37,8 +37,11 @@ struct CoucheTrajectoires {
 
 // « contours » : les contours de la matière pour chaque couche, du bas vers
 // le haut. La couche 0 a l'épaisseur « hauteur_premiere_couche ».
+// « pleins » (facultatif) : pour chaque couche, une zone à remplir en plein
+// même si elle est recouverte (par exemple sous le pied d'une branche).
 std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygones>& contours,
-                                                      const ReglagesImpression& reglages);
+                                                      const ReglagesImpression& reglages,
+                                                      const std::vector<Polygones>* pleins = nullptr);
 
 // Lignes parallèles qui remplissent une zone, reliées en zigzag quand c'est
 // possible. « angle » en degrés, « espacement » en mm entre deux lignes.

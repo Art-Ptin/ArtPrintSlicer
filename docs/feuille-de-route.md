@@ -100,15 +100,15 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Banc d'essai sur quatorze objets (dont châssis de drone organique) | ✅ | `tests/banc_strategies.cpp` |
 | B et C qui tournent pendant l'extrusion (pivot continu) | ✅ | sur les branches courbes, par pas de 0,25° au plus |
 | Couches courbes : le tronc lisse d'abord, puis les branches contre lui | 🟡 | vérifié sur une machine idéale ; exigeant avec la forme réelle de la tête |
-| Tronc laissé à nu là où une branche se soude | ✅ | pas encore de remplissage plein à cet endroit |
+| Tronc laissé à nu là où une branche se soude | ✅ | rempli en plein sur 1,5 mm sous le pied |
 | Pied de branche au plus juste (le tronc garde sa peau autour, cordons visibles en paroi extérieure) | ✅ | |
 | Deux stratégies proposées : classique et couches courbes | ✅ | les anciennes couches orientées ne servent plus qu'aux essais |
 | Branche impossible en couches courbes rendue au tronc, les autres gardées | ✅ | une remarque dit laquelle et pourquoi ; chandelier : ses trois bras en couches courbes |
 | Déplacements stratégiques : chaque branche essayée à blanc dans plusieurs positions | 🟡 | côté et inclinaison de la tête ; pas encore l'ordre ni les trajets |
 | Petits chevauchements réparés (le bout de cordon n'est pas imprimé) | ✅ | une trentaine au plus, avec une remarque |
 | Premières couches trop enroulées : découpées au lieu d'abandonner la branche | ✅ | les bords très enroulés restent au tronc |
-| Vingt modèles d'essai des couches courbes | 🟡 | treize vérifiés ; voir `docs/essais-vingt-modeles.md` |
+| Vingt modèles d'essai des couches courbes | 🟡 | quatorze vérifiés ; voir `docs/essais-vingt-modeles.md` |
 | Tronc qui penche (jusqu'à 27° environ) | 🟡 | la branche placée sous lui n'est pas encore traitée |
-| Fourche où le tronc s'arrête, arche, anse, chapeau, table, bras près du plateau | ⬜ | voir `docs/essais-vingt-modeles.md` |
+| Arche, anse, chapeau, table, bras près du plateau, branche sous un tronc penché | ⬜ | voir `docs/essais-vingt-modeles.md` |
 | Peau courbe : une dernière passe suit la forme du dessus (option) | 🟡 | tête d'aplomb sur la surface ; abandonnée si elle provoquerait un contact |
 | Vérificateur : croisement de cordons sur une couche inclinée | ✅ | toléré sur une courte longueur, comme à plat |

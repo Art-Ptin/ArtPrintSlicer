@@ -154,6 +154,12 @@ Cette zone à nu est calculée **au plus juste** :
   ses cordons intérieurs restent visibles : ils sont imprimés comme des
   **parois extérieures** (même soin, même vitesse).
 
+Sous le pied, le tronc est **rempli en plein** sur 1,5 mm : la première
+couche de la branche se pose sur de la matière, pas sur les vides du
+remplissage. Une « branche » très mince (moins de 1,7 mm d'épaisseur : une
+pellicule, un collier autour du tronc) n'est pas découpée en couches
+courbes : le tronc l'imprime avec sa propre paroi.
+
 Une branche que le slicer ne sait pas découper en couches courbes (voir les
 limites) est **rendue au tronc** : elle est imprimée avec lui, en couches
 horizontales, et les branches qu'elle porte sont imprimées contre elle.
@@ -350,8 +356,6 @@ tranchable, et contrôlent le pivot continu (jamais plus de 0,25° par ligne).
   ces progrès : voir [essais-vingt-modeles.md](essais-vingt-modeles.md).
 - **Couches courbes : proposées seulement si elles servent** (au moins 20 %
   de surface en surplomb en moins que l'impression classique).
-- **Couches courbes : la branche se soude sur un remplissage aéré.** Il n'y
-  a pas encore de zone pleine sous le pied de la branche.
 - **Couches courbes : pas de peau courbe** sur le tronc avec cette stratégie.
 - **Déplacements stratégiques : l'orientation seulement.** Le slicer choisit
   le côté et l'inclinaison de la tête pour chaque branche ; il ne change pas

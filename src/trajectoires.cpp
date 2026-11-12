@@ -239,7 +239,8 @@ std::vector<std::vector<Point2>> lignes_de_remplissage(const Polygones& zone, do
 }
 
 std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygones>& contours,
-                                                      const ReglagesImpression& r) {
+                                                      const ReglagesImpression& r,
+                                                      const std::vector<Polygones>* pleins) {
     const double largeur = r.largeur_extrusion;
     // Distance entre la paroi la plus intérieure et le bord du remplissage.
     const double retrait_lignes = largeur * (0.5 - r.recouvrement_remplissage);
@@ -301,6 +302,10 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
                      partie_exposee(contours, c, r.couches_dessous, -1, interieur));
             const Polygones nettoye = decaler(expose, -0.3 * largeur);
             plein = intersecter(decaler(nettoye, 2.3 * largeur), interieur);
+            // Et les zones qu'on a demandé de remplir.
+            if (pleins && c < pleins->size() && !(*pleins)[c].empty()) {
+                plein = unir(plein, intersecter((*pleins)[c], interieur));
+            }
         }
         const Polygones creux = soustraire(interieur, plein);
 

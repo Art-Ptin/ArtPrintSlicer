@@ -1257,6 +1257,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         std::vector<RepereCouche> reperes;
         // Couches courbes : la carte de chaque couche (sinon vide).
         std::vector<CoucheCourbe> cartes;
+        int tige = -1;  // numéro de la tige, dans l'analyse des branches
         std::vector<CoucheTrajectoires> couches;
         bool sur_plateau = true;
         double inclinaison_outil_max = 90.0;
@@ -1304,6 +1305,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             if (tige_suivante >= plan.tiges.size()) {
                 throw ErreurTranchage("La stratégie en couches courbes ne correspond plus au modèle.");
             }
+            t.tige = static_cast<int>(tige_suivante);
             t.cartes = plan.tiges[tige_suivante++];
             std::vector<Polygones> contours;
             for (const CoucheCourbe& carte : t.cartes) {
@@ -1421,7 +1423,16 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                     c + 1, p + 1));
             }
         }
-        t.couches = calculer_trajectoires(coupe.couches, reglages_partie);
+        // Sous le pied d'une branche, le tronc est rempli en plein sur un
+        // millimètre et demi : la première couche de la branche se pose sur
+        // de la matière, pas sur les vides d'un remplissage aéré.
+        std::vector<Polygones> sous_les_pieds(zones_branches.size());
+        for (std::size_t c = 0; c < zones_branches.size(); ++c) {
+            if (!zones_branches[c].empty()) {
+                sous_les_pieds[c] = decaler_arrondi(zones_branches[c], 1.5);
+            }
+        }
+        t.couches = calculer_trajectoires(coupe.couches, reglages_partie, &sous_les_pieds);
         if (partie.tronc_lisse && courbes) {
             // Sur un dessus arrondi, chaque couche dépasse de la suivante :
             // ses parois intérieures y sont à l'air libre. Elles sont
@@ -1681,6 +1692,12 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             passes.push_back({niveau, p, c});
         }
     }
+    // Vrai si l'une des deux tiges porte l'autre (directement).
+    const auto parentes = [&](int a, int b) {
+        const std::vector<int>& meres = plan.analyse.meres;
+        const auto mere = [&](int n) { return n >= 0 && static_cast<std::size_t>(n) < meres.size() ? meres[static_cast<std::size_t>(n)] : -1; };
+        return mere(a) == b || mere(b) == a;
+    };
     // Écrit une passe (une couche d'une partie). « changement » : la tête
     // arrive sur cette partie. « cote » et « inclinaison » : le côté vers
     // lequel la tête penche et son inclinaison maximale pour cette partie.
@@ -1768,7 +1785,15 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                              trait,
                              [&](const Point2& q) {
                                  Vec3 ici;
-                                 return !poser_sur_la_surface(champ, carte, q, dessus[carte.niveau], hauteur, ici);
+                                 if (!poser_sur_la_surface(champ, carte, q, dessus[carte.niveau], hauteur, ici)) {
+                                     return true;
+                                 }
+                                 // La surface trouvée doit être celle de cette
+                                 // branche : sur une couche très enroulée, la
+                                 // recherche peut aboutir sur une branche
+                                 // voisine, et le cordon partirait dans le vide.
+                                 const int tige_ici = plan.analyse.tige_en(ici);
+                                 return tige_ici >= 0 && tige_ici != t.tige && !parentes(tige_ici, t.tige);
                              },
                              r.largeur_extrusion)) {
                         apres += longueur_de(morceau);

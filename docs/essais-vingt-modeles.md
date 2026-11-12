@@ -25,9 +25,9 @@ Machine idéale d'essai (aucune forme de machine), réglages par défaut.
 | 2 | Branche raide (20°) | pied très allongé | ✅ vérifié |
 | 3 | Branche tombante (110°) | branche qui retombe | ✅ vérifié |
 | 4 | Socle et quatre bras | bras qui partent à 5 mm du plateau | ❌ refusé |
-| 5 | Étoile | six branches au même niveau | ✅ vérifié (4 bouts de cordon retirés) |
-| 6 | Spirale | huit branches en hélice | ✅ vérifié (3 bouts retirés) |
-| 7 | Fourche en Y | le tronc s'arrête et se partage | ❌ refusé |
+| 5 | Étoile | six branches au même niveau | ✅ vérifié |
+| 6 | Spirale | huit branches en hélice | ✅ vérifié |
+| 7 | Fourche en Y | le tronc s'arrête et se partage | ✅ vérifié (7 bouts de cordon retirés) |
 | 8 | Fourches en cascade | quatorze branches sur trois niveaux | ✅ vérifié (2 bouts retirés) |
 | 9 | Tronc penché (15°) | le tronc lui-même penche | ❌ refusé |
 | 10 | Tronc carré | branche sur une face plate, près d'une arête | ✅ vérifié |
@@ -40,9 +40,9 @@ Machine idéale d'essai (aucune forme de machine), réglages par défaut.
 | 17 | Trompette | branche qui s'élargit | ✅ vérifié |
 | 18 | Fin et gros | diamètres très différents | ✅ vérifié (1 bout retiré) |
 | 19 | Sucette | boule au bout d'une tige | ✅ vérifié |
-| 20 | Corail | seize branches et rameaux | ✅ vérifié (27 bouts retirés ; une branche imprimée avec le tronc) |
+| 20 | Corail | quatorze branches et rameaux | ✅ vérifié (5 bouts retirés ; une branche imprimée avec le tronc) |
 
-Treize modèles sur vingt sont vérifiés en couches courbes.
+Quatorze modèles sur vingt sont vérifiés en couches courbes.
 
 ## Ce que la campagne a fait corriger
 
@@ -56,14 +56,18 @@ Treize modèles sur vingt sont vérifiés en couches courbes.
   trouve pas la surface est retiré, au lieu de faire refuser toute la pièce.
 - **Tronc qui penche.** Le slicer cherche une direction de tronc pour tout
   le modèle (droite, ou penchée jusqu'à 27° environ).
+- **Pellicules et colliers.** Une « branche » de moins de 1,7 mm
+  d'épaisseur accrochée au tronc (une pellicule, ou le collier que forment
+  des raccords arrondis qui se rejoignent) est imprimée par le tronc, avec
+  sa paroi lisse. C'est ce qui a débloqué la fourche en Y et nettoyé
+  l'étoile.
+- **Pied plein.** Sous le pied d'une branche, le tronc est rempli en plein
+  sur 1,5 mm : la première couche de la branche se pose sur de la matière.
 - **Calcul inutile.** Un modèle sans surplomb ne déclenche plus le calcul
   des couches courbes.
 
 ## Ce qui reste à faire
 
-- **Fourche où le tronc s'arrête (n° 7).** Le tronc « continue » dans le
-  début des deux bras, qui sont alors attaqués de côté. Il faudrait arrêter
-  le tronc à la fourche.
 - **Branche sous un tronc penché (n° 9).** Sa première couche regarde vers
   le bas.
 - **Bras qui partent près du plateau (n° 4).** Sous la hauteur de bascule,
@@ -73,5 +77,5 @@ Treize modèles sur vingt sont vérifiés en couches courbes.
   bouts ; la moitié du haut devrait être imprimée tête en bas.
 - **Chapeau et table (n° 15 et 16).** La couche fait tout le tour du pied :
   il faut une couche « en anneau », que la carte plane ne sait pas dessiner.
-- **Coin à nu entre deux branches voisines (n° 5).** Entre deux pieds très
-  proches, un petit coin du tronc reste sans paroi.
+- **Bord du pied.** Il reste un léger liseré de petits reliefs là où la
+  paroi du tronc s'arrête et où la branche commence.

@@ -523,7 +523,7 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
     // La matière des tiges qu'on n'a pas su découper : elle est imprimée avec le tronc.
     std::vector<std::uint8_t> avec_le_tronc;
     std::vector<std::string> journal;
-    for (int essai = 0; essai < 8; ++essai) {
+    for (int essai = 0; essai < 12; ++essai) {
         plan = PlanBranches{};
         plan.analyse = analyser_branches(pose, 0.0, {}, avec_le_tronc.empty() ? nullptr : &avec_le_tronc);
         plan.morceaux_laisses = static_cast<std::size_t>(essai);
@@ -538,7 +538,21 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
         std::map<int, std::string> impossibles;
         plan.tiges = trancher_les_tiges(pose, plan.analyse, plan.dessus, plan.epaisseurs, pointe, impossibles);
         plan.journal = journal;
-        if (impossibles.empty()) {
+        // Une tige très mince (moins de 1,7 mm d'épaisseur en tout : une
+        // pellicule ou un collier autour du tronc, là où des raccords
+        // arrondis se rejoignent) n'est pas une branche : découpée en
+        // couches courbes, elle ne donnerait que quelques feuilles
+        // incomplètes. Elle est rendue au tronc, qui l'imprime avec sa
+        // propre paroi, bien lisse ; les branches partent ensuite d'elle.
+        std::set<int> pellicules;
+        for (std::size_t n = 0; n < plan.tiges.size(); ++n) {
+            // (Seulement celles qui tiennent au tronc lui-même.)
+            if (plan.analyse.meres[n] < 0 && static_cast<double>(plan.tiges[n].size()) * epaisseur <= 1.7 &&
+                !impossibles.contains(static_cast<int>(n))) {
+                pellicules.insert(static_cast<int>(n));
+            }
+        }
+        if (impossibles.empty() && pellicules.empty()) {
             return plan;
         }
         for (const auto& [tige, raison] : impossibles) {
@@ -550,7 +564,7 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
         // horizontales. Les tiges qui la portent aussi (elle ne peut pas être
         // imprimée avant elles). Celles qu'elle porte restent des branches :
         // elles seront imprimées contre elle. Puis on recommence.
-        std::set<int> rendues;
+        std::set<int> rendues(pellicules.begin(), pellicules.end());
         for (const auto& [tige, raison] : impossibles) {
             for (int t = tige; t >= 0 && rendues.insert(t).second; t = plan.analyse.meres[static_cast<std::size_t>(t)]) {
             }
