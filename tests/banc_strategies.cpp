@@ -104,7 +104,9 @@ int main(int argc, char** argv) {
         for (const Strategie& strategie : strategies) {
             std::string inclinaisons;
             for (const PartieImpression& partie : strategie.parties) {
-                inclinaisons += std::format("{}{:.0f}", inclinaisons.empty() ? "" : " ", partie.inclinaison);
+                // « ~ » : partie courbe, dont les couches pivotent jusqu'à cette inclinaison.
+                inclinaisons += std::format("{}{}{:.0f}", inclinaisons.empty() ? "" : " ",
+                                            partie.guide.empty() ? "" : "~", partie.inclinaison);
             }
             std::cout << std::format("   - {} : à soutenir {:.0f} mm2, {} partie(s) [{}]", strategie.nom,
                                      strategie.surplomb, strategie.parties.size(), inclinaisons);

@@ -58,6 +58,9 @@ struct TrancheSquelette {
 
 struct BrancheSquelette {
     int parent = -1;           // branche d'où elle part (-1 : elle part du plateau)
+    // Vrai si cette branche est la suite d'une branche courbe (le tronçon
+    // suivant de la même tige), et non une vraie bifurcation.
+    bool suite_courbe = false;
     std::vector<int> enfants;  // branches qui partent de son extrémité
     std::vector<TrancheSquelette> tranches;  // de la base vers l'extrémité
     Vec3 direction;            // direction générale, longueur 1

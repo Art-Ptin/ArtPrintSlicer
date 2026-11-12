@@ -381,6 +381,7 @@ Squelette calculer_squelette(const Maillage& pose, double pas) {
         }
         BrancheSquelette suite;
         suite.parent = static_cast<int>(numero);
+        suite.suite_courbe = true;
         const int numero_suite = static_cast<int>(squelette.branches.size());
         {
             BrancheSquelette& b = squelette.branches[numero];

@@ -31,4 +31,8 @@ struct OptionsMultiaxe {
 ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
                                      const OptionsMultiaxe& options = {});
 
+// Vrai si les couches d'une partie courbe (qui a un « guide ») peuvent être
+// calculées : la courbe ne tourne pas trop serré pour l'épaisseur de la partie.
+bool couches_pivotantes_possibles(const PartieImpression& partie, const ReglagesImpression& reglages);
+
 }  // namespace artprint

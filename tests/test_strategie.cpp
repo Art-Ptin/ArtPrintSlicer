@@ -4,10 +4,13 @@
 // vérificateur. Les modèles et les réglages de machine sont inventés ici.
 #include <cmath>
 #include <iostream>
+#include <set>
+#include <sstream>
 #include <string>
 
 #include "cinematique.hpp"
 #include "decoupe.hpp"
+#include "formes_organiques.hpp"
 #include "modeles_essai.hpp"
 #include "multiaxe.hpp"
 #include "slicer.hpp"
@@ -249,6 +252,81 @@ void test_cinematique() {
     }
 }
 
+// Couches qui pivotent : un tube courbe posé sur le plateau, qui part à la
+// verticale et se couche jusqu'à 70°. Ses couches suivent sa courbe.
+void test_couches_pivotantes() {
+    const Reglages r = reglages_essai();
+    const auto partie_pour = [](const essai::TubeCourbe& tube) {
+        const Maillage brut = tube.maillage();
+        const BoiteEnglobante boite = calculer_boite(brut);
+        const Vec3 decalage{(boite.min.x + boite.max.x) / 2.0, (boite.min.y + boite.max.y) / 2.0, boite.min.z};
+        PartieImpression partie;
+        partie.maillage = poser_au_centre(brut);
+        partie.guide.push_back({Vec3{-decalage.x, -decalage.y, 0.0}, {0, 0, 1}});
+        for (double angle = 0.0; angle <= tube.inclinaison_finale + 1e-9; angle += 2.5) {
+            partie.guide.push_back({tube.point(angle) - decalage, tube.direction(angle)});
+        }
+        return partie;
+    };
+    const essai::TubeCourbe tube;
+    Strategie courbe;
+    courbe.type = TypeStrategie::par_branches;
+    courbe.parties.push_back(partie_pour(tube));
+    VERIFIER(ferme(courbe.parties.front().maillage));
+    VERIFIER(couches_pivotantes_possibles(courbe.parties.front(), r.impression));
+
+    const ResultatTranchage resultat = trancher_strategie(courbe, r);
+    VERIFIER_ACCEPTE(resultat.verification);
+    // La tête s'incline un peu à chaque couche : beaucoup de valeurs de B, de 0° à 70°.
+    std::set<std::string> valeurs_b;
+    std::istringstream lignes(resultat.gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        const auto ou = ligne.find(" B");
+        if (ou != std::string::npos) {
+            valeurs_b.insert(ligne.substr(ou + 2, ligne.find(' ', ou + 2) - ou - 2));
+        }
+    }
+    VERIFIER(valeurs_b.size() > 150);
+    VERIFIER(valeurs_b.count("0.000") == 1 && valeurs_b.count("70.000") == 1);
+    // Aucune paroi n'est imprimée dans le vide ; en 3 axes, il y en a.
+    VERIFIER(resultat.verification.longueur_dans_le_vide < 1.0);
+    VERIFIER(trancher(courbe.parties.front().maillage, r).verification.longueur_dans_le_vide > 3.0);
+
+    // Une courbe trop serrée pour l'épaisseur du tube est reconnue et refusée.
+    essai::TubeCourbe serre;
+    serre.rayon_courbure = 8.0;
+    VERIFIER(!couches_pivotantes_possibles(partie_pour(serre), r.impression));
+}
+
+// Objets organiques d'une seule pièce : la stratégie par branches est
+// proposée, son G-code est accepté, et il laisse moins de parois dans le vide.
+void test_objets_organiques() {
+    const Reglages r = reglages_essai();
+    for (const auto& fabriquer : {essai::arbre_organique, essai::chassis_drone, essai::tuyau_en_y}) {
+        const Maillage pose = poser_au_centre(fabriquer());
+        VERIFIER(ferme(pose));
+        const std::vector<Strategie> strategies = proposer_strategies(pose, r);
+        const Strategie* branches = trouver(strategies, TypeStrategie::par_branches);
+        VERIFIER(branches != nullptr);
+        if (!branches) {
+            continue;
+        }
+        VERIFIER(branches->parties.size() >= 3);
+        VERIFIER(branches->surplomb < 0.5 * strategies.front().surplomb);
+        const ResultatTranchage par_branches = trancher_strategie(*branches, r);
+        VERIFIER_ACCEPTE(par_branches.verification);
+        const ResultatTranchage classique = trancher_strategie(strategies.front(), r);
+        VERIFIER_ACCEPTE(classique.verification);
+        VERIFIER(par_branches.verification.longueur_dans_le_vide <=
+                 classique.verification.longueur_dans_le_vide + 1.0);
+    }
+    // Un champignon n'a pas de branche : pas de stratégie par branches, mais
+    // une autre pose (retourné) qui demande moins de supports.
+    const std::vector<Strategie> champignon = proposer_strategies(poser_au_centre(essai::champignon()), r);
+    VERIFIER(trouver(champignon, TypeStrategie::par_branches) == nullptr);
+    VERIFIER(trouver(champignon, TypeStrategie::autre_pose) != nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -258,6 +336,8 @@ int main() {
     test_strategies(essai::arbre(), "arbre en plusieurs volumes");
     test_strategies(essai::arbre_plat(), "arbre d'une seule pièce");
     test_b_vertical();
+    test_couches_pivotantes();
+    test_objets_organiques();
     if (echecs == 0) {
         std::cout << "Tests du 5 axes : tout est correct.\n";
         return 0;

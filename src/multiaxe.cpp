@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -16,6 +17,51 @@
 namespace artprint {
 
 namespace {
+
+// Le plan d'une couche d'une partie courbe, et celui de la couche du dessous.
+struct RepereCouche {
+    Vec3 origine, u, v, w;
+    Vec3 origine_dessous, normale_dessous;
+};
+
+// Dans une section, ne garde que la matière qui entoure l'axe de la partie
+// (le point 0, 0) : le plan peut aussi couper un autre endroit du modèle.
+Polygones autour_de_l_axe(const Polygones& section) {
+    const PointEntier centre{0, 0};
+    const Contour* exterieur = nullptr;
+    double plus_proche = std::numeric_limits<double>::max();
+    for (const Contour& contour : section) {
+        if (!Clipper2Lib::IsPositive(contour)) {
+            continue;
+        }
+        if (Clipper2Lib::PointInPolygon(centre, contour) != Clipper2Lib::PointInPolygonResult::IsOutside) {
+            exterieur = &contour;
+            plus_proche = 0.0;
+            break;
+        }
+        // Sinon : le contour dont un sommet est le plus près de l'axe (à 3 mm au plus).
+        for (const PointEntier& sommet : contour) {
+            const double d = std::hypot(static_cast<double>(sommet.x), static_cast<double>(sommet.y)) / unites_par_mm;
+            if (d < plus_proche && d < 3.0) {
+                plus_proche = d;
+                exterieur = &contour;
+            }
+        }
+    }
+    Polygones garde;
+    if (!exterieur) {
+        return garde;
+    }
+    garde.push_back(*exterieur);
+    // Ses trous : les contours négatifs situés dedans.
+    for (const Contour& contour : section) {
+        if (!Clipper2Lib::IsPositive(contour) && !contour.empty() &&
+            Clipper2Lib::PointInPolygon(contour.front(), *exterieur) != Clipper2Lib::PointInPolygonResult::IsOutside) {
+            garde.push_back(contour);
+        }
+    }
+    return garde;
+}
 
 // Écrit le G-code 5 axes. Les trajectoires d'une partie sont données dans
 // son repère (x, y dans le plan des couches, z le long de sa direction) ;
@@ -36,10 +82,28 @@ public:
     // « cote » : côté vers lequel la tête penche (0 : le plus proche).
     void partie(const Vec3& origine, const Vec3& u, const Vec3& v, const Vec3& w, int cote) {
         origine_ = origine, u_ = u, v_ = v, w_ = w;
+        outil_ = direction_outil(w);
         cote_ = cote;
         oriente_ = false;
         ++partie_;
     }
+
+    // Fait pivoter le repère pour la couche suivante d'une partie courbe.
+    // Le changement est petit : la tête se réoriente pendant le trajet vers
+    // la nouvelle couche, sans remonter au-dessus de la pièce.
+    void pivoter(const Vec3& origine, const Vec3& u, const Vec3& v, const Vec3& w) {
+        origine_ = origine, u_ = u, v_ = v, w_ = w;
+        outil_ = direction_outil(w);
+        pivot_ = oriente_;  // au tout début d'une partie, c'est le grand changement qui sert
+    }
+
+    // Entre deux couches qui pivotent, l'épaisseur n'est pas la même partout :
+    // elle est mesurée, en chaque point, depuis le plan de la couche du dessous.
+    void epaisseur_depuis(const Vec3& origine_dessous, const Vec3& normale_dessous, double nominale) {
+        variable_ = true;
+        o_dessous_ = origine_dessous, n_dessous_ = normale_dessous, h_nominale_ = nominale;
+    }
+    void epaisseur_fixe() { variable_ = false; }
 
     void couche(double z, double hauteur) {
         z_ = z;
@@ -60,6 +124,8 @@ public:
         double z_trajet;
         if (!oriente_) {
             z_trajet = changer_orientation(p);
+        } else if (pivot_) {
+            z_trajet = pivoter_vers(p);
         } else {
             z_trajet = std::max(z_local_, z_) + r_.levee_z;
             deplacer(point(position_, z_trajet));
@@ -82,7 +148,16 @@ public:
         }
         const Vec3 cible = point(p, z_);
         const PositionMachine m = position_avec_angles(machine_, cible, b_, c_);
-        const double e = longueur * e_par_mm_;
+        double e_par_mm = e_par_mm_;
+        if (variable_) {
+            // Épaisseur locale de la couche, au milieu du segment.
+            const Vec3 milieu = (pointe_ + cible) * 0.5;
+            const double t = std::clamp(produit_scalaire(milieu - o_dessous_, n_dessous_),
+                                        0.3 * h_nominale_, 1.6 * h_nominale_);
+            const double section = (r_.largeur_extrusion - t) * t + std::numbers::pi * t * t / 4.0;
+            e_par_mm = section / (std::numbers::pi * r_.diametre_filament * r_.diametre_filament / 4.0) * r_.debit;
+        }
+        const double e = longueur * e_par_mm;
         ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z, e, vitesse * 60.0));
         noter(pointe_, cible, type_);
         filament_ += e;
@@ -94,7 +169,7 @@ public:
     // Fin d'impression : rétraction, recul le long de la buse, puis montée.
     void degager(double hauteur) {
         retracter();
-        deplacer(pointe_ + w_ * r_.levee_z);
+        deplacer(pointe_ + outil_ * r_.levee_z);
         const double z = std::min(std::max(pointe_.z + hauteur, hauteur_sure_), machine_.hauteur_impression);
         if (z > pointe_.z) {
             deplacer({pointe_.x, pointe_.y, z});
@@ -111,6 +186,13 @@ public:
     std::string prendre_gcode() { return std::move(gcode_); }
 
 private:
+    // Direction donnée à la buse pour des couches de normale « w ». Pour une
+    // inclinaison insignifiante, la buse reste verticale : le plateau n'a
+    // pas à tourner pour si peu.
+    static Vec3 direction_outil(const Vec3& w) {
+        return w.z > std::cos(en_radians(1.5)) ? Vec3{0.0, 0.0, 1.0} : w;
+    }
+
     // Point de la pièce correspondant à un point (x, y, z) du repère de la partie.
     Vec3 point(const Point2& p, double z) const { return origine_ + u_ * p.x + v_ * p.y + w_ * z; }
 
@@ -152,7 +234,7 @@ private:
     // de la couche en cours. Renvoie la hauteur (dans le repère de la partie)
     // où la buse s'arrête, prête à descendre le long de son axe.
     double changer_orientation(const Point2& p) {
-        const auto cible = position_machine(machine_, {point(p, z_), w_}, c_, cote_);
+        const auto cible = position_machine(machine_, {point(p, z_), outil_}, c_, cote_);
         if (!cible) {
             throw ErreurTranchage(std::format(
                 "La machine ne peut pas orienter la tête pour une partie penchée de {:.0f}° : "
@@ -190,8 +272,30 @@ private:
         // 4. Descente jusqu'au point d'approche.
         deplacer(approche);
         oriente_ = true;
-        w_ancien_ = w_;
+        w_ancien_ = outil_;
         return z_ + options_.approche;
+    }
+
+    // Petit changement d'orientation entre deux couches d'une partie courbe.
+    // Renvoie la hauteur (dans le nouveau repère) où la buse s'arrête.
+    double pivoter_vers(const Point2& p) {
+        pivot_ = false;
+        const auto cible = position_machine(machine_, {point(p, z_), outil_}, c_, cote_);
+        if (!cible) {
+            throw ErreurTranchage(
+                "La machine ne peut pas suivre la courbe de cette partie : l'orientation "
+                "demandée dépasse les butées des axes B ou C.");
+        }
+        // Une grande rotation (par exemple le plateau qui doit faire un quart
+        // de tour) se fait au-dessus de la pièce, comme entre deux parties.
+        if (std::abs(cible->b - b_) > 4.0 || std::abs(cible->c - c_) > 4.0) {
+            return changer_orientation(p);
+        }
+        deplacer(pointe_ + w_ancien_ * r_.levee_z);
+        b_ = cible->b, c_ = cible->c;
+        deplacer_tous_axes(point(p, z_ + r_.levee_z));
+        w_ancien_ = outil_;
+        return z_ + r_.levee_z;
     }
 
     void noter(const Vec3& a, const Vec3& b, std::uint8_t type) {
@@ -209,7 +313,8 @@ private:
     const double hauteur_sure_;
     std::string gcode_;
     Vec3 origine_, u_{1, 0, 0}, v_{0, 1, 0}, w_{0, 0, 1};  // repère de la partie en cours
-    Vec3 w_ancien_{0, 0, 1};  // direction de la buse avant le changement de partie
+    Vec3 outil_{0, 0, 1};     // direction de la buse pour la couche en cours
+    Vec3 w_ancien_{0, 0, 1};  // direction de la buse avant le changement d'orientation
     Vec3 pointe_;             // pointe de la buse, dans le repère de la pièce
     Point2 position_;         // la même, dans le plan des couches de la partie
     double z_local_ = 0.0;    // et sa hauteur dans le repère de la partie
@@ -217,6 +322,10 @@ private:
     double b_ = 0.0, c_ = 0.0;
     bool place_ = false;      // faux tant que la buse n'a pas été positionnée
     bool oriente_ = false;    // faux tant que la tête n'est pas dans l'orientation de la partie
+    bool pivot_ = false;      // vrai quand le repère vient de pivoter un peu (partie courbe)
+    bool variable_ = false;   // vrai quand l'épaisseur de la couche varie d'un point à l'autre
+    Vec3 o_dessous_, n_dessous_{0, 0, 1};  // plan de la couche du dessous
+    double h_nominale_ = 0.2;
     double e_par_mm_ = 0.0;
     bool retracte_ = false;
     double filament_ = 0.0;
@@ -228,7 +337,133 @@ private:
     std::vector<CoucheApercu> apercu_;
 };
 
+// Sections d'une partie courbe : des plans qui pivotent le long de sa courbe.
+// Chaque plan est avancé juste assez pour que la couche ait, à son endroit
+// le plus épais, la hauteur de couche demandée ; elle est plus fine du côté
+// intérieur de la courbe. Rend les contours, un par couche, et remplit
+// « reperes » (le plan de chaque couche et celui de la couche du dessous).
+std::vector<Polygones> sections_pivotantes(const PartieImpression& partie, const ReglagesImpression& r,
+                                           bool sur_plateau, std::size_t numero,
+                                           std::vector<RepereCouche>& reperes) {
+    const std::vector<PointGuide>& guide = partie.guide;
+    // Longueur parcourue le long de la courbe à chaque point.
+    std::vector<double> abscisses(guide.size(), 0.0);
+    for (std::size_t i = 1; i < guide.size(); ++i) {
+        abscisses[i] = abscisses[i - 1] + norme(guide[i].point - guide[i - 1].point);
+    }
+    const auto redressee = [](const Vec3& d) { return normaliser(d); };
+    // Point et direction de la courbe à l'abscisse « s » (prolongée tout droit aux deux bouts).
+    const auto evaluer = [&](double s, Vec3& point, Vec3& direction) {
+        if (s <= 0.0 || guide.size() == 1) {
+            direction = redressee(guide.front().direction);
+            point = guide.front().point + direction * s;
+            return;
+        }
+        if (s >= abscisses.back()) {
+            direction = redressee(guide.back().direction);
+            point = guide.back().point + direction * (s - abscisses.back());
+            return;
+        }
+        std::size_t i = 1;
+        while (abscisses[i] < s) {
+            ++i;
+        }
+        const double t = (s - abscisses[i - 1]) / std::max(1e-9, abscisses[i] - abscisses[i - 1]);
+        point = guide[i - 1].point + (guide[i].point - guide[i - 1].point) * t;
+        direction = redressee(guide[i - 1].direction + (guide[i].direction - guide[i - 1].direction) * t);
+    };
+
+    Vec3 o_dessous, n_dessous;
+    evaluer(0.0, o_dessous, n_dessous);
+    if (sur_plateau && n_dessous.z < 1.0 - 1e-9) {
+        throw ErreurTranchage(std::format(
+            "La partie {} est posée sur le plateau : sa courbe doit partir à la verticale.", numero));
+    }
+    Vec3 u_dessous, v_dessous;
+    if (n_dessous.z > 1.0 - 1e-9) {
+        u_dessous = {1, 0, 0}, v_dessous = {0, 1, 0};
+    } else {
+        repere_autour(n_dessous, u_dessous, v_dessous);
+    }
+
+    const BoiteEnglobante boite = calculer_boite(partie.maillage);
+    const Point3 taille = boite.dimensions();
+    const double fin = abscisses.back() + std::hypot(taille.x, taille.y, taille.z);
+    std::vector<Polygones> contours;
+    double s = 0.0;
+    for (double h = sur_plateau ? r.hauteur_premiere_couche : r.hauteur_couche; s < fin; h = r.hauteur_couche) {
+        double avance = h;
+        Polygones section;
+        RepereCouche repere;
+        double fine = 0.0;
+        for (int essai = 0; essai < 8; ++essai) {
+            evaluer(s + avance, repere.origine, repere.w);
+            // Le repère de la couche glisse depuis celui du dessous, sans vriller.
+            repere.u = normaliser(u_dessous - repere.w * produit_scalaire(u_dessous, repere.w));
+            repere.v = produit_vectoriel(repere.w, repere.u);
+            const Maillage local = dans_repere(partie.maillage, repere.origine, repere.u, repere.v, repere.w);
+            ResultatCoupe coupe = couper_maillage(local, {0.0});
+            if (coupe.contours_ouverts > 0) {
+                throw ErreurTranchage(std::format(
+                    "La partie {} est abîmée : un contour ne se referme pas pendant la coupe.", numero));
+            }
+            section = autour_de_l_axe(coupe.couches.front());
+            if (section.empty()) {
+                break;
+            }
+            // Épaisseur de la couche : distance de chaque point au plan du dessous.
+            double epaisse = -1e9;
+            fine = 1e9;
+            for (const Contour& contour : section) {
+                for (const PointEntier& sommet : contour) {
+                    const Point2 q = en_mm(sommet);
+                    const Vec3 point = repere.origine + repere.u * q.x + repere.v * q.y;
+                    const double epaisseur = produit_scalaire(point - o_dessous, n_dessous);
+                    epaisse = std::max(epaisse, epaisseur);
+                    fine = std::min(fine, epaisseur);
+                }
+            }
+            if (epaisse <= 1e-6 || std::abs(epaisse - h) < 0.02 * h) {
+                break;
+            }
+            avance *= h / epaisse;
+        }
+        if (section.empty()) {
+            break;  // le plan a dépassé le bout de la partie
+        }
+        if (fine < 0.35 * h) {
+            throw ErreurTranchage(std::format(
+                "La partie {} tourne trop serré pour son épaisseur : du côté intérieur de la "
+                "courbe, les couches seraient trop fines ({:.2f} mm).",
+                numero, fine));
+        }
+        repere.origine_dessous = o_dessous;
+        repere.normale_dessous = n_dessous;
+        reperes.push_back(repere);
+        contours.push_back(std::move(section));
+        s += avance;
+        o_dessous = repere.origine, n_dessous = repere.w, u_dessous = repere.u, v_dessous = repere.v;
+    }
+    if (contours.empty()) {
+        throw ErreurTranchage(std::format("La partie {} est plus fine qu'une couche : rien à imprimer.", numero));
+    }
+    return contours;
+}
+
 }  // namespace
+
+bool couches_pivotantes_possibles(const PartieImpression& partie, const ReglagesImpression& reglages) {
+    if (partie.guide.empty()) {
+        return false;
+    }
+    try {
+        std::vector<RepereCouche> reperes;
+        sections_pivotantes(partie, reglages, partie.parent < 0, 0, reperes);
+        return true;
+    } catch (const ErreurTranchage&) {
+        return false;
+    }
+}
 
 ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
                                      const OptionsMultiaxe& options) {
@@ -236,7 +471,8 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
         throw ErreurTranchage("La stratégie ne contient aucune partie à imprimer.");
     }
     // Une seule partie verticale : c'est le slicer 3 axes.
-    if (strategie.parties.size() == 1 && strategie.parties.front().direction.z > 1.0 - 1e-9) {
+    if (strategie.parties.size() == 1 && strategie.parties.front().direction.z > 1.0 - 1e-9 &&
+        strategie.parties.front().guide.empty()) {
         return trancher(strategie.parties.front().maillage, reglages);
     }
 
@@ -278,6 +514,8 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     struct PartieTranchee {
         Vec3 origine, u, v, w;
         int cote = 0;
+        // Partie courbe : un repère par couche (sinon vide).
+        std::vector<RepereCouche> reperes;
         std::vector<CoucheTrajectoires> couches;
     };
     std::vector<PartieTranchee> tranchees;
@@ -294,6 +532,26 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
         }
         const bool sur_plateau = partie.parent < 0;
         t.cote = partie.cote;
+        if (!partie.guide.empty()) {
+            // Partie courbe : ses couches pivotent le long de sa courbe.
+            std::vector<Polygones> contours = sections_pivotantes(partie, r, sur_plateau, p + 1, t.reperes);
+            ReglagesImpression reglages_courbe = r;
+            if (!sur_plateau) {
+                reglages_courbe.jupe_boucles = 0;
+                reglages_courbe.hauteur_premiere_couche = r.hauteur_couche;
+            }
+            t.couches = calculer_trajectoires(contours, reglages_courbe);
+            t.origine = t.reperes.front().origine, t.u = t.reperes.front().u;
+            t.v = t.reperes.front().v, t.w = t.reperes.front().w;
+            if (t.couches.empty() || t.couches.front().traits.empty()) {
+                throw ErreurTranchage(std::format(
+                    "La première couche de la partie {} est vide : elle ne touche pas assez {}.",
+                    p + 1, sur_plateau ? "le plateau" : "la partie qui la porte"));
+            }
+            nombre_couches += t.couches.size();
+            tranchees.push_back(std::move(t));
+            continue;
+        }
         t.origine = sur_plateau ? Vec3{} : partie.base;
         const Maillage local = dans_repere(partie.maillage, t.origine, t.u, t.v, t.w);
         const double haut = calculer_boite(local).max.z;
@@ -346,6 +604,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
         PartieTranchee& t = tranchees[p];
         ecrivain.ligne(std::format(";PARTIE:{} direction {:.4f} {:.4f} {:.4f}", p + 1, t.w.x, t.w.y, t.w.z));
         ecrivain.partie(t.origine, t.u, t.v, t.w, t.cote);
+        ecrivain.epaisseur_fixe();
         for (std::size_t c = 0; c < t.couches.size(); ++c) {
             CoucheTrajectoires& couche = t.couches[c];
             ecrivain.ligne(std::format(";COUCHE:{}", ++numero));
@@ -353,7 +612,17 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
             if (numero == 2 && r.ventilation) {
                 ecrivain.ligne("M106 S255 ; ventilateur de pièce");
             }
-            ecrivain.couche(couche.z, couche.hauteur);
+            if (!t.reperes.empty()) {
+                // Couche d'une partie courbe : son propre repère, la buse sur son plan.
+                const RepereCouche& repere = t.reperes[c];
+                if (c > 0) {
+                    ecrivain.pivoter(repere.origine, repere.u, repere.v, repere.w);
+                }
+                ecrivain.epaisseur_depuis(repere.origine_dessous, repere.normale_dessous, couche.hauteur);
+                ecrivain.couche(0.0, couche.hauteur);
+            } else {
+                ecrivain.couche(couche.z, couche.hauteur);
+            }
             for (std::size_t debut = 0; debut < couche.traits.size();) {
                 std::size_t fin = debut;
                 while (fin < couche.traits.size() && couche.traits[fin].type == couche.traits[debut].type) {

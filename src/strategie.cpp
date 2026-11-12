@@ -14,6 +14,7 @@
 #include "collisions.hpp"
 #include "decoupe.hpp"
 #include "machine.hpp"
+#include "multiaxe.hpp"
 #include "slicer.hpp"
 #include "squelette.hpp"
 
@@ -57,11 +58,60 @@ double hauteur_min(const Maillage& maillage, const Vec3& direction) {
     return mini;
 }
 
+// Surface en surplomb d'une partie courbe : chaque face est jugée avec la
+// direction d'impression du point de la courbe le plus proche.
+double surplomb_courbe(const Maillage& maillage, const std::vector<PointGuide>& guide,
+                       double surplomb_max, const GrilleVoxels& matiere) {
+    const double seuil = std::sin(en_radians(surplomb_max));
+    double total = 0.0;
+    for (const Triangle& t : maillage.triangles) {
+        const Vec3 a = en_vec(maillage.sommets[t.sommets[0]]);
+        const Vec3 b = en_vec(maillage.sommets[t.sommets[1]]);
+        const Vec3 c = en_vec(maillage.sommets[t.sommets[2]]);
+        const Vec3 croix = produit_vectoriel(b - a, c - a);
+        const double double_aire = norme(croix);
+        if (double_aire < 1e-12) {
+            continue;
+        }
+        const Vec3 normale = croix * (1.0 / double_aire);
+        const Vec3 centre = (a + b + c) * (1.0 / 3.0);
+        const PointGuide* proche = &guide.front();
+        double meilleure = std::numeric_limits<double>::max();
+        for (const PointGuide& g : guide) {
+            const double d = norme(centre - g.point);
+            if (d < meilleure) {
+                meilleure = d;
+                proche = &g;
+            }
+        }
+        if (-produit_scalaire(normale, proche->direction) <= seuil) {
+            continue;
+        }
+        // Face posée sur la surface de départ, ou cachée dans la matière.
+        if (produit_scalaire(centre - guide.front().point, guide.front().direction) < 0.3 ||
+            matiere.contient(centre + normale * (1.5 * matiere.pas))) {
+            continue;
+        }
+        total += 0.5 * double_aire;
+    }
+    return total;
+}
+
+double surplomb_de_partie(const PartieImpression& partie, double surplomb_max, const GrilleVoxels& matiere) {
+    if (!partie.guide.empty()) {
+        return surplomb_courbe(partie.maillage, partie.guide, surplomb_max, matiere);
+    }
+    const Vec3 base = partie.parent < 0 ? Vec3{} : partie.base;
+    return surface_en_surplomb(partie.maillage, partie.direction, base, surplomb_max, 0.3, &matiere);
+}
+
 void mesurer(PartieImpression& partie, double surplomb_max, const GrilleVoxels& matiere) {
     partie.inclinaison = angle_entre(partie.direction, {0.0, 0.0, 1.0});
+    for (const PointGuide& g : partie.guide) {
+        partie.inclinaison = std::max(partie.inclinaison, angle_entre(g.direction, {0.0, 0.0, 1.0}));
+    }
     partie.volume = volume_maillage(partie.maillage);
-    partie.surplomb = surface_en_surplomb(partie.maillage, partie.direction, partie.base,
-                                          surplomb_max, 0.3, &matiere);
+    partie.surplomb = surplomb_de_partie(partie, surplomb_max, matiere);
 }
 
 std::string decrire_direction(const Vec3& d) {
@@ -86,6 +136,10 @@ public:
         if (machine_.modele_machine.empty() || !machine_.distance_pivot_buse) {
             return;
         }
+        // Ce contrôle ne regarde que quelques positions : il garde 1 mm de
+        // plus que la marge de sécurité, pour que le G-code complet, relu
+        // ensuite position par position, passe sans surprise.
+        machine_.marge_securite += 1.0;
         try {
             const std::string& chemin = machine_.modele_machine;
             modele_ = std::make_unique<ModeleMachine>(lire_modele_machine(
@@ -129,11 +183,11 @@ public:
         Vec3 direction;
         int cote = 0;
     };
-    std::optional<Choix> direction_libre(const std::vector<TrancheSquelette>& tranches,
-                                         const Vec3& voulue, double hauteur_sure) const {
-        // Matière déjà imprimée au moment d'attaquer la branche : tout le
-        // modèle sauf la branche elle-même.
-        DetecteurCollisions detecteur(*modele_, machine_);
+
+    // Détecteur chargé de la matière déjà imprimée quand on attaque une
+    // branche : tout le modèle sauf la branche elle-même.
+    std::unique_ptr<DetecteurCollisions> detecteur_pour(const std::vector<TrancheSquelette>& tranches) const {
+        auto detecteur = std::make_unique<DetecteurCollisions>(*modele_, machine_);
         for (const Vec3& point : peau_) {
             bool dans_la_branche = false;
             for (const TrancheSquelette& tranche : tranches) {
@@ -143,9 +197,54 @@ public:
                 }
             }
             if (!dans_la_branche) {
-                detecteur.deposer(point);
+                detecteur->deposer(point);
             }
         }
+        return detecteur;
+    }
+
+    // Pour une partie courbe : le côté (+1 ou -1) qui laisse la tête libre
+    // tout le long de la courbe, ou 0 si aucun des deux ne convient.
+    int cote_libre(DetecteurCollisions& detecteur, const std::vector<TrancheSquelette>& tranches,
+                   const std::vector<Vec3>& directions, double hauteur_sure) const {
+        for (const int cote : {1, -1}) {
+            bool libre = true;
+            double c = 0.0;
+            const auto essayer = [&](const Vec3& pointe, const Vec3& direction) {
+                const auto position = position_machine(machine_, {pointe, direction}, c, cote);
+                if (!position) {
+                    return false;
+                }
+                c = position->c;
+                return !detecteur.controler(*position).has_value();
+            };
+            const Vec3 approche = tranches.front().centre + directions.front() * 8.0;
+            for (int etape = 0; etape <= 6 && libre; ++etape) {
+                const double z = hauteur_sure + (approche.z - hauteur_sure) * etape / 6.0;
+                libre = z < approche.z || essayer({approche.x, approche.y, z}, directions.front());
+            }
+            const std::size_t saut = std::max<std::size_t>(1, directions.size() / 24);
+            for (std::size_t t = 0; t < directions.size() && libre; t += saut) {
+                Vec3 u, v;
+                repere_autour(directions[t], u, v);
+                const double bord = tranches[t].rayon + 1.0;
+                for (const Vec3& decalage : {Vec3{}, u * bord, u * -bord, v * bord, v * -bord}) {
+                    if (!essayer(tranches[t].centre + decalage, directions[t])) {
+                        libre = false;
+                        break;
+                    }
+                }
+            }
+            if (libre) {
+                return cote;
+            }
+        }
+        return 0;
+    }
+    std::optional<Choix> direction_libre(const std::vector<TrancheSquelette>& tranches,
+                                         const Vec3& voulue, double hauteur_sure) const {
+        const std::unique_ptr<DetecteurCollisions> charge = detecteur_pour(tranches);
+        DetecteurCollisions& detecteur = *charge;
         const double azimut = std::atan2(voulue.y, voulue.x);
         const double depart = angle_entre(voulue, {0.0, 0.0, 1.0});
         for (double inclinaison = depart; inclinaison >= 15.0; inclinaison -= 5.0) {
@@ -184,11 +283,12 @@ private:
                 return false;
             }
         }
-        const std::size_t saut = std::max<std::size_t>(1, tranches.size() / 8);
+        const std::size_t saut = std::max<std::size_t>(1, tranches.size() / 16);
         for (std::size_t t = 0; t < tranches.size(); t += saut) {
             const TrancheSquelette& tranche = tranches[t];
-            for (const Vec3& decalage : {Vec3{}, u * tranche.rayon, u * -tranche.rayon,
-                                         v * tranche.rayon, v * -tranche.rayon}) {
+            // Le centre de la tranche et quatre points de son bord, un peu au-delà.
+            const double bord = tranche.rayon + 1.0;
+            for (const Vec3& decalage : {Vec3{}, u * bord, u * -bord, v * bord, v * -bord}) {
                 if (!essayer(tranche.centre + decalage)) {
                     return false;
                 }
@@ -197,7 +297,7 @@ private:
         return true;
     }
 
-    const ReglagesMachine machine_;
+    ReglagesMachine machine_;
     const double pas_;
     std::unique_ptr<ModeleMachine> modele_;
     std::vector<Vec3> peau_;
@@ -211,8 +311,9 @@ public:
                        const OptionsStrategie& options, const ControleMachine& controle,
                        const GrilleVoxels& matiere, double hauteur_sure,
                        std::vector<std::string>& remarques)
-        : squelette_(squelette), machine_(reglages.machine), options_(options),
-          controle_(controle), matiere_(matiere), hauteur_sure_(hauteur_sure), remarques_(remarques) {
+        : squelette_(squelette), machine_(reglages.machine), impression_(reglages.impression),
+          options_(options), controle_(controle), matiere_(matiere), hauteur_sure_(hauteur_sure),
+          remarques_(remarques) {
         // Chaque face du modèle est rattachée à la branche dont une tranche
         // est la plus proche : on saura ainsi ce que chaque branche coûte en
         // surplomb selon la direction dans laquelle elle est imprimée.
@@ -243,7 +344,7 @@ public:
                     }
                 }
             }
-            faces_.push_back({normale, 0.5 * double_aire, proche});
+            faces_.push_back({normale, centre, 0.5 * double_aire, proche});
         }
         PartieImpression tronc;
         tronc.maillage = pose;
@@ -270,33 +371,69 @@ private:
             // Une branche qui s'imprime sans surplomb avec la partie qui la
             // porte y reste : moins il y a de parties, mieux c'est. Une excroissance
             // plus courte que son rayon n'est pas une branche.
-            if (surplomb_de(enfant, parties_[partie].direction) <= seuil_de(enfant) ||
+            if (surplomb_tige(enfant, direction_au_bout(partie)) <= seuil_de(enfant) ||
                 b.longueur < b.tranches.front().rayon) {
                 parcourir(enfant, partie);
                 continue;
             }
-            // Essai : on détache la branche, on traite celles qu'elle porte,
-            // puis on regarde si le surplomb total a vraiment baissé. Sinon
-            // tout est remis comme avant et la branche reste avec sa mère.
+            // Essais : on détache la branche de deux façons (en suivant sa
+            // courbe, ou avec une direction fixe), on traite chaque fois les
+            // branches qu'elle porte, et on garde ce qui laisse le moins de
+            // surplomb. Si rien ne rapporte, tout est remis comme avant et la
+            // branche reste avec sa mère.
             const std::size_t parties_avant = parties_.size();
             const std::size_t remarques_avant = remarques_.size();
             const Maillage mere_avant = parties_[partie].maillage;
             const double surplomb_avant = surplomb_partie(partie);
-            const int nouvelle = detacher(enfant, partie);
-            if (nouvelle < 0) {
-                parcourir(enfant, partie);
-                continue;
-            }
-            parcourir(enfant, nouvelle);
-            double surplomb_apres = surplomb_partie(partie);
-            for (std::size_t p = parties_avant; p < parties_.size(); ++p) {
-                surplomb_apres += surplomb_partie(static_cast<int>(p));
-            }
-            if (surplomb_avant - surplomb_apres <= seuil_de(enfant)) {
+            const auto remettre = [&]() {
                 parties_.resize(parties_avant);
                 remarques_.resize(remarques_avant);
                 parties_[partie].maillage = mere_avant;
+            };
+            const auto total = [&]() {
+                double somme = surplomb_partie(partie);
+                for (std::size_t p = parties_avant; p < parties_.size(); ++p) {
+                    somme += surplomb_partie(static_cast<int>(p));
+                }
+                return somme;
+            };
+            const double infini = std::numeric_limits<double>::max();
+
+            // Façon 1 : une branche courbe (plusieurs tronçons à la suite)
+            // devient une seule partie dont les couches pivotent.
+            double total_courbe = infini;
+            std::vector<PartieImpression> parties_courbe;
+            std::vector<std::string> remarques_courbe;
+            Maillage mere_courbe;
+            const std::vector<int> tige = tige_de(enfant);
+            if (tige.size() > 1 && options_.couches_pivotantes) {
+                const int courbe = detacher_courbe(tige, partie);
+                if (courbe >= 0) {
+                    parcourir(tige.back(), courbe);
+                    total_courbe = total();
+                    parties_courbe.assign(parties_.begin() + static_cast<std::ptrdiff_t>(parties_avant), parties_.end());
+                    remarques_courbe.assign(remarques_.begin() + static_cast<std::ptrdiff_t>(remarques_avant), remarques_.end());
+                    mere_courbe = parties_[partie].maillage;
+                }
+                remettre();
+            }
+            // Façon 2 : une direction fixe pour la branche.
+            double total_fixe = infini;
+            const int nouvelle = detacher(enfant, partie);
+            if (nouvelle >= 0) {
+                parcourir(enfant, nouvelle);
+                total_fixe = total();
+            }
+            if (surplomb_avant - std::min(total_courbe, total_fixe) <= seuil_de(enfant)) {
+                remettre();
                 parcourir(enfant, partie);
+                continue;
+            }
+            if (total_courbe < total_fixe) {
+                remettre();
+                parties_.insert(parties_.end(), parties_courbe.begin(), parties_courbe.end());
+                remarques_.insert(remarques_.end(), remarques_courbe.begin(), remarques_courbe.end());
+                parties_[partie].maillage = std::move(mere_courbe);
             }
         }
     }
@@ -304,9 +441,194 @@ private:
     // Surface (mm²) qu'il faudrait soutenir pour imprimer cette partie, telle
     // qu'elle est découpée en ce moment, dans sa direction.
     double surplomb_partie(int partie) const {
+        return surplomb_de_partie(parties_[partie], options_.surplomb_max, matiere_);
+    }
+
+    // Direction d'impression au bout d'une partie (pour juger ce qu'elle porte).
+    Vec3 direction_au_bout(int partie) const {
         const PartieImpression& p = parties_[partie];
-        const Vec3 base = p.parent < 0 ? Vec3{} : p.base;
-        return surface_en_surplomb(p.maillage, p.direction, base, options_.surplomb_max, 0.3, &matiere_);
+        return p.guide.empty() ? p.direction : p.guide.back().direction;
+    }
+
+    // La tige qui commence à « branche » : elle-même, puis ses tronçons suivants.
+    std::vector<int> tige_de(int branche) const {
+        std::vector<int> tige{branche};
+        for (;;) {
+            const std::vector<int>& enfants = squelette_.branches[tige.back()].enfants;
+            if (enfants.size() != 1 || !squelette_.branches[enfants.front()].suite_courbe) {
+                break;
+            }
+            tige.push_back(enfants.front());
+        }
+        return tige;
+    }
+
+    // Détache une branche courbe en une seule partie dont les couches suivent
+    // la courbe. Renvoie le numéro de la nouvelle partie, ou -1.
+    int detacher_courbe(const std::vector<int>& tige, int partie) {
+        // Les tranches de la tige, dans l'ordre, puis de tout ce qu'elle porte.
+        std::vector<TrancheSquelette> axe;
+        for (const int numero : tige) {
+            const BrancheSquelette& b = squelette_.branches[numero];
+            axe.insert(axe.end(), b.tranches.begin(), b.tranches.end());
+        }
+        if (axe.size() < 6) {
+            return -1;
+        }
+        std::vector<TrancheSquelette> tout = axe;
+        for (const int enfant : squelette_.branches[tige.back()].enfants) {
+            tranches_de(enfant, tout);
+        }
+        double rayon = 0.0;
+        for (const TrancheSquelette& t : axe) {
+            rayon = std::max(rayon, t.rayon);
+        }
+        // Direction de la courbe en chaque tranche, lissée sur quelques voisines.
+        std::vector<Vec3> tangentes(axe.size());
+        for (std::size_t i = 0; i < axe.size(); ++i) {
+            const std::size_t avant = i >= 3 ? i - 3 : 0;
+            const std::size_t apres = std::min(i + 3, axe.size() - 1);
+            tangentes[i] = normaliser(axe[apres].centre - axe[avant].centre);
+        }
+        const BrancheSquelette& premiere = squelette_.branches[tige.front()];
+
+        std::unique_ptr<DetecteurCollisions> detecteur;
+        if (controle_.actif()) {
+            detecteur = controle_.detecteur_pour(tout);
+        }
+        // Directions d'impression : celles de la courbe, limitées à ce que la
+        // machine peut faire à chaque hauteur. Avec la forme de la machine,
+        // l'inclinaison maximale est abaissée tant qu'il y a un contact.
+        std::vector<Vec3> directions(axe.size());
+        int cote = 0;
+        double plafond = 90.0;
+        for (;; plafond -= 10.0) {
+            if (plafond < 25.0) {
+                return -1;
+            }
+            for (std::size_t i = 0; i < axe.size(); ++i) {
+                const double possible = std::min(plafond, inclinaison_possible(machine_, axe[i].centre.z - axe[i].rayon));
+                directions[i] = redresser(tangentes[i], possible);
+                if (i > 0) {
+                    // La direction ne tourne pas plus vite que l'épaisseur de
+                    // la branche ne le permet (sinon les couches se croiseraient).
+                    const double permis = en_degres(0.3 / rayon) * norme(axe[i].centre - axe[i - 1].centre);
+                    const double ecart = angle_entre(directions[i], directions[i - 1]);
+                    if (ecart > permis) {
+                        const double t = permis / ecart;
+                        directions[i] = normaliser(directions[i - 1] * (1.0 - t) + directions[i] * t);
+                    }
+                }
+            }
+            if (!detecteur) {
+                break;
+            }
+            cote = controle_.cote_libre(*detecteur, axe, directions, hauteur_sure_);
+            if (cote != 0) {
+                break;
+            }
+        }
+
+        // Ce que la courbe rapporte : le surplomb des tronçons avec la partie
+        // qui les porte, comparé à celui qu'ils auront en suivant la courbe.
+        const Vec3 direction_mere = direction_au_bout(partie);
+        const double seuil_face = std::sin(en_radians(options_.surplomb_max));
+        double avant = 0.0, apres = 0.0;
+        for (const Face& face : faces_) {
+            if (std::find(tige.begin(), tige.end(), face.branche) == tige.end()) {
+                continue;
+            }
+            if (-produit_scalaire(face.normale, direction_mere) > seuil_face) {
+                avant += face.aire;
+            }
+            std::size_t proche = 0;
+            double meilleure = std::numeric_limits<double>::max();
+            for (std::size_t i = 0; i < axe.size(); ++i) {
+                const double d = norme(face.centre - axe[i].centre);
+                if (d < meilleure) {
+                    meilleure = d;
+                    proche = i;
+                }
+            }
+            if (-produit_scalaire(face.normale, directions[proche]) > seuil_face) {
+                apres += face.aire;
+            }
+        }
+        if (avant - apres <= seuil_de(tige.front())) {
+            return -1;
+        }
+
+        // Coupe au pied de la tige, perpendiculaire à sa première direction.
+        const TrancheSquelette& depart = axe.front();
+        const Vec3 direction = directions.front();
+        const double ep = squelette_.epaisseur_tranche;
+        const double section = std::numbers::pi * depart.rayon * depart.rayon;
+        const double biais = std::max(0.3, std::cos(en_radians(angle_entre(direction, tangentes.front()))));
+        for (double recul = -2.0 * ep; recul <= 4.0 * ep + 1e-9; recul += 0.5 * ep) {
+            const Plan plan{depart.centre + direction * recul, direction};
+            std::vector<Vec3> graines;
+            for (const TrancheSquelette& tranche : tout) {
+                if (produit_scalaire(tranche.centre - plan.point, direction) > 0.5 * ep) {
+                    graines.push_back(tranche.centre);
+                }
+            }
+            if (graines.empty()) {
+                break;
+            }
+            auto coupe = couper_par_plan(parties_[partie].maillage, plan, graines);
+            if (!coupe) {
+                continue;
+            }
+            const double volume = volume_maillage(coupe->partie);
+            if (!(volume > 0.4 * premiere.volume_total &&
+                  volume < 1.3 * premiere.volume_total + section * 3.0 * ep &&
+                  coupe->surface_coupe < 2.5 * section / biais)) {
+                continue;
+            }
+            PartieImpression nouvelle;
+            nouvelle.maillage = std::move(coupe->partie);
+            nouvelle.direction = direction;
+            nouvelle.cote = cote;
+            nouvelle.base = coupe->centre_coupe;
+            nouvelle.parent = partie;
+            // La courbe part du centre de la coupe, puis suit les tranches situées au-delà.
+            nouvelle.guide.push_back({coupe->centre_coupe, direction});
+            for (std::size_t i = 0; i < axe.size(); ++i) {
+                if (produit_scalaire(axe[i].centre - plan.point, direction) > ep) {
+                    nouvelle.guide.push_back({axe[i].centre, directions[i]});
+                }
+            }
+            if (nouvelle.guide.size() < 3) {
+                return -1;
+            }
+            // Le long du guide tel qu'il est maintenant, la direction ne
+            // doit pas tourner plus vite que l'épaisseur ne le permet.
+            for (std::size_t i = 1; i < nouvelle.guide.size(); ++i) {
+                PointGuide& ici = nouvelle.guide[i];
+                const PointGuide& avant_ici = nouvelle.guide[i - 1];
+                const double avance = std::max(0.0, produit_scalaire(ici.point - avant_ici.point, avant_ici.direction));
+                const double permis = en_degres(0.3 / rayon) * avance;
+                const double ecart = angle_entre(ici.direction, avant_ici.direction);
+                if (ecart > permis) {
+                    const double t = ecart > 1e-9 ? permis / ecart : 0.0;
+                    ici.direction = normaliser(avant_ici.direction * (1.0 - t) + ici.direction * t);
+                }
+            }
+            // Dernier contrôle : les couches de cette partie se calculent-elles vraiment ?
+            if (!couches_pivotantes_possibles(nouvelle, impression_)) {
+                return -1;
+            }
+            parties_[partie].maillage = std::move(coupe->reste);
+            parties_.push_back(std::move(nouvelle));
+            if (plafond < 90.0) {
+                remarques_.push_back(std::format(
+                    "Une branche courbe est limitée à {:.0f}° d'inclinaison : au-delà, la machine "
+                    "toucherait la pièce déjà imprimée.",
+                    plafond));
+            }
+            return static_cast<int>(parties_.size()) - 1;
+        }
+        return -1;
     }
 
     // Surface (mm²) de la branche qui serait imprimée dans le vide en
@@ -318,6 +640,15 @@ private:
             if (face.branche == branche && -produit_scalaire(face.normale, direction) > seuil) {
                 total += face.aire;
             }
+        }
+        return total;
+    }
+
+    // Même mesure pour une tige entière : la branche et ses tronçons suivants.
+    double surplomb_tige(int branche, const Vec3& direction) const {
+        double total = 0.0;
+        for (const int numero : tige_de(branche)) {
+            total += surplomb_de(numero, direction);
         }
         return total;
     }
@@ -372,7 +703,7 @@ private:
         }
         const double redressement = angle_entre(direction, b.direction);
         // La direction retenue doit vraiment réduire le surplomb de la branche.
-        const double avant = surplomb_de(branche, parties_[partie].direction);
+        const double avant = surplomb_de(branche, direction_au_bout(partie));
         if (avant - surplomb_de(branche, direction) <= seuil_de(branche)) {
             if (angle_entre(b.direction, {0.0, 0.0, 1.0}) > 90.0) {
                 remarques_.push_back(std::format(
@@ -441,12 +772,14 @@ private:
 
     struct Face {
         Vec3 normale;
+        Vec3 centre;
         double aire;
         int branche;  // branche du squelette la plus proche
     };
     std::vector<Face> faces_;
     const Squelette& squelette_;
     const ReglagesMachine machine_;
+    const ReglagesImpression impression_;
     const OptionsStrategie options_;
     const ControleMachine& controle_;
     const GrilleVoxels& matiere_;
@@ -478,6 +811,27 @@ std::vector<PartieImpression> ordonner(std::vector<PartieImpression> parties) {
         }
     }
     return ordre;
+}
+
+// Regroupe les remarques identiques : « ... (4 fois) ».
+std::vector<std::string> regrouper(std::vector<std::string> remarques) {
+    std::vector<std::string> uniques;
+    std::vector<int> fois;
+    for (std::string& remarque : remarques) {
+        const auto deja = std::find(uniques.begin(), uniques.end(), remarque);
+        if (deja == uniques.end()) {
+            uniques.push_back(std::move(remarque));
+            fois.push_back(1);
+        } else {
+            ++fois[static_cast<std::size_t>(deja - uniques.begin())];
+        }
+    }
+    for (std::size_t i = 0; i < uniques.size(); ++i) {
+        if (fois[i] > 1) {
+            uniques[i] += std::format(" ({} fois)", fois[i]);
+        }
+    }
+    return uniques;
 }
 
 }  // namespace
@@ -643,6 +997,7 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                     reglages.machine.b_limite_pres_plateau));
             }
             branches.parties = std::move(parties);
+            branches.remarques = regrouper(std::move(branches.remarques));
             strategies.push_back(std::move(branches));
         }
     }

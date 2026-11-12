@@ -21,13 +21,24 @@
 
 namespace artprint {
 
+// Un point de la courbe que suivent les couches d'une partie courbe.
+struct PointGuide {
+    Vec3 point;      // sur l'axe de la branche
+    Vec3 direction;  // direction d'impression à cet endroit, longueur 1
+};
+
 // Un morceau du modèle et la direction dans laquelle il est imprimé.
 struct PartieImpression {
     Maillage maillage;         // volume fermé, dans le repère de la pièce
     Vec3 direction{0.0, 0.0, 1.0};  // direction d'impression : les couches s'empilent le long
     Vec3 base;                 // un point de la surface de départ
+    // Pour une partie courbe : la courbe que suivent ses couches, du départ
+    // vers le bout. Chaque couche est alors perpendiculaire à la direction
+    // de la courbe à cet endroit : la tête et le plateau tournent un peu à
+    // chaque couche. Vide : toutes les couches ont la direction ci-dessus.
+    std::vector<PointGuide> guide;
     int parent = -1;           // numéro de la partie qui la porte (-1 : le plateau)
-    double inclinaison = 0.0;  // angle avec la verticale, en degrés
+    double inclinaison = 0.0;  // angle avec la verticale, en degrés (le plus grand le long d'une partie courbe)
     // Côté vers lequel la tête penche pour cette partie : 0 laisse le slicer
     // choisir ; +1 ou -1 l'impose (choisi pour éviter une collision).
     int cote = 0;
@@ -51,6 +62,10 @@ struct OptionsStrategie {
     double surplomb_max = 45.0;
     // Côté des voxels d'analyse en mm (0 : choisi d'après la taille du modèle).
     double pas_voxels = 0.0;
+    // Vrai : une branche courbe devient une seule partie dont les couches
+    // pivotent le long de la courbe. Faux : elle est partagée en tronçons
+    // droits, chacun avec sa direction fixe.
+    bool couches_pivotantes = true;
 };
 
 // Surface (mm²) des faces du maillage qui seraient imprimées dans le vide en

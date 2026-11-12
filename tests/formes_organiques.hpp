@@ -352,4 +352,37 @@ inline Maillage equerre() {
     return forme_posee(d, {-24, -16, 0}, {22, 16, 48}, 0.6);
 }
 
+// Tube courbe : il part du plateau à la verticale, puis se couche peu à peu
+// jusqu'à l'inclinaison donnée, en suivant un arc de cercle.
+struct TubeCourbe {
+    double rayon_tube = 5.0;
+    double rayon_courbure = 30.0;
+    double hauteur_droite = 6.0;   // partie verticale avant la courbe
+    double inclinaison_finale = 70.0;
+
+    // Point de l'axe et direction, après avoir tourné de « angle » degrés.
+    Vec3 point(double angle) const {
+        const double a = en_radians(angle);
+        return {rayon_courbure * (1.0 - std::cos(a)), 0.0, hauteur_droite + rayon_courbure * std::sin(a)};
+    }
+    Vec3 direction(double angle) const { return vers(angle, 0.0); }
+
+    Maillage maillage() const {
+        const TubeCourbe tube = *this;
+        const Distance d = [tube](const Vec3& p) {
+            double f = boudin(p, {0, 0, -3}, {0, 0, tube.hauteur_droite}, tube.rayon_tube);
+            Vec3 precedent = tube.point(0.0);
+            for (double angle = 5.0; angle <= tube.inclinaison_finale + 1e-9; angle += 5.0) {
+                const Vec3 suivant = tube.point(angle);
+                f = std::min(f, boudin(p, precedent, suivant, tube.rayon_tube));
+                precedent = suivant;
+            }
+            return f;
+        };
+        const Vec3 bout = point(inclinaison_finale);
+        return forme_posee(d, {-rayon_tube - 2, -rayon_tube - 2, 0},
+                           {bout.x + rayon_tube + 2, rayon_tube + 2, bout.z + rayon_tube + 2}, 0.6);
+    }
+};
+
 }  // namespace essai

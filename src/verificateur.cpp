@@ -21,6 +21,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <sstream>
 
@@ -50,6 +51,9 @@ public:
         : machine_(reglages.machine),
           verif_(reglages.verification),
           largeur_(reglages.impression.largeur_extrusion),
+          section_filament_(std::numbers::pi * reglages.impression.diametre_filament *
+                            reglages.impression.diametre_filament / 4.0),
+          debit_(std::max(0.01, reglages.impression.debit)),
           hauteur_(std::min(reglages.impression.hauteur_couche,
                             reglages.impression.hauteur_premiere_couche)),
           grille_(std::min(verif_.pas_controle, hauteur_ / 2.0)) {
@@ -114,6 +118,7 @@ private:
         Vec3 pointe;
         Vec3 direction;
         double distance;  // distance parcourue en extrusion à ce moment-là
+        double hauteur;   // épaisseur du cordon déposé à cet endroit
     };
 
     void signaler(TypeErreur type, const PositionMachine& position, std::string probleme,
@@ -251,7 +256,7 @@ private:
 
         verifier_axes(cible);
         try {
-            parcourir(cible, extrusion);
+            parcourir(cible, extrusion, delta_e);
         } catch (const ErreurReglageManquant& erreur) {
             signaler(TypeErreur::reglage_manquant, cible, erreur.what(),
                      "Ajouter ce réglage dans le fichier de réglages.");
@@ -372,9 +377,23 @@ private:
     }
 
     // Rejoue le mouvement par petits pas, de la position actuelle à la cible.
-    void parcourir(const PositionMachine& cible, bool extrusion) {
+    void parcourir(const PositionMachine& cible, bool extrusion, double delta_e) {
         const PoseOutil depart = pose_dans_piece(machine_, position_);
         const PoseOutil arrivee = pose_dans_piece(machine_, cible);
+
+        // Épaisseur du cordon de ce mouvement, déduite de la matière
+        // extrudée : volume = section du cordon x longueur, et la section
+        // d'un cordon de largeur w et d'épaisseur t vaut (w - t) t + pi t² / 4.
+        epaisseur_ = hauteur_;
+        const double longueur = norme(arrivee.pointe - depart.pointe);
+        if (extrusion && longueur > 1e-6) {
+            const double section = delta_e * section_filament_ / (debit_ * longueur);
+            const double a = std::numbers::pi / 4.0 - 1.0;
+            const double discriminant = largeur_ * largeur_ + 4.0 * a * section;
+            const double t = discriminant > 0.0 ? (-largeur_ + std::sqrt(discriminant)) / (2.0 * a)
+                                                : 2.5 * hauteur_;
+            epaisseur_ = std::clamp(t, 0.25 * hauteur_, 2.5 * hauteur_);
+        }
 
         // Majorant du chemin parcouru par la pointe sur la pièce.
         const double droit = norme(Vec3{cible.x - position_.x, cible.y - position_.y,
@@ -436,7 +455,7 @@ private:
             controler_matiere(ici, pose, avance, dessus_signale);
 
             distance_extrusion_ += avance;
-            attente_.push_back({pose.pointe, pose.direction, distance_extrusion_});
+            attente_.push_back({pose.pointe, pose.direction, distance_extrusion_, epaisseur_});
             const double retard = 3.0 * largeur_;
             while (!attente_.empty() && attente_.front().distance < distance_extrusion_ - retard) {
                 deposer(attente_.front());
@@ -473,7 +492,7 @@ private:
 
     void controler_matiere(const PositionMachine& ici, const PoseOutil& pose, double avance,
                            bool& dessus_signale) {
-        const double hauteur = hauteur_;
+        const double hauteur = epaisseur_;
 
         // « Dans le vide » : rien sous le cordon. On regarde un peu plus bas
         // que la couche en cours, le long de la buse, au centre et sur les
@@ -540,10 +559,9 @@ private:
     }
 
     void deposer(const Depot& depot) {
-        grille_.deposer(depot.pointe, depot.direction, largeur_,
-                        hauteur_);
+        grille_.deposer(depot.pointe, depot.direction, largeur_, depot.hauteur);
         if (detecteur_) {
-            detecteur_->deposer(depot.pointe - depot.direction * (hauteur_ / 2.0));
+            detecteur_->deposer(depot.pointe - depot.direction * (depot.hauteur / 2.0));
         }
     }
 
@@ -564,6 +582,9 @@ private:
     const ReglagesMachine machine_;
     const ReglagesVerification verif_;
     const double largeur_;  // largeur nominale du cordon
+    const double section_filament_;  // mm² de filament par mm poussé
+    const double debit_;             // multiplicateur de matière des réglages
+    double epaisseur_ = 0.0;         // épaisseur du cordon du mouvement en cours
     const double hauteur_;  // hauteur nominale du cordon
     GrilleMatiere grille_;
     RapportVerification rapport_;
