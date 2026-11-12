@@ -985,6 +985,11 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                 "chaque branche, imprimée le long de sa propre direction avec la tête inclinée "
                 "et le plateau tourné.",
                 parties.size());
+            if (std::any_of(parties.begin(), parties.end(),
+                            [](const PartieImpression& p) { return !p.guide.empty(); })) {
+                branches.description += " Une branche courbe est imprimée en couches qui pivotent : "
+                                        "elles suivent sa courbe, et la tête s'incline un peu plus à chaque couche.";
+            }
             if (squelette.boucles) {
                 branches.remarques.push_back("Le modèle contient une anse (deux branches qui se rejoignent) : la découpe automatique peut y être imparfaite.");
             }

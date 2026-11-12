@@ -45,16 +45,20 @@ ceci :
    distance forment des tranches. Quand une tranche se sépare en deux
    morceaux, c'est qu'une **branche** part. On obtient le « squelette » : le
    tronc, les branches, leur direction, leur longueur, leur épaisseur.
-3. **Décider quelles branches méritent leur propre direction** : celles qui
-   s'écartent de plus de 45° de la partie qui les porte (au-delà, elles
-   s'imprimeraient dans le vide).
+3. **Décider quelles branches méritent leur propre direction** : celles
+   dont la surface serait imprimée dans le vide (surplomb de plus de 45°) si
+   elles restaient avec la partie qui les porte.
 4. **Choisir l'inclinaison de la tête** pour chaque branche : celle de la
    branche si la machine le permet, sinon la plus proche possible (limites
-   de B, limite près du plateau et, si la forme de la machine est connue,
-   plus aucun contact entre la tête et ce qui est déjà imprimé).
+   de B, limite près du plateau). Si la forme de la machine est connue, la
+   tête est essayée en plusieurs points de la branche, des deux côtés
+   possibles (une même orientation s'obtient en penchant d'un côté, ou de
+   l'autre avec le plateau retourné), et l'inclinaison est réduite tant
+   qu'il y a un contact.
 5. **Couper le modèle par un plan** au pied de chaque branche
    (`src/decoupe.*`). Les deux morceaux sont refermés : ce sont de nouveau
-   des volumes que le slicer sait trancher.
+   des volumes que le slicer sait trancher. La coupe n'est gardée que si le
+   surplomb total a vraiment baissé.
 6. **Trancher chaque partie le long de sa direction** (`src/multiaxe.*`) :
    le tronc en couches horizontales, chaque branche en couches
    perpendiculaires à sa direction, avec parois et remplissage comme
@@ -65,6 +69,23 @@ ceci :
    approche le long de la buse.
 8. **Faire relire le G-code par le vérificateur**, comme toujours. S'il
    trouve une faute, le tranchage est refusé.
+
+### Les branches courbes : des couches qui pivotent
+
+Une branche courbe (le bras d'un chandelier, un tuyau coudé) est essayée de
+deux façons, et la meilleure est gardée :
+
+- **direction fixe** : la branche est partagée en tronçons à peu près
+  droits, chacun avec sa direction ;
+- **couches qui pivotent** : la branche reste une seule partie, et chaque
+  couche est perpendiculaire à la courbe à cet endroit. La tête s'incline
+  donc un peu plus à chaque couche, et le plateau suit. Comme deux couches
+  voisines ne sont pas parallèles, l'épaisseur varie d'un côté à l'autre :
+  le débit suit l'épaisseur locale. Si la courbe est trop serrée pour
+  l'épaisseur de la branche, cette façon est écartée.
+
+C'est la première brique du 5 axes continu : B et C changent à chaque
+couche, par petits pas, pendant le court trajet entre deux couches.
 
 ## L'essayer
 
@@ -96,6 +117,25 @@ Dans l'interface, la commande `strategies` rend la même liste, et
 - `modele_machine` : s'il est renseigné, les inclinaisons sont choisies pour
   éviter tout contact avec la forme réelle de l'imprimante.
 
+## Ce qui est mesuré
+
+Deux mesures permettent de comparer les stratégies :
+
+- la **surface à soutenir** (mm²), estimée sur le modèle : les faces qui
+  seraient imprimées dans le vide ;
+- les **parois imprimées dans le vide** (mm), mesurées par le vérificateur
+  sur le G-code lui-même : la longueur de paroi déposée sans rien dessous.
+
+Le banc d'essai (`tests/banc_strategies.cpp`) fabrique onze objets (arbres,
+châssis de drone, chandelier, crochet, tuyau en Y creux, champignon, tasse,
+main, équerre), propose et tranche toutes leurs stratégies, et donne ces
+mesures. Avec un fichier de réglages, il utilise la forme réelle de la
+machine :
+
+```
+banc_strategies reglages.txt
+```
+
 ## Ce qui est vérifié
 
 Chaque G-code multi-directions passe les mêmes contrôles que le 3 axes :
@@ -111,16 +151,19 @@ s'assurer qu'elles sont bien refusées.
 
 ## Limites connues
 
-- **Ce n'est pas encore du 5 axes continu.** Pendant qu'une partie
-  s'imprime, B et C ne bougent pas ; ils ne bougent qu'entre deux parties.
+- **Ce n'est pas encore du 5 axes continu.** B et C ne bougent pas pendant
+  l'extrusion : ils bougent entre deux parties, ou entre deux couches d'une
+  partie courbe.
 - **Pas de supports.** Ce qui reste en surplomb (surtout le pied des
   branches) est annoncé en mm², mais rien n'est généré pour le soutenir.
 - **Le vérificateur ne contrôle pas qu'un cordon est posé sur quelque
   chose.** Une couche imprimée dans le vide n'est pas refusée.
 - **Formes en arbre seulement.** Une anse (deux branches qui se rejoignent)
   est signalée, et la découpe peut y être imparfaite.
-- **Une seule façon de pencher la tête est essayée** (la cinématique en a
-  deux, d'un côté ou de l'autre avec le plateau retourné).
+- **Une branche qui redescend** ne peut pas être imprimée sans support : la
+  buse ne peut pas pointer vers le haut.
+- **Le contrôle des collisions avant le tranchage ne regarde que quelques
+  positions** par branche ; c'est le vérificateur qui rejoue tout le G-code.
 - **Le changement d'orientation passe toujours par le haut.** Il n'y a pas
   encore de recherche du trajet le plus court ou le plus sûr.
 - **L'ordre des parties est simple** : chaque partie après celle qui la
@@ -130,11 +173,10 @@ s'assurer qu'elles sont bien refusées.
 
 1. Contrôle « cordon posé sur quelque chose » dans le vérificateur.
 2. Supports, limités à ce que le 5 axes ne résout pas.
-3. Essai de l'autre façon de pencher la tête, et trajets de changement
-   d'orientation plus courts (reculer le bras au lieu de monter).
-4. **Couches qui pivotent** le long d'une branche courbe : la direction
-   change un peu à chaque couche au lieu de rester fixe par partie.
-5. **Couches courbes** : B et C bougent pendant l'extrusion. C'est le vrai
-   5 axes continu ; les étapes précédentes en sont la base.
-6. Choix de la stratégie dans le logiciel installé (aujourd'hui : ligne de
+3. Trajets de changement d'orientation plus courts (reculer le bras au lieu
+   de monter).
+4. B et C qui tournent **pendant** l'extrusion sur une branche courbe, puis
+   des **couches courbes** : c'est le vrai 5 axes continu ; les couches qui
+   pivotent en sont la base.
+5. Choix de la stratégie dans le logiciel installé (aujourd'hui : ligne de
    commande, interface de programmation et maquette).

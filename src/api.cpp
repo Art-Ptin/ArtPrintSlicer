@@ -125,6 +125,7 @@ Json decrire_strategie(const Strategie& strategie) {
             {{"direction", {partie.direction.x, partie.direction.y, partie.direction.z}},
              {"inclinaison", std::round(partie.inclinaison * 10.0) / 10.0},
              {"cote", partie.cote},
+             {"courbe", !partie.guide.empty()},
              {"volume_cm3", std::round(partie.volume) / 1000.0},
              {"surplomb_mm2", std::round(partie.surplomb)},
              {"parent", partie.parent}});

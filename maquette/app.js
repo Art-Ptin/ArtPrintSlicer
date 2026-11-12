@@ -639,7 +639,8 @@ function afficherStrategies() {
   detail.replaceChildren(document.createTextNode(choisie.description));
   if (choisie.parties.length > 1) {
     detail.append(document.createTextNode(' Inclinaisons : '),
-      el('b', '', choisie.parties.map((p) => `${fr(p.inclinaison, 0)}°`).join(', ')), document.createTextNode('.'));
+      el('b', '', choisie.parties.map((p) => (p.courbe ? `jusqu'à ${fr(p.inclinaison, 0)}° (courbe)` : `${fr(p.inclinaison, 0)}°`)).join(', ')),
+      document.createTextNode('.'));
   }
   for (const remarque of choisie.remarques) detail.append(el('span', 'remarque', remarque));
 }
@@ -786,7 +787,8 @@ async function trancher() {
   const parties = new Set(resultat.apercu.map((couche) => couche.partie ?? 0)).size;
   $('trajectoires-note').textContent = `Couches de ${ecrire(etat.valeurs.hauteur_couche)} mm · ` +
     (parties > 1 ? `${parties} parties, chacune dans sa direction · ` : '') +
-    `${entier(verification.deplacements_a_vide)} déplacements à vide · ${entier(verification.retractions)} rétractions`;
+    `${entier(verification.deplacements_a_vide)} déplacements à vide · ${entier(verification.retractions)} rétractions` +
+    (verification.dans_le_vide_mm === undefined ? '' : ` · parois imprimées dans le vide : ${entier(verification.dans_le_vide_mm)} mm`);
 
   if (verification.valide) definirEtat('bon', 'G-code vérifié', 'Aucune règle physique violée. Prêt à exporter.');
   else definirEtat('mauvais', 'Tranchage refusé', `${entier(verification.nombre_erreurs)} erreur(s) : le G-code ne peut pas être exporté.`);

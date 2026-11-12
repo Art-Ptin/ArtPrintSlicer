@@ -92,8 +92,10 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Squelette du modèle (tronc et branches) | ✅ | formes en arbre ; les anses sont signalées |
 | Découpe par plans, une direction par partie | ✅ | découpe automatique |
 | Tranchage multi-directions (tête inclinée, plateau tourné) | ✅ | B et C fixes pendant une partie |
-| Inclinaisons choisies avec la forme réelle de la machine | ✅ | une seule façon de pencher est essayée |
+| Inclinaisons choisies avec la forme réelle de la machine | ✅ | les deux façons de pencher la tête sont essayées |
 | Changement d'orientation sûr (reculer, monter, tourner, approcher) | 🟡 | passe toujours par le haut |
-| Contrôle « cordon posé sur quelque chose » | ⬜ | prochaine étape |
-| Couches qui pivotent le long d'une branche courbe | ⬜ | |
+| Mesure des parois imprimées dans le vide | ✅ | une mesure, pas encore un refus |
+| Couches qui pivotent le long d'une branche courbe | ✅ | B et C changent à chaque couche |
+| Banc d'essai sur onze objets (dont châssis de drone organique) | ✅ | `tests/banc_strategies.cpp` |
+| B et C qui tournent pendant l'extrusion | ⬜ | prochaine étape vers le continu |
 | Tranchage 5 axes continu (couches courbes) | ⬜ | recherche |
