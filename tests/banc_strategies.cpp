@@ -126,6 +126,9 @@ int main(int argc, char** argv) {
                                          100.0 * static_cast<double>(r.verification.extrusions_en_rotation) /
                                              std::max<double>(1.0, static_cast<double>(r.verification.extrusions)),
                                          secondes_depuis(debut));
+                for (const std::string& remarque : r.remarques) {
+                    std::cout << "        tranchage : " << remarque << "\n";
+                }
                 if (!r.verification.valide()) {
                     ++refus;
                     int montrees = 0;
