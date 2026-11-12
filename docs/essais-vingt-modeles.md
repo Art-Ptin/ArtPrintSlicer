@@ -116,3 +116,20 @@ Seize modèles sur vingt sont vérifiés avec la stratégie couches courbes (deu
   il faut une couche « en anneau », que la carte plane ne sait pas dessiner.
 - **Bord du pied.** Il reste un léger liseré de petits reliefs là où la
   paroi du tronc s'arrête et où la branche commence.
+
+## Et les pièces de test qui existent déjà
+
+La pièce de test d'imprimante la plus connue est le **3DBenchy** (un petit
+bateau de 60 mm, de Creative Tools). Il est dans le domaine public (licence
+CC0) depuis 2025 ; ses fichiers STL et STEP se téléchargent sur 3dbenchy.com
+et sur le dépôt GitHub `CreativeTools/3DBenchy`. Le fichier n'est pas copié
+dans ce dépôt : il suffit de le télécharger et de l'ouvrir dans le slicer.
+
+Résultat : le 3DBenchy est tranché et vérifié en 3 axes (240 couches). Les
+couches courbes ne lui sont pas proposées : ses surplombs sont un toit, des
+arches et des ouvertures, les formes que le slicer ne sait pas encore
+découper en couches courbes (voir plus haut). C'est un bon objectif.
+
+D'autres pièces de test courantes : le test « tout-en-un » (surplombs,
+ponts, trous, cotes), le cube de calibration, et le test de Kickstarter et
+Autodesk. Leurs licences sont à vérifier une par une avant de les utiliser.
