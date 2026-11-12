@@ -1,6 +1,7 @@
 // ArtPrint Slicer - licence AGPL v3
 // Banc d'essai des stratégies : fabrique une série d'objets (arbres, châssis
-// de drone, chandelier, crochet, tuyau, champignon, tasse, main, équerre),
+// de drone, chandelier, crochet, tuyau, champignon, tasse, main, équerre,
+// arbre à deux niveaux, buisson, potence),
 // demande les stratégies proposées pour chacun, les tranche toutes et fait
 // relire chaque G-code par le vérificateur.
 //
@@ -72,6 +73,9 @@ int main(int argc, char** argv) {
         {"tasse", essai::tasse},
         {"main_ouverte", essai::main_ouverte},
         {"equerre", essai::equerre},
+        {"arbre_double", essai::arbre_double},
+        {"buisson", essai::buisson},
+        {"potence", essai::potence},
     };
 
     // Troisième argument (facultatif) : ne traiter que les objets dont le nom contient ce texte.

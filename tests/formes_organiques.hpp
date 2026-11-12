@@ -352,6 +352,46 @@ inline Maillage equerre() {
     return forme_posee(d, {-24, -16, 0}, {22, 16, 48}, 0.6);
 }
 
+// Arbre à deux niveaux : une grosse branche de côté, qui porte elle-même une
+// branche repartant dans une autre direction.
+inline Maillage arbre_double() {
+    const Vec3 depart{0, 0, 26};
+    const Vec3 coude = depart + vers(65, 0) * 30.0;
+    const Distance d = [=](const Vec3& p) {
+        double f = boudin_conique(p, {0, 0, -2}, {0, 0, 62}, 7.0, 5.0);
+        f = fondre(f, boudin_conique(p, depart, coude, 4.5, 3.6), 3.0);
+        f = fondre(f, boudin_conique(p, coude, coude + vers(15, 200) * 24.0, 3.4, 2.6), 2.0);
+        f = fondre(f, boudin_conique(p, coude, coude + vers(80, 60) * 20.0, 3.0, 2.4), 2.0);
+        return f;
+    };
+    return forme_posee(d, {-14, -12, 0}, {44, 28, 68});
+}
+
+// Buisson : six branches autour du tronc, à deux hauteurs, dans toutes les directions.
+inline Maillage buisson() {
+    const Distance d = [](const Vec3& p) {
+        double f = boudin_conique(p, {0, 0, -2}, {0, 0, 58}, 7.5, 5.5);
+        for (int branche = 0; branche < 6; ++branche) {
+            const double azimut = 60.0 * branche + (branche % 2 ? 15.0 : 0.0);
+            const Vec3 depart{0, 0, branche % 2 ? 40.0 : 24.0};
+            f = fondre(f, boudin_conique(p, depart, depart + vers(branche % 2 ? 58.0 : 68.0, azimut) * 26.0, 3.4, 2.6), 2.5);
+        }
+        return f;
+    };
+    return forme_posee(d, {-34, -34, 0}, {34, 34, 64});
+}
+
+// Potence : un mât et un bras tout à fait horizontal.
+inline Maillage potence() {
+    const Distance d = [](const Vec3& p) {
+        double f = palet(p, {0, 0, 2.0}, 13.0, 1.2) - 0.8;
+        f = fondre(f, boudin(p, {0, 0, 1}, {0, 0, 52}, 5.0), 2.5);
+        f = fondre(f, boudin(p, {0, 0, 44}, {34, 0, 44}, 3.6), 2.0);
+        return f;
+    };
+    return forme_posee(d, {-16, -16, 0}, {40, 16, 60});
+}
+
 // Tube courbe : il part du plateau à la verticale, puis se couche peu à peu
 // jusqu'à l'inclinaison donnée, en suivant un arc de cercle.
 struct TubeCourbe {

@@ -96,6 +96,6 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Changement d'orientation sûr (reculer, monter, tourner, approcher) | 🟡 | passe toujours par le haut |
 | Mesure des parois imprimées dans le vide | ✅ | une mesure, pas encore un refus |
 | Couches qui pivotent le long d'une branche courbe | ✅ | B et C changent à chaque couche |
-| Banc d'essai sur onze objets (dont châssis de drone organique) | ✅ | `tests/banc_strategies.cpp` |
+| Banc d'essai sur quatorze objets (dont châssis de drone organique) | ✅ | `tests/banc_strategies.cpp` |
 | B et C qui tournent pendant l'extrusion | ⬜ | prochaine étape vers le continu |
 | Tranchage 5 axes continu (couches courbes) | ⬜ | recherche |

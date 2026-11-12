@@ -302,7 +302,8 @@ void test_couches_pivotantes() {
 // proposée, son G-code est accepté, et il laisse moins de parois dans le vide.
 void test_objets_organiques() {
     const Reglages r = reglages_essai();
-    for (const auto& fabriquer : {essai::arbre_organique, essai::chassis_drone, essai::tuyau_en_y}) {
+    for (const auto& fabriquer : {essai::arbre_organique, essai::chassis_drone, essai::tuyau_en_y,
+                                  essai::arbre_double, essai::buisson}) {
         const Maillage pose = poser_au_centre(fabriquer());
         VERIFIER(ferme(pose));
         const std::vector<Strategie> strategies = proposer_strategies(pose, r);
@@ -319,6 +320,23 @@ void test_objets_organiques() {
         VERIFIER_ACCEPTE(classique.verification);
         VERIFIER(par_branches.verification.longueur_dans_le_vide <=
                  classique.verification.longueur_dans_le_vide + 1.0);
+    }
+    // Une branche qui porte elle-même une branche : la petite est rattachée à la
+    // grosse (pas au tronc) et elle est imprimée après elle.
+    const std::vector<Strategie> double_niveau = proposer_strategies(poser_au_centre(essai::arbre_double()), r);
+    if (const Strategie* branches = trouver(double_niveau, TypeStrategie::par_branches)) {
+        bool portee_par_une_branche = false;
+        for (std::size_t i = 0; i < branches->parties.size(); ++i) {
+            const int parent = branches->parties[i].parent;
+            VERIFIER(parent < static_cast<int>(i));
+            portee_par_une_branche = portee_par_une_branche || parent > 0;
+        }
+        VERIFIER(portee_par_une_branche);
+    }
+    // Un buisson : six branches autour du tronc, chacune a sa propre partie.
+    const std::vector<Strategie> buisson = proposer_strategies(poser_au_centre(essai::buisson()), r);
+    if (const Strategie* branches = trouver(buisson, TypeStrategie::par_branches)) {
+        VERIFIER(branches->parties.size() == 7);
     }
     // Un champignon n'a pas de branche : pas de stratégie par branches, mais
     // une autre pose (retourné) qui demande moins de supports.

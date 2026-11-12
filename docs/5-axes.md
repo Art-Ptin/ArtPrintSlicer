@@ -126,10 +126,10 @@ Deux mesures permettent de comparer les stratégies :
 - les **parois imprimées dans le vide** (mm), mesurées par le vérificateur
   sur le G-code lui-même : la longueur de paroi déposée sans rien dessous.
 
-Le banc d'essai (`tests/banc_strategies.cpp`) fabrique onze objets (arbres,
-châssis de drone, chandelier, crochet, tuyau en Y creux, champignon, tasse,
-main, équerre), propose et tranche toutes leurs stratégies, et donne ces
-mesures. Avec un fichier de réglages, il utilise la forme réelle de la
+Le banc d'essai (`tests/banc_strategies.cpp`) fabrique quatorze objets
+(arbres, châssis de drone, chandelier, crochet, tuyau en Y creux, champignon,
+tasse, main, équerre, arbre à deux niveaux, buisson à six branches, potence),
+propose et tranche toutes leurs stratégies, et donne ces mesures. Avec un fichier de réglages, il utilise la forme réelle de la
 machine :
 
 ```
