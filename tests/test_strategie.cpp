@@ -515,9 +515,21 @@ void test_couches_courbes() {
         VERIFIER(proposees.front().type == TypeStrategie::classique);
         VERIFIER(proposees.back().type == TypeStrategie::couches_courbes);
     }
-    // Un champignon (un chapeau tout autour d'un pied) n'a que la stratégie
-    // classique : le slicer ne sait pas encore découper son chapeau.
-    VERIFIER(proposer_strategies(poser_au_centre(essai::champignon()), r).size() == 1);
+    // L'ondulation est proposée pour tout modèle. Pour un champignon (un
+    // chapeau tout autour d'un pied), le slicer ne sait pas encore découper
+    // le chapeau : l'ondulation n'a alors que le corps de la pièce, une
+    // remarque le dit, et son tranchage est celui du classique.
+    {
+        const std::vector<Strategie> pour_champignon = proposer_strategies(poser_au_centre(essai::champignon()), r);
+        VERIFIER(pour_champignon.size() == 2);
+        const Strategie* ondulation = trouver(pour_champignon, TypeStrategie::couches_courbes);
+        VERIFIER(ondulation != nullptr && ondulation->parties.size() == 1 && !ondulation->remarques.empty());
+        if (ondulation) {
+            const ResultatTranchage a_plat = trancher_strategie(*ondulation, r);
+            VERIFIER_ACCEPTE(a_plat.verification);
+            VERIFIER(a_plat.verification.extrusions_en_rotation == 0);
+        }
+    }
 
     const ResultatTranchage resultat = trancher_strategie(*courbes, r);
     VERIFIER_ACCEPTE(resultat.verification);
@@ -629,8 +641,10 @@ void test_couches_courbes() {
             VERIFIER(tranche.verification.longueur_dans_le_vide < 45.0);
         }
     }
-    VERIFIER(trouver(toutes_les_strategies(poser_au_centre(essai::champignon()), r), TypeStrategie::couches_courbes) ==
-             nullptr);
+    if (const Strategie* ondulation =
+            trouver(toutes_les_strategies(poser_au_centre(essai::champignon()), r), TypeStrategie::couches_courbes)) {
+        VERIFIER(ondulation->parties.size() == 1);  // le chapeau n'est pas une branche en ondulation
+    }
 }
 
 // Peau courbe : une dernière passe suit la forme du dessus de la pièce.

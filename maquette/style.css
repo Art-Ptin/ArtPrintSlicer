@@ -570,3 +570,39 @@ input.interrupteur {
   .feuille .colonne { overflow: visible; }
   .feuille .colonne + .colonne { border-left: 0; border-top: var(--bord); }
 }
+
+/* --- Caractéristiques de l'impression (en haut de la vue, après le tranchage) --- */
+.caracteristiques { display: grid; grid-template-columns: repeat(5, auto); gap: var(--e-1) var(--e-4); margin: 0; padding: var(--e-2) var(--e-3); border-top: var(--bord); font-size: var(--t-12); }
+.caracteristiques[hidden] { display: none; }
+.caracteristiques div { min-width: 0; }
+.caracteristiques dt { color: var(--c-texte-2); font-size: var(--t-11); }
+.caracteristiques dd { margin: 0; white-space: nowrap; }
+.caracteristiques dd b { font-weight: var(--g-fort); color: var(--c-texte); font-size: var(--t-13); }
+.caracteristiques dd span { color: var(--c-texte-3); font-size: var(--t-11); }
+.caracteristiques .total dd b { color: var(--c-accent-texte); }
+.caracteristiques .comparaison { grid-column: 1 / -1; color: var(--c-texte-2); font-size: var(--t-11); white-space: normal; }
+.caracteristiques .comparaison[hidden] { display: none; }
+.trajectoires.replie { width: auto; }
+@media (max-width: 900px) { .caracteristiques { grid-template-columns: repeat(2, auto); } }
+
+/* --- Ligne d'état : avancement du tranchage, puis messages tout à droite --- */
+.etat progress { width: 96px; height: var(--h-jauge); appearance: none; border: 0; border-radius: var(--r-1); background: var(--c-bord); overflow: hidden; }
+.etat progress::-webkit-progress-bar { background: var(--c-bord); }
+.etat progress::-webkit-progress-value { background: var(--c-accent); }
+.etat progress::-moz-progress-bar { background: var(--c-accent); }
+.etat-verification.bon progress::-webkit-progress-value { background: var(--c-ok); }
+.etat-verification.bon progress::-moz-progress-bar { background: var(--c-ok); }
+.etat-messages { display: inline-flex; align-items: center; gap: var(--e-1); height: var(--h-etat); border: 0; background: none; color: var(--c-attention); cursor: pointer; font: inherit; padding: 0 var(--e-2); border-left: var(--bord); }
+.etat-messages[hidden] { display: none; }
+.etat-messages:hover { background: var(--c-survol); }
+
+/* --- Fenêtre des options (ondulation, mise à l'échelle) --- */
+.options-liste { display: grid; gap: var(--e-3); }
+.options-liste label { display: grid; gap: var(--e-1); font-size: var(--t-12); }
+.options-liste select, .options-liste input[type="text"] { height: var(--h-champ); border: var(--bord); border-radius: var(--r-1); background: var(--c-champ); color: var(--c-texte); font: inherit; padding: 0 var(--e-2); }
+.options-liste .aide { color: var(--c-texte-2); font-size: var(--t-12); margin: 0; }
+.options-actions { display: flex; gap: var(--e-2); justify-content: flex-end; margin-top: var(--e-4); }
+.plateaux { position: absolute; left: var(--e-3); bottom: calc(var(--e-8) + var(--e-6)); display: flex; gap: var(--e-1); }
+.plateaux[hidden] { display: none; }
+.plateaux button { min-width: var(--l-outil); height: var(--h-champ); border: var(--bord); border-radius: var(--r-1); background: var(--c-panneau); color: var(--c-texte); font: inherit; cursor: pointer; padding: 0 var(--e-2); }
+.plateaux button[aria-pressed="true"] { background: var(--c-accent); color: var(--c-sur-accent); border-color: var(--c-accent); }

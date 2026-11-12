@@ -199,6 +199,10 @@ std::vector<DescriptionReglage> construire() {
         "Température du plateau", "°C", "0 : pas de plateau chauffant."}, 0.0, 200.0));
     d.push_back(booleen(I, &RI::ventilation, {"ventilation", matiere, "Ventilateur de pièce", "",
         "Allume le ventilateur à partir de la deuxième couche."}));
+    d.push_back(nombre(I, &RI::duree_preparation, {"duree_preparation", matiere,
+        "Préparation avant l'impression", "min",
+        "Chauffe et palpage du plateau : ce temps est ajouté au temps d'impression dans les estimations."},
+        0.0, 120.0));
     d.push_back(nombre(I, &RI::retraction_longueur, {"retraction_longueur", matiere,
         "Longueur de rétraction", "mm",
         "Filament retiré avant chaque déplacement à vide."}, 0.05, 30.0));

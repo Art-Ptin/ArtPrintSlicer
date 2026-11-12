@@ -26,6 +26,9 @@ using Json = nlohmann::json;
 struct Session::Etat {
     Reglages reglages;
     std::optional<Maillage> modele;  // posé au centre du plateau
+    std::optional<Maillage> origine; // tel qu'il a été lu, avant mise à l'échelle et orientation
+    double echelle = 1.0;            // facteur d'échelle demandé (1 : taille d'origine)
+    bool oriente = false;            // vrai : la pose a été choisie par le slicer
     std::optional<ResultatTranchage> resultat;
 };
 
@@ -238,9 +241,63 @@ std::string Session::executer(std::string_view demande_json) {
         } else if (commande == "charger_modele") {
             const ModeleStl modele = lire_stl(chemin_depuis_json(demande));
             etat.modele = poser_au_centre(modele.maillage);
+            etat.origine = etat.modele;
+            etat.echelle = 1.0;
+            etat.oriente = false;
             etat.resultat.reset();
             reponse["modele"] = decrire_modele(*etat.modele);
             reponse["modele"]["format"] = nom_format(modele.format);
+        } else if (commande == "transformer_modele") {
+            // Met le modèle à l'échelle et choisit sa pose. On repart toujours
+            // du modèle tel qu'il a été lu : les demandes ne se cumulent pas.
+            //   "echelle" : facteur (1 = taille d'origine) ; absent : inchangé ;
+            //   "orientation" : "auto" (la pose qui demande le moins de
+            //                   supports) ou "origine" ; absent : inchangée.
+            if (!etat.origine) {
+                throw std::runtime_error("Aucun modèle n'est ouvert.");
+            }
+            if (demande.contains("echelle")) {
+                const double echelle = demande["echelle"].get<double>();
+                if (!(echelle >= 0.01 && echelle <= 100.0)) {
+                    throw std::runtime_error("L'échelle doit être comprise entre 1 % et 10 000 %.");
+                }
+                etat.echelle = echelle;
+            }
+            if (demande.contains("orientation")) {
+                const std::string orientation = demande["orientation"].get<std::string>();
+                if (orientation != "auto" && orientation != "origine") {
+                    throw std::runtime_error("Orientation inconnue (attendu : auto ou origine).");
+                }
+                etat.oriente = orientation == "auto";
+            }
+            Maillage modele = *etat.origine;
+            std::string note;
+            if (etat.oriente) {
+                OptionsStrategie options;
+                options.couches_orientees = true;
+                bool trouvee = false;
+                for (const Strategie& strategie : proposer_strategies(modele, etat.reglages, options)) {
+                    if (strategie.type == TypeStrategie::autre_pose && !strategie.parties.empty()) {
+                        modele = strategie.parties.front().maillage;
+                        trouvee = true;
+                    }
+                }
+                note = trouvee ? "Le modèle a été retourné dans la pose qui demande le moins de supports."
+                               : "Le modèle est déjà dans sa meilleure pose : rien n'a été tourné.";
+            }
+            if (std::abs(etat.echelle - 1.0) > 1e-9) {
+                for (Point3& sommet : modele.sommets) {
+                    sommet.x = static_cast<decltype(sommet.x)>(sommet.x * etat.echelle);
+                    sommet.y = static_cast<decltype(sommet.y)>(sommet.y * etat.echelle);
+                    sommet.z = static_cast<decltype(sommet.z)>(sommet.z * etat.echelle);
+                }
+            }
+            etat.modele = poser_au_centre(modele);
+            etat.resultat.reset();
+            reponse["modele"] = decrire_modele(*etat.modele);
+            reponse["echelle"] = etat.echelle;
+            reponse["orientation"] = etat.oriente ? "auto" : "origine";
+            reponse["note"] = note;
         } else if (commande == "trancher") {
             if (!etat.modele) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");
@@ -331,6 +388,8 @@ std::string Session::executer(std::string_view demande_json) {
                         etat.resultat->remarques.push_back(
                             "Toutes les branches sont imprimées à plat : c'est une impression classique.");
                         reponse["resultat"] = decrire_resultat(*etat.resultat);
+                        reponse["resultat"]["preparation_s"] = std::round(etat.reglages.impression.duree_preparation * 60.0);
+                        reponse["resultat"]["duree_classique_s"] = std::round(etat.resultat->duree_estimee);
                         reponse["strategie"] = voulue;
                         reponse["ok"] = true;
                         return reponse.dump(-1, ' ', false, Json::error_handler_t::replace);
@@ -348,7 +407,14 @@ std::string Session::executer(std::string_view demande_json) {
                 etat.resultat = trancher_strategie(*choisie, etat.reglages);
             }
             reponse["resultat"] = decrire_resultat(*etat.resultat);
+            reponse["resultat"]["preparation_s"] = std::round(etat.reglages.impression.duree_preparation * 60.0);
             reponse["strategie"] = voulue;
+            // Pour l'ondulation : la durée du même modèle en classique, pour
+            // dire ce que l'ondulation ajoute ou enlève.
+            if (voulue != "classique") {
+                reponse["resultat"]["duree_classique_s"] =
+                    std::round(trancher_classique(*etat.modele, etat.reglages).duree_estimee);
+            }
         } else if (commande == "strategies") {
             if (!etat.modele) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");

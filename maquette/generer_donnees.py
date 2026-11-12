@@ -20,6 +20,15 @@ import subprocess
 import sys
 
 
+def alleger(objet):
+    """Arrondit les coordonnées au centième de millimètre : les fichiers restent sous 16 Mo."""
+    if "positions" in objet:
+        objet["positions"] = [round(v, 2) for v in objet["positions"]]
+    for couche in objet.get("apercu", []):
+        couche["m"] = [round(v, 2) if i % 7 != 6 else int(v) for i, v in enumerate(couche["m"])]
+    return objet
+
+
 def appeler(programme, demandes):
     entree = "\n".join(json.dumps(d) for d in demandes) + "\n"
     sortie = subprocess.run([programme, "api"], input=entree, capture_output=True, text=True, check=True)
@@ -57,12 +66,12 @@ def main():
             elif reponse["ok"]:
                 tranchees.append(strategie)
                 (dossier / f"{nom}-{strategie['type']}.json").write_text(
-                    json.dumps(reponse["resultat"], ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                    json.dumps(alleger(reponse["resultat"]), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             else:
                 print(f"  {strategie['nom']} : {reponse['erreur']}")
         strategies = tranchees
         (dossier / f"{nom}.json").write_text(
-            json.dumps({"modele": modele["modele"], "resultat": tranche["resultat"], "strategies": strategies},
+            json.dumps({"modele": alleger(modele["modele"]), "resultat": alleger(tranche["resultat"]), "strategies": strategies},
                        ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8")
         print(f"{nom} : {tranche['resultat']['couches']} couches, {len(strategies)} stratégie(s)")

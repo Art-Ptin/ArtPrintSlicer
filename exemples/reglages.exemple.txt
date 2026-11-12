@@ -105,3 +105,7 @@ temperature_buse = 210
 temperature_plateau = 0
 # Ventilateur de pièce à partir de la 2e couche : 1 = oui, 0 = non.
 ventilation = 1
+
+# Préparation avant l'impression (chauffe, palpage du plateau), en minutes.
+# Ajoutée au temps d'impression dans les estimations.
+duree_preparation = 5

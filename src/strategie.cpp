@@ -1131,22 +1131,39 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
 
         // --- 4. Couches courbes : le tronc d'abord, lisse ; puis chaque
         // branche, imprimée contre lui en couches qui épousent sa surface.
-        // (Si l'impression classique ne laisse rien dans le vide, les couches
-        // courbes ne serviraient à rien : inutile de les calculer.)
-        if (surplomb_classique > 1.0) {
-            const PlanBranches plan = preparer_branches(pose, reglages.impression.hauteur_couche,
-                                                        0.45 * reglages.impression.largeur_extrusion, options.a_plat);
-            if (!plan.vide()) {
-                Strategie courbes;
-                courbes.type = TypeStrategie::couches_courbes;
-                courbes.nom = "Couches courbes (5 axes continu)";
-                courbes.modele = pose;
-                courbes.a_plat = options.a_plat;
+        // Cette stratégie s'appelle « Ondulation » dans le logiciel. Elle est
+        // proposée pour TOUT modèle, même quand elle n'apporte rien : c'est à
+        // l'utilisateur de choisir, et une remarque le prévient.
+        // (Si l'impression classique ne laisse rien dans le vide, il n'y a
+        // aucune branche à chercher : inutile de faire ce calcul, qui est long.)
+        {
+            PlanBranches plan;
+            if (surplomb_classique > 1.0) {
+                plan = preparer_branches(pose, reglages.impression.hauteur_couche,
+                                         0.45 * reglages.impression.largeur_extrusion, options.a_plat);
+            }
+            Strategie courbes;
+            courbes.type = TypeStrategie::couches_courbes;
+            courbes.nom = "Ondulation (5 axes continu)";
+            courbes.modele = pose;
+            courbes.a_plat = options.a_plat;
+            {
                 PartieImpression tronc;
                 tronc.maillage = pose;
                 tronc.tronc_lisse = true;
                 tronc.volume = volume_maillage(pose);
                 courbes.parties.push_back(std::move(tronc));
+            }
+            if (plan.vide()) {
+                courbes.surplomb = surplomb_classique;
+                courbes.description =
+                    "Ce modèle n'a aucune partie que le slicer sache imprimer la tête inclinée : en "
+                    "ondulation, il est imprimé comme en classique, en couches horizontales.";
+                for (const std::string& ligne : plan.journal) {
+                    courbes.remarques.push_back(ligne);
+                }
+                courbes.remarques.push_back("L'ondulation ne change rien pour ce modèle : même résultat et même durée qu'en classique.");
+            } else {
                 std::vector<int> partie_de(plan.tiges.size(), -1);
                 for (std::size_t n = 0; n < plan.tiges.size(); ++n) {
                     if (plan.tiges[n].empty()) {
@@ -1240,14 +1257,13 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                         "Le réglage « hauteur_bascule_b » n'est pas renseigné : l'inclinaison de la tête est limitée à {:.0f}° partout.",
                         reglages.machine.b_limite_pres_plateau));
                 }
-                // Les couches courbes ne sont proposées que si elles servent :
-                // il faut qu'elles laissent nettement moins de surface dans
-                // le vide que l'impression classique. (Les bosses d'un vase,
-                // par exemple, s'impriment très bien à plat.)
-                if (surplomb_classique > 1.0 && (courbes.surplomb < 0.8 * surplomb_classique || !options.a_plat.empty())) {
-                    strategies.push_back(std::move(courbes));
+                if (courbes.surplomb >= 0.8 * surplomb_classique) {
+                    courbes.remarques.push_back(
+                        "L'ondulation ne réduit presque pas la surface à soutenir sur ce modèle ; elle reste "
+                        "possible, mais elle peut allonger l'impression.");
                 }
             }
+            strategies.push_back(std::move(courbes));
         }
     }
     if (!options.couches_orientees) {

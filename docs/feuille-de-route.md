@@ -112,6 +112,10 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Repli automatique : une branche fautive est imprimée à plat avec le tronc | ✅ | plus aucun refus sur les soixante modèles d'essai |
 | Choix de l'orientation de chaque branche (courbes, tête moins inclinée, à plat) | ✅ | application, ligne de commande et interface de commandes |
 | Soixante modèles d'essai et un banc d'essai d'imprimante | ✅ | 52 en couches courbes, 8 en 3 axes |
+| Une seule interface : celle de la maquette, branchée sur le vrai slicer | ✅ | voir `docs/application.md` |
+| « Ondulation » proposée pour tout modèle, avec sa fenêtre d'options | ✅ | au pire, même tranchage que le classique |
+| Caractéristiques après tranchage : grammes, supports, préparation, durée totale | ✅ | supports : toujours 0 g pour l'instant |
+| Outils branchés : échelle, orientation automatique, agencer, plateaux | 🟡 | un seul objet par plateau |
 | Arche, pont, anse, chapeau, table en couches courbes | ⬜ | voir `docs/essais-vingt-modeles.md` |
 | Peau courbe : une dernière passe suit la forme du dessus (option) | 🟡 | tête d'aplomb sur la surface ; abandonnée si elle provoquerait un contact |
 | Vérificateur : croisement de cordons sur une couche inclinée | ✅ | toléré sur une courte longueur, comme à plat |

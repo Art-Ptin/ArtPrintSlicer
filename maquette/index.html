@@ -162,13 +162,22 @@
 
     <div class="palette trajectoires replie" id="trajectoires" hidden>
       <button class="trajectoires-tete" id="btn-trajectoires" aria-expanded="false" aria-controls="trajectoires-corps">
-        <span class="etiquette">Trajectoires</span><span class="note-colonnes" id="trajectoires-resume"></span><span class="chevron" data-icone="chevron-bas"></span>
+        <span class="etiquette">Impression</span><span class="note-colonnes" id="trajectoires-resume"></span><span class="chevron" data-icone="chevron-bas"></span>
       </button>
+      <dl class="caracteristiques" id="etat-resultat" hidden>
+        <div><dt>Filament</dt><dd><b id="r-poids"></b> <span id="r-filament"></span></dd></div>
+        <div><dt>Supports</dt><dd><b id="r-supports">0 g</b> <span>aucun</span></dd></div>
+        <div><dt>Préparation</dt><dd><b id="r-preparation"></b> <span>chauffe, palpage</span></dd></div>
+        <div><dt>Impression</dt><dd><b id="r-duree"></b> <span id="r-couches-texte"><span id="r-couches"></span> couches</span></dd></div>
+        <div class="total"><dt>Durée totale</dt><dd><b id="r-total"></b> <span id="r-cout"></span></dd></div>
+        <div class="comparaison" id="r-comparaison" hidden></div>
+      </dl>
       <div id="trajectoires-corps" hidden>
         <table><colgroup><col class="c1"><col><col class="c3"><col class="c4"></colgroup><tbody id="tableau-types"></tbody><tfoot id="total-types"></tfoot></table>
         <div class="trajectoires-note note-colonnes" id="trajectoires-note"></div>
       </div>
     </div>
+    <div class="plateaux" id="plateaux" hidden aria-label="Plateaux"></div>
     <div class="palette curseur-couches" id="curseur-couches" hidden>
       <output id="couche-texte" for="curseur-couche"></output>
       <input type="range" id="curseur-couche" min="1" max="1" value="1" aria-label="Couche affichée">
@@ -338,10 +347,8 @@
 
 <footer class="etat" aria-label="État">
   <span class="etat-modele"><b id="r-modele">Aucun modèle</b><span id="r-dimensions"></span></span>
-  <span class="etat-resultat" id="etat-resultat" hidden>
-    <span><b id="r-couches"></b> couches</span><span><b id="r-filament"></b></span><span><b id="r-poids"></b></span><span><b id="r-cout"></b></span><span><b id="r-duree"></b></span>
-  </span>
-  <span class="etat-verification" id="releve-etat"><span class="etat-icone" id="etat-icone"></span><b id="r-etat">En attente</b><span id="r-etat-detail">Ouvre un modèle pour commencer.</span></span>
+  <span class="etat-verification" id="releve-etat"><span class="etat-icone" id="etat-icone"></span><b id="r-etat">En attente</b><progress id="barre-progression" max="100" value="0" aria-label="Avancement du tranchage"></progress><span id="r-etat-detail">Ouvre un modèle pour commencer.</span></span>
+  <button class="etat-messages" id="btn-messages" hidden><span class="etat-icone" data-icone="info"></span><span id="messages-compte"></span></button>
 </footer>
 
 <div class="message" id="message" role="status" hidden><span id="message-texte"></span><span id="message-actions"></span></div>

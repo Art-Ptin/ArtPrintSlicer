@@ -119,6 +119,9 @@ struct ReglagesImpression {
     double temperature_buse = 210.0;
     double temperature_plateau = 0.0;
     bool ventilation = true;  // ventilateur de pièce à partir de la 2e couche
+    // Préparation avant l'impression (chauffe, palpage du plateau), en
+    // minutes : ajoutée au temps d'impression dans les estimations.
+    double duree_preparation = 5.0;
 };
 
 struct ReglagesVerification {

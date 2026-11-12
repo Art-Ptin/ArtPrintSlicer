@@ -134,13 +134,32 @@ void test_parcours_complet() {
     // Stratégies : pour un simple cube, seule la stratégie classique est proposée.
     const Json strategies = appeler(session, {{"commande", "strategies"}});
     VERIFIER(strategies["ok"] == true);
-    VERIFIER(strategies["strategies"].size() == 1);
+    // Deux stratégies pour tout modèle : le classique, et l'ondulation (qui,
+    // pour un simple cube, n'a que le corps de la pièce).
+    VERIFIER(strategies["strategies"].size() == 2);
+    VERIFIER(strategies["strategies"][1]["type"] == "couches_courbes");
+    VERIFIER(strategies["strategies"][1]["parties"].size() == 1);
     VERIFIER(strategies["strategies"][0]["type"] == "classique");
     VERIFIER(strategies["strategies"][0]["surplomb_mm2"] == 0.0);
     VERIFIER(strategies["strategies"][0]["parties"].size() == 1);
     // Demander une stratégie qui n'est pas proposée est refusé proprement.
     const Json refus = appeler(session, {{"commande", "trancher"}, {"strategie", "par_branches"}});
     VERIFIER(refus["ok"] == false && refus["erreur"].get<std::string>().find("par_branches") != std::string::npos);
+
+    // L'ondulation d'un cube : même tranchage que le classique, avec la
+    // durée du classique pour comparer et le temps de préparation.
+    const Json ondule = appeler(session, {{"commande", "trancher"}, {"strategie", "couches_courbes"}});
+    VERIFIER(ondule["ok"] == true && ondule["resultat"]["verification"]["valide"] == true);
+    VERIFIER(ondule["resultat"]["duree_classique_s"] == ondule["resultat"]["duree_s"]);
+    VERIFIER(ondule["resultat"]["preparation_s"] == 300.0);
+
+    // Mise à l'échelle : le cube de 10 mm devient un cube de 20 mm, puis revient.
+    const Json grand = appeler(session, {{"commande", "transformer_modele"}, {"echelle", 2.0}});
+    VERIFIER(grand["ok"] == true && grand["modele"]["dimensions"] == Json::array({20.0, 20.0, 20.0}));
+    VERIFIER(appeler(session, {{"commande", "transformer_modele"}, {"echelle", 0.0}})["ok"] == false);
+    const Json normal = appeler(session, {{"commande", "transformer_modele"}, {"echelle", 1.0}, {"orientation", "auto"}});
+    VERIFIER(normal["ok"] == true && normal["modele"]["dimensions"] == Json::array({10.0, 10.0, 10.0}));
+    VERIFIER(appeler(session, {{"commande", "transformer_modele"}, {"orientation", "origine"}})["ok"] == true);
 
     const Json tranche = appeler(session, {{"commande", "trancher"}});
     VERIFIER(tranche["ok"] == true);

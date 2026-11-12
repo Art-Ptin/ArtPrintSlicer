@@ -2031,9 +2031,63 @@ ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reg
 
 ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
                                      const OptionsMultiaxe& options) {
+    // Ondulation sans aucune branche : c'est une impression classique.
+    if (strategie.type == TypeStrategie::couches_courbes && strategie.parties.size() == 1) {
+        ResultatTranchage simple = trancher_classique(strategie.modele, reglages);
+        simple.remarques.push_back(
+            "Ondulation : aucune partie n'est imprimée la tête inclinée sur ce modèle ; c'est le même "
+            "tranchage qu'en classique.");
+        return simple;
+    }
     std::vector<double> reductions(strategie.parties.size(), 0.0);
     std::vector<int> cotes(strategie.parties.size(), 0), etapes(strategie.parties.size(), 0);
-    ResultatTranchage resultat = trancher_avec(strategie, reglages, options, reductions, cotes, true, true);
+    ResultatTranchage resultat;
+    try {
+        resultat = trancher_avec(strategie, reglages, options, reductions, cotes, true, true);
+    } catch (const ErreurTranchage& erreur) {
+        // Une branche ne peut pas être écrite du tout en ondulation. Même
+        // dernier recours que plus bas : elle est imprimée à plat avec le
+        // corps de la pièce (celle que le message désigne, sinon toutes), et
+        // le tranchage est refait.
+        const bool ondulation = std::any_of(strategie.parties.begin(), strategie.parties.end(),
+                                            [](const PartieImpression& p) { return p.couches_courbes; });
+        if (!ondulation || options.replis <= 0) {
+            throw;
+        }
+        const std::string message = erreur.what();
+        std::size_t fautive = 0;  // 0 : inconnue
+        const std::size_t ou = message.find("partie ");
+        if (ou != std::string::npos) {
+            fautive = static_cast<std::size_t>(std::atoi(message.c_str() + ou + 7));
+        }
+        OptionsStrategie choix;
+        choix.a_plat = strategie.a_plat;
+        std::size_t nombre = 0;
+        for (std::size_t p = 0; p < strategie.parties.size(); ++p) {
+            const bool designee = fautive >= 1 && fautive <= strategie.parties.size() &&
+                                  strategie.parties[fautive - 1].couches_courbes;
+            if (strategie.parties[p].couches_courbes && (!designee || p + 1 == fautive)) {
+                choix.a_plat.push_back(strategie.parties[p].repere);
+                ++nombre;
+            }
+        }
+        const std::vector<Strategie> suites = proposer_strategies(strategie.modele, reglages, choix);
+        const Strategie* suite = &suites.front();
+        for (const Strategie& s : suites) {
+            if (s.type == TypeStrategie::couches_courbes) {
+                suite = &s;
+            }
+        }
+        OptionsMultiaxe options_suite = options;
+        options_suite.replis = options.replis - 1;
+        options_suite.retraits.clear();
+        ResultatTranchage replie = trancher_strategie(*suite, reglages, options_suite);
+        replie.remarques.insert(replie.remarques.begin(),
+                                std::format("{} partie(s) imprimée(s) à plat, avec le corps de la pièce : le slicer ne "
+                                            "sait pas encore les imprimer en ondulation.",
+                                            nombre));
+        return replie;
+    }
     const auto contact = [](TypeErreur type) {
         return type == TypeErreur::collision_matiere || type == TypeErreur::collision_plateau ||
                type == TypeErreur::collision_machine || type == TypeErreur::limite_b;
@@ -2247,7 +2301,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
             if (replie.verification.nombre_erreurs < resultat.verification.nombre_erreurs) {
                 replie.remarques.insert(
                     replie.remarques.begin(),
-                    std::format("{} branche(s) imprimée(s) à plat, avec le tronc : en couches courbes, {} "
+                    std::format("{} partie(s) imprimée(s) à plat, avec le corps de la pièce : en ondulation, {} "
                                 "provoqué des fautes (cordon dans la matière, contact...).",
                                 fautives.size(), fautives.size() > 1 ? "elles auraient" : "elle aurait"));
                 return replie;

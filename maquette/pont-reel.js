@@ -3,6 +3,9 @@
 // Dans le logiciel installé, les demandes passent par WebView2.
 // Pendant les essais dans un navigateur, elles passent par une adresse /api.
 
+// Faux : les réponses viennent du vrai slicer.
+export const simulation = false;
+
 const natif = Boolean(window.chrome && window.chrome.webview);
 const enAttente = new Map();
 let prochainNumero = 1;

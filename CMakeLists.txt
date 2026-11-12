@@ -52,7 +52,15 @@ add_subdirectory(tests)
 if(WIN32)
     install(TARGETS artprint-slicer ArtPrintSlicer RUNTIME DESTINATION . COMPONENT artprint)
     install(FILES third_party/webview2/x64/WebView2Loader.dll DESTINATION . COMPONENT artprint)
-    install(DIRECTORY ui DESTINATION . COMPONENT artprint)
+    # L'interface du logiciel est celle de la maquette, branchée sur le vrai
+    # slicer : elle est assemblée à chaque construction (voir le script).
+    set(DOSSIER_INTERFACE ${CMAKE_BINARY_DIR}/interface/ui)
+    add_custom_target(interface ALL
+        COMMAND ${CMAKE_COMMAND} -DSOURCE=${PROJECT_SOURCE_DIR} -DDEST=${DOSSIER_INTERFACE}
+            -P ${PROJECT_SOURCE_DIR}/outils/assembler_interface.cmake
+        COMMENT "Assemblage de l'interface"
+        VERBATIM)
+    install(DIRECTORY ${DOSSIER_INTERFACE} DESTINATION . COMPONENT artprint)
     install(FILES exemples/reglages.exemple.txt DESTINATION exemples COMPONENT artprint)
     install(FILES outils/convertir_machine.py DESTINATION outils COMPONENT artprint)
     install(FILES LICENSE LICENCES-TIERCES.txt DESTINATION . COMPONENT artprint)
@@ -78,7 +86,7 @@ if(WIN32)
                 --prefix ${DOSSIER_PAQUET} --config $<CONFIG>
             COMMAND ${MAKENSIS} -V2 -INPUTCHARSET UTF8 -DSOURCE=${DOSSIER_PAQUET} -DVERSION=${PROJECT_VERSION}
                 -DSORTIE=${FICHIER_SETUP} ${PROJECT_SOURCE_DIR}/installateur/artprint.nsi
-            DEPENDS artprint-slicer ArtPrintSlicer
+            DEPENDS artprint-slicer ArtPrintSlicer interface
             COMMENT "Fabrication de l'installateur ${FICHIER_SETUP}"
             VERBATIM)
     endif()

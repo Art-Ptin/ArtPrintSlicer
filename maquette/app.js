@@ -1,7 +1,7 @@
 // ArtPrint Slicer - licence AGPL v3
 // Maquette de l'interface : sections Imprimante, Filament et Procédé, barre
 // d'outils, aperçu avec trajectoires repliables, ligne d'état.
-import { appeler } from './pont.js';
+import { appeler, simulation } from './pont.js';
 import { Vue3D, couleursTrajectoires } from './vue3d.js';
 import { icone } from './icones.js';
 import { ONGLETS, PARAMETRES, PROFILS, MATIERES, BOBINES_EXEMPLE } from './catalogue.js';
@@ -46,6 +46,13 @@ const etat = {
   page: 'preparer',     // page affichée (onglet de la barre du haut)
   strategies: [],       // façons d'imprimer proposées pour le modèle ouvert
   strategie: 'classique',
+  branches: {},         // ondulation : choix de l'utilisateur par branche (numéro de partie -> choix)
+  chemin: null,         // fichier du modèle ouvert
+  echelle: 1,           // facteur d'échelle du modèle (1 : taille d'origine)
+  orientation: 'origine',
+  plateaux: [{}],       // un modèle par plateau : { chemin, echelle, orientation }
+  plateau: 0,
+  remarques: [],        // remarques du dernier tranchage
 };
 
 // --- Nombres -------------------------------------------------------------------
@@ -645,15 +652,11 @@ function afficherStrategies() {
       el('b', '', choisie.parties.map((p) => (p.courbe ? `jusqu'à ${fr(p.inclinaison, 0)}° (courbe)` : `${fr(p.inclinaison, 0)}°`)).join(', ')),
       document.createTextNode('.'));
   }
-  if (choisie.type === 'couches_courbes' && choisie.parties.length > 1) {
-    // Dans l'application, chaque branche a son propre choix d'orientation.
-    // La simulation rejoue des tranchages enregistrés : elle montre le choix d'office.
-    const liste = el('span', 'remarque', '');
-    liste.id = 'branches-note';
-    liste.textContent = `Orientation de chaque branche (${choisie.parties.length - 1}) : dans l'application, tu choisis pour chacune ` +
-      '« couches courbes », « tête moins inclinée » ou « à plat avec le tronc » ; la jonction se refait toute seule. ' +
-      'La simulation montre ici le choix d\'office : couches courbes partout.';
-    detail.append(liste);
+  if (choisie.type === 'couches_courbes') {
+    const note = el('span', 'remarque', 'Au moment de trancher, une fenêtre te demande comment imprimer chaque partie ' +
+      '(ondulation, tête moins inclinée, ou à plat).');
+    note.id = 'branches-note';
+    detail.append(note);
   }
   for (const remarque of choisie.remarques) detail.append(el('span', 'remarque', remarque));
 }
@@ -667,11 +670,15 @@ function definirEtat(classe, titre, detail) {
   $('r-etat').textContent = titre;
   $('r-etat-detail').textContent = detail;
   $('r-etat-detail').title = detail;
+  // La petite barre : pleine quand le tranchage est fait, vide sinon.
+  $('barre-progression').value = classe === 'bon' || classe === 'mauvais' ? 100 : 0;
 }
 
 function viderReleves() {
   $('etat-resultat').hidden = true;
   $('console').hidden = true;
+  $('btn-messages').hidden = true;
+  etat.remarques = [];
 }
 
 function perimer() {
@@ -692,28 +699,205 @@ async function ouvrirModele() {
   const choix = await demander('dialogue_ouvrir', { titre: 'Ouvrir un modèle',
     filtres: [['Modèles STL', '*.stl'], ['Tous les fichiers', '*.*']] });
   if (!choix || !choix.chemin) return;
+  await chargerModele(choix.chemin);
+}
+
+// Charge un fichier dans le plateau courant.
+async function chargerModele(chemin) {
   occuper('Lecture du modèle…');
-  const reponse = await demander('charger_modele', { chemin: choix.chemin });
+  const reponse = await demander('charger_modele', { chemin });
   liberer();
-  if (!reponse) return;
-  etat.modele = reponse.modele;
+  if (!reponse) return false;
+  etat.chemin = chemin;
+  etat.echelle = 1;
+  etat.orientation = 'origine';
+  etat.plateaux[etat.plateau] = { chemin, echelle: 1, orientation: 'origine' };
+  await poserModele(reponse.modele);
+  return true;
+}
+
+// Met en place le modèle rendu par le slicer (après ouverture, mise à l'échelle ou orientation).
+async function poserModele(modele) {
+  etat.modele = modele;
   etat.resultat = null;
-  etat.modele.nom = choix.chemin.split(/[\\/]/).pop();
-  vue3d.afficherModele(reponse.modele.positions);
+  etat.branches = {};
+  etat.modele.nom = etat.chemin.split(/[\\/]/).pop();
+  vue3d.afficherModele(modele.positions);
   vue3d.rafraichirTheme();
   $('accueil').hidden = true;
   const [x, y, z] = etat.modele.dimensions;
   $('r-modele').textContent = etat.modele.nom;
-  $('r-dimensions').textContent = `${fr(x)} × ${fr(y)} × ${fr(z)} mm · ${entier(etat.modele.triangles)} triangles`;
+  $('r-dimensions').textContent = `${fr(x)} × ${fr(y)} × ${fr(z)} mm · ${entier(etat.modele.triangles)} triangles` +
+    (etat.echelle !== 1 ? ` · échelle ${fr(etat.echelle * 100, 0)} %` : '');
   $('titre-document').textContent = etat.modele.nom.replace(/\.[^.]+$/, '');
+  occuper('Recherche des façons d\'imprimer ce modèle…');
   const proposees = await demander('strategies');
+  liberer();
   etat.strategies = proposees?.strategies ?? [];
-  etat.strategie = 'classique';
+  if (!etat.strategies.some((st) => st.type === etat.strategie)) etat.strategie = 'classique';
   afficherStrategies();
   if (!etat.modele.ferme) dire(etat.modele.message_fermeture);
   $('btn-trancher').disabled = false;
   perimer();
+  afficherPlateaux();
   choisirVue('preparer');
+}
+
+// --- Outils : échelle, orientation, agencement, plateaux -----------------------------
+
+// Applique une échelle ou une orientation au modèle ouvert.
+async function transformer(parametres, message) {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  occuper('Mise à jour du modèle…');
+  const reponse = await demander('transformer_modele', parametres);
+  liberer();
+  if (!reponse) return;
+  etat.echelle = reponse.echelle ?? etat.echelle;
+  etat.orientation = reponse.orientation ?? etat.orientation;
+  etat.plateaux[etat.plateau] = { chemin: etat.chemin, echelle: etat.echelle, orientation: etat.orientation };
+  await poserModele(reponse.modele);
+  dire((parametres.orientation && reponse.note) || message, { info: true });
+}
+
+function fenetreOptions(titre, contenu, libelleAction, idAction) {
+  return new Promise((resoudre) => {
+    const corps = el('div', 'options-liste');
+    corps.append(...contenu);
+    const actions = el('div', 'options-actions');
+    const annuler = el('button', 'bouton', 'Annuler');
+    annuler.id = 'options-annuler';
+    const valider = el('button', 'bouton plein', libelleAction);
+    valider.id = idAction;
+    actions.append(annuler, valider);
+    corps.append(actions);
+    let reponse = false;
+    const clore = ouvrirFeuille(titre, corps, { simple: true });
+    const fermer = document.getElementById('feuille-fermer');
+    const finir = (valeur) => { reponse = valeur; clore(); resoudre(valeur); };
+    annuler.addEventListener('click', () => finir(false));
+    valider.addEventListener('click', () => finir(true));
+    fermer.addEventListener('click', () => resoudre(reponse));
+    document.querySelector('#feuilles .voile').addEventListener('click', (e) => { if (e.target.classList.contains('voile')) resoudre(reponse); });
+    valider.focus();
+  });
+}
+
+async function outilEchelle() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  const champ = el('input');
+  champ.type = 'text';
+  champ.id = 'echelle-valeur';
+  champ.inputMode = 'decimal';
+  champ.value = ecrire(etat.echelle * 100);
+  const [x, y, z] = etat.modele.dimensions;
+  const etiquette = el('label', '', 'Échelle, en pour cent de la taille d\'origine');
+  etiquette.append(champ);
+  const aide = el('p', 'aide', `Taille actuelle : ${fr(x)} × ${fr(y)} × ${fr(z)} mm. 100 % redonne la taille d'origine.`);
+  if (!(await fenetreOptions('Mettre à l\'échelle', [etiquette, aide], 'Appliquer', 'echelle-appliquer'))) return;
+  const pourcent = lireNombre(champ.value);
+  if (!(pourcent >= 1 && pourcent <= 10000)) { dire('L\'échelle doit être un nombre entre 1 et 10 000 %.'); return; }
+  await transformer({ echelle: pourcent / 100 }, `Modèle mis à l'échelle : ${fr(pourcent, 0)} %.`);
+}
+
+async function outilOrienter() {
+  await transformer({ orientation: 'auto' }, 'Orientation choisie par le slicer.');
+  if (etat.orientation === 'auto') {
+    dire($('message-texte').textContent, { info: true, tenir: true,
+      actions: [{ libelle: 'Revenir à la pose d\'origine', action: () => transformer({ orientation: 'origine' }, 'Pose d\'origine rétablie.') }] });
+  }
+}
+
+function afficherPlateaux() {
+  const barre = $('plateaux');
+  barre.hidden = etat.plateaux.length < 2;
+  barre.replaceChildren(...etat.plateaux.map((plateau, i) => {
+    const bouton = el('button', '', `Plateau ${i + 1}`);
+    bouton.id = `plateau-${i + 1}`;
+    bouton.title = plateau.chemin ? plateau.chemin.split(/[\\/]/).pop() : 'Plateau vide';
+    bouton.setAttribute('aria-pressed', String(i === etat.plateau));
+    bouton.addEventListener('click', () => choisirPlateau(i));
+    return bouton;
+  }));
+}
+
+async function choisirPlateau(numero) {
+  if (numero === etat.plateau) return;
+  etat.plateau = numero;
+  const plateau = etat.plateaux[numero];
+  if (!plateau.chemin) {
+    // Plateau vide : on attend qu'un modèle y soit ouvert.
+    etat.modele = null;
+    etat.chemin = null;
+    etat.strategies = [];
+    etat.strategie = 'classique';
+    vue3d.afficherModele([]);
+    $('r-modele').textContent = 'Aucun modèle';
+    $('r-dimensions').textContent = `Plateau ${numero + 1} vide`;
+    $('btn-trancher').disabled = true;
+    afficherStrategies();
+    perimer();
+    afficherPlateaux();
+    dire(`Plateau ${numero + 1} : ouvre un modèle pour le remplir.`, { info: true });
+    return;
+  }
+  if (!(await chargerModele(plateau.chemin))) return;
+  if (plateau.echelle !== 1 || plateau.orientation !== 'origine') {
+    await transformer({ echelle: plateau.echelle, orientation: plateau.orientation }, `Plateau ${numero + 1}.`);
+  }
+}
+
+function outilAjouterPlateau() {
+  if (!etat.plateaux[etat.plateaux.length - 1].chemin) { dire('Le dernier plateau est encore vide : ouvre d\'abord un modèle dedans.', { info: true }); return; }
+  etat.plateaux.push({});
+  afficherPlateaux();
+  choisirPlateau(etat.plateaux.length - 1);
+}
+
+// --- Ondulation : les options demandées au moment de trancher -------------------------
+
+const CHOIX_BRANCHE = [
+  ['courbes', 'Ondulation, tête d\'aplomb sur les couches'],
+  ['incline60', 'Ondulation, tête moins inclinée (60° au plus)'],
+  ['incline45', 'Ondulation, tête peu inclinée (45° au plus)'],
+  ['a_plat', 'À plat, avec le corps de la pièce (couches horizontales)'],
+];
+
+// Rend vrai si l'utilisateur lance le tranchage, faux s'il annule.
+async function optionsOndulation() {
+  const strategie = etat.strategies.find((st) => st.type === 'couches_courbes');
+  const contenu = [];
+  if (!strategie || strategie.parties.length < 2) {
+    contenu.push(el('p', 'aide', 'Ce modèle n\'a aucune partie que le slicer sache imprimer la tête inclinée : en ondulation, ' +
+      'il sera imprimé comme en classique. Tu peux quand même lancer le tranchage.'));
+  } else {
+    contenu.push(el('p', 'aide', `Ce modèle a ${strategie.parties.length - 1} partie(s) imprimée(s) dans une autre direction. ` +
+      'Choisis pour chacune la façon de l\'imprimer : la jonction avec le reste de la pièce est refaite toute seule.'));
+    strategie.parties.forEach((partie, i) => {
+      if (i === 0) return;
+      const etiquette = el('label', '', `Partie ${i + 1} · ${fr(partie.volume_cm3, 1)} cm³ · inclinée de ${fr(partie.inclinaison, 0)}°` +
+        (partie.parent > 0 ? ` · portée par la partie ${partie.parent + 1}` : ''));
+      const choix = el('select');
+      choix.id = `branche-${i + 1}`;
+      for (const [valeur, texte] of CHOIX_BRANCHE) {
+        choix.append(new Option(texte, valeur, false, (etat.branches[i + 1] || 'courbes') === valeur));
+      }
+      choix.addEventListener('change', () => {
+        if (choix.value === 'courbes') delete etat.branches[i + 1]; else etat.branches[i + 1] = choix.value;
+      });
+      etiquette.append(choix);
+      contenu.push(etiquette);
+    });
+  }
+  contenu.push(el('p', 'aide', 'Imprimer dans une autre direction peut allonger l\'impression : après le tranchage, ' +
+    'la durée est comparée à celle du classique.' +
+    (simulation ? ' (Simulation : le tranchage affiché est enregistré, il ne tient pas compte de ces choix.)' : '')));
+  return fenetreOptions('Options de l\'ondulation', contenu, 'Trancher', 'options-trancher');
+}
+
+function montrerRemarques() {
+  const liste = el('div', 'options-liste');
+  liste.append(...etat.remarques.map((texte) => el('p', 'aide', texte)));
+  ouvrirFeuille('Messages du tranchage', liste, { simple: true });
 }
 
 // Vitesse d'un type de trajectoire, en mm/s, pour estimer la part du temps.
@@ -778,9 +962,19 @@ function deplierTrajectoires(ouvert) {
 async function trancher() {
   if (!etat.modele) return;
   if (etat.page !== 'preparer' && etat.page !== 'apercu') choisirVue('preparer');   // pour voir l'attente
+  const demande = { strategie: etat.strategie };
+  if (etat.strategie === 'couches_courbes') {
+    if (!(await optionsOndulation())) return;
+    const branches = Object.entries(etat.branches).map(([partie, choix]) => (
+      choix === 'a_plat' ? { partie: Number(partie), mode: 'a_plat' }
+        : { partie: Number(partie), mode: 'courbes', inclinaison_max: choix === 'incline60' ? 60 : 45 }));
+    if (branches.length) demande.branches = branches;
+  }
   occuper('Tranchage et vérification en cours…');
+  definirEtat('', 'Tranchage en cours', 'Calcul des trajectoires et vérification.');
+  $('barre-progression').removeAttribute('value');   // barre animée : durée inconnue d'avance
   await new Promise((suite) => setTimeout(suite, 30));
-  const reponse = await demander('trancher', { strategie: etat.strategie });
+  const reponse = await demander('trancher', demande);
   liberer();
   if (!reponse) { definirEtat('mauvais', 'Tranchage impossible', 'Voir le message en haut de la vue.'); return; }
 
@@ -796,6 +990,22 @@ async function trancher() {
   $('r-poids').textContent = `${fr(grammes, grammes < 10 ? 1 : 0)} g`;
   $('r-cout').textContent = b ? `${fr(grammes * b.prix_kg / 1000, 2)} €` : '';
   $('r-duree').textContent = duree(resultat.duree_s);
+  // La préparation (chauffe, palpage du plateau) s'ajoute au temps d'impression.
+  const preparation = resultat.preparation_s ?? 300;
+  $('r-preparation').textContent = duree(preparation);
+  $('r-total').textContent = duree(preparation + resultat.duree_s);
+  const comparaison = $('r-comparaison');
+  comparaison.hidden = resultat.duree_classique_s === undefined;
+  if (resultat.duree_classique_s !== undefined) {
+    const ecart = Math.round((resultat.duree_s - resultat.duree_classique_s) / 60);
+    comparaison.textContent = ecart === 0
+      ? `Ondulation : même durée qu'en classique (${duree(resultat.duree_classique_s)}).`
+      : `Ondulation : ${Math.abs(ecart)} min de ${ecart > 0 ? 'plus' : 'moins'} qu'en classique (${duree(resultat.duree_classique_s)}).`;
+  }
+  etat.remarques = [...(resultat.remarques ?? [])];
+  if (!comparaison.hidden) etat.remarques.unshift(comparaison.textContent);
+  $('btn-messages').hidden = etat.remarques.length === 0;
+  $('messages-compte').textContent = `${etat.remarques.length} message${etat.remarques.length > 1 ? 's' : ''}`;
   $('etat-resultat').hidden = false;
   const parties = new Set(resultat.apercu.map((couche) => couche.partie ?? 0)).size;
   $('trajectoires-note').textContent = `Couches de ${ecrire(etat.valeurs.hauteur_couche)} mm · ` +
@@ -804,7 +1014,7 @@ async function trancher() {
     (verification.dans_le_vide_mm === undefined ? '' : ` · parois imprimées dans le vide : ${entier(verification.dans_le_vide_mm)} mm`) +
     (verification.extrusions_en_rotation ? ` · 5 axes continu : la tête pivote pendant ${entier(verification.extrusions_en_rotation)} extrusions` : '');
 
-  if (verification.valide) definirEtat('bon', 'G-code vérifié', 'Aucune règle physique violée. Prêt à exporter.');
+  if (verification.valide) definirEtat('bon', 'G-code vérifié', 'Tranché. Aucune règle physique violée : prêt à exporter.');
   else definirEtat('mauvais', 'Tranchage refusé', `${entier(verification.nombre_erreurs)} erreur(s) : le G-code ne peut pas être exporté.`);
   $('erreurs').replaceChildren(...verification.erreurs.map((erreur) => {
     const element = el('li');
@@ -897,6 +1107,22 @@ const OUTILS = [
   [['strategie-5-axes', 'Stratégie de tranchage 5 axes'], ['direction-zone', 'Direction d\'impression par zone'], ['simulation-machine', 'Simulation de la machine']],
 ];
 
+// Les outils qui font vraiment quelque chose.
+const OUTILS_BRANCHES = {
+  'ajouter-plateau': outilAjouterPlateau,
+  orienter: outilOrienter,
+  'poser-face': outilOrienter,
+  echelle: outilEchelle,
+  agencer: () => transformer({}, 'L\'objet est recentré sur le plateau. (Un seul objet par plateau pour l\'instant.)'),
+  'direction-zone': () => {
+    if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+    etat.strategie = etat.strategies.some((st) => st.type === 'couches_courbes') ? 'couches_courbes' : etat.strategie;
+    afficherStrategies();
+    perimer();
+    trancher();
+  },
+};
+
 function dessinerOutils() {
   const barre = $('outils');
   barre.replaceChildren();
@@ -920,6 +1146,10 @@ function dessinerOutils() {
           if (replier.getAttribute('aria-expanded') !== 'true') replier.click();
           $('strategie').focus();
         });
+      } else if (OUTILS_BRANCHES[nom]) {
+        bouton.title = libelle;
+        bouton.setAttribute('aria-label', libelle);
+        bouton.addEventListener('click', OUTILS_BRANCHES[nom]);
       } else {
         bouton.title = `${libelle} (à venir)`;
         bouton.setAttribute('aria-label', `${libelle} (à venir)`);
@@ -1045,6 +1275,12 @@ for (const nom of ['accueil', 'imprimante', 'projet', 'calibration', 'gestionnai
 }
 $('btn-ouvrir-2').addEventListener('click', ouvrirModele);
 $('btn-trancher').addEventListener('click', trancher);
+$('btn-messages').addEventListener('click', montrerRemarques);
+// Dans le logiciel installé, ce n'est pas une simulation : le bandeau disparaît.
+if (!simulation) {
+  document.querySelector('.note-simulation')?.remove();
+  document.title = 'ArtPrint Slicer';
+}
 $('btn-exporter').addEventListener('click', exporter);
 $('btn-machine').addEventListener('click', ouvrirMachine);
 $('btn-bibliotheque').addEventListener('click', () => ouvrirBibliotheque());
@@ -1074,7 +1310,7 @@ $('strategie').addEventListener('change', (e) => { etat.strategie = e.target.val
 function choisirMode(cinqAxes) {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle : le 5 axes dépend de sa forme.', { info: true }); return; }
   if (cinqAxes && !etat.strategies.some((s) => s.type === 'couches_courbes')) {
-    dire('Ce modèle n\'a pas de branche à imprimer en couches courbes : il reste en 3 axes.', { info: true });
+    dire('L\'ondulation n\'est pas proposée pour ce modèle : il reste en 3 axes.', { info: true });
     return;
   }
   const voulue = cinqAxes ? 'couches_courbes' : 'classique';
