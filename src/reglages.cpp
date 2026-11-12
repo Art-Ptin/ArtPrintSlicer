@@ -272,6 +272,17 @@ std::vector<DescriptionReglage> construire() {
         "Inclinaison la plus négative de la tête, comptée depuis la verticale."}, -180.0, 180.0));
     d.push_back(nombre(M, &RM::b_max, {"b_max", machine, "Butée haute de B", "°",
         "Inclinaison la plus positive de la tête, comptée depuis la verticale."}, -180.0, 180.0));
+    d.push_back(nombre(M, &RM::b_inclinaison_max, {"b_inclinaison_max", machine,
+        "Inclinaison maximale de B", "°",
+        "Limite du firmware : le slicer ne la dépasse jamais. Une partie qui demande plus est signalée."},
+        0.0, 180.0));
+    d.push_back(nombre(M, &RM::vitesse_b_max, {"vitesse_b_max", machine, "Vitesse maximale de B", "°/s",
+        "Limite du firmware, pour estimer la durée."}, 0.1, 1000.0));
+    d.push_back(nombre(M, &RM::vitesse_c_max, {"vitesse_c_max", machine, "Vitesse maximale de C", "°/s",
+        "Limite du firmware, pour estimer la durée."}, 0.1, 1000.0));
+    d.push_back(entier(M, &RM::contrat_gcode, {"contrat_gcode", machine, "Contrat du G-code", "",
+        "1 : positions de la pointe de la buse et macros ARTPRINT (firmware ArtPrint). "
+        "0 : ancien format, positions des axes."}, 0, 1));
     d.push_back(nombre(M, &RM::b_limite_pres_plateau, {"b_limite_pres_plateau", machine,
         "Inclinaison maximale près du plateau", "°",
         "Limite de B sous la hauteur de bascule."}, 0.0, 180.0));
@@ -284,9 +295,9 @@ std::vector<DescriptionReglage> construire() {
         "Sur une branche courbe, la tête pivote pendant qu'elle imprime. "
         "Décoché : elle pivote entre deux couches, sans extruder."}));
     d.push_back(facultatif(M, &RM::c_min, {"c_min", machine, "Butée basse de C", "°",
-        "Vide : le plateau tourne sans limite."}, -1.0e6, 1.0e6));
+        "Vide : le plateau tourne sans limite. Avant cette butée, le plateau est déroulé à vide."}, -1.0e6, 1.0e6));
     d.push_back(facultatif(M, &RM::c_max, {"c_max", machine, "Butée haute de C", "°",
-        "Vide : le plateau tourne sans limite."}, -1.0e6, 1.0e6));
+        "Vide : le plateau tourne sans limite. Avant cette butée, le plateau est déroulé à vide."}, -1.0e6, 1.0e6));
 
     {
         DescriptionReglage modele = base({"modele_machine", machine, "Modèle de machine", "",

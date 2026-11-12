@@ -102,6 +102,17 @@ public:
         if (texte_ligne_.rfind(";TYPE:", 0) == 0) {
             paroi_en_cours_ = texte_ligne_.find("paroi") != std::string::npos;
         }
+        // Macros du firmware ArtPrint (contrat du G-code). Celle du début
+        // prend l'origine des cinq axes, chauffe, et passe en positions
+        // absolues et en extrusion relative ; celle de la fin range la machine.
+        if (texte_ligne_.rfind("ARTPRINT_PRINT_START", 0) == 0) {
+            absolu_ = true;
+            e_absolu_ = false;
+            return;
+        }
+        if (texte_ligne_.rfind("ARTPRINT_PRINT_END", 0) == 0) {
+            return;
+        }
         LigneGcode ligne;
         try {
             ligne = lire_ligne_gcode(texte);
@@ -193,31 +204,47 @@ private:
     }
 
     void redefinir_position(const LigneGcode& ligne) {
-        if (const auto v = ligne.parametre('X')) position_.x = *v;
-        if (const auto v = ligne.parametre('Y')) position_.y = *v;
-        if (const auto v = ligne.parametre('Z')) position_.z = *v;
-        if (const auto v = ligne.parametre('B')) position_.b = *v - machine_.b_vertical;
-        if (const auto v = ligne.parametre('C')) position_.c = *v;
+        if (const auto v = ligne.parametre('X')) ecrit_.x = *v;
+        if (const auto v = ligne.parametre('Y')) ecrit_.y = *v;
+        if (const auto v = ligne.parametre('Z')) ecrit_.z = *v;
+        if (const auto v = ligne.parametre('B')) ecrit_.b = *v - machine_.b_vertical;
+        if (const auto v = ligne.parametre('C')) ecrit_.c = *v;
         if (const auto v = ligne.parametre('E')) e_ = *v;
+        position_ = axes_depuis(ecrit_);
+    }
+
+    // Position des axes d'après ce qui est écrit dans le fichier (contrat du
+    // G-code). Tant que la distance pivot-buse manque, l'erreur sera signalée
+    // par le contrôle du mouvement : ici, on garde les valeurs telles quelles.
+    PositionMachine axes_depuis(const PositionMachine& ecrit) const {
+        try {
+            return depuis_gcode(machine_, ecrit);
+        } catch (const ErreurReglageManquant&) {
+            return ecrit;
+        }
     }
 
     bool est_retracte() const { return retracte_firmware_ || retrait_ > epsilon; }
 
     void traiter_mouvement(const LigneGcode& ligne) {
-        PositionMachine cible = position_;
+        // Ce que la ligne écrit (voir le contrat du G-code), puis la position
+        // des axes qui en découle : tous les contrôles se font sur les axes.
+        PositionMachine ecrit = ecrit_;
         auto lire_axe = [&](char nom, double& axe) {
             if (const auto v = ligne.parametre(nom)) {
                 axe = absolu_ ? *v : axe + *v;
             }
         };
-        lire_axe('X', cible.x);
-        lire_axe('Y', cible.y);
-        lire_axe('Z', cible.z);
+        lire_axe('X', ecrit.x);
+        lire_axe('Y', ecrit.y);
+        lire_axe('Z', ecrit.z);
         // En interne, B est l'inclinaison de la tête comptée depuis la verticale.
         if (const auto v = ligne.parametre('B')) {
-            cible.b = absolu_ ? *v - machine_.b_vertical : cible.b + *v;
+            ecrit.b = absolu_ ? *v - machine_.b_vertical : ecrit.b + *v;
         }
-        lire_axe('C', cible.c);
+        lire_axe('C', ecrit.c);
+        PositionMachine cible = axes_depuis(ecrit);
+        ecrit_cible_ = ecrit;
 
         double delta_e = 0.0;
         if (const auto v = ligne.parametre('E')) {
@@ -284,6 +311,7 @@ private:
                      "Ajouter ce réglage dans le fichier de réglages.");
         }
         position_ = cible;
+        ecrit_ = ecrit_cible_;
     }
 
     // Contrôles qui ne dépendent que des valeurs des axes B et C.
@@ -302,7 +330,13 @@ private:
         verifier_course('X', cible.x, machine_.course_x_min, machine_.course_x_max, cible);
         verifier_course('Y', cible.y, machine_.course_y_min, machine_.course_y_max, cible);
         verifier_course('Z', cible.z, machine_.course_z_min, machine_.course_z_max, cible);
-        if (cible.b < machine_.b_min - 1e-6 || cible.b > machine_.b_max + 1e-6) {
+        if (std::abs(cible.b) > machine_.b_inclinaison_max + 1e-6) {
+            signaler(TypeErreur::limite_b, cible,
+                     std::format("La tête est inclinée de {:.2f}° : le firmware n'accepte pas plus de {:.1f}° "
+                                 "(réglage « b_inclinaison_max »).",
+                                 cible.b, machine_.b_inclinaison_max),
+                     "Réduire l'inclinaison de la tête, ou imprimer cette partie à plat.");
+        } else if (cible.b < machine_.b_min - 1e-6 || cible.b > machine_.b_max + 1e-6) {
             signaler(TypeErreur::limite_b, cible,
                      std::format("L'axe B est à {:.2f}°, hors de ses butées ({:.1f}° à "
                                  "{:.1f}°).",
@@ -437,8 +471,12 @@ private:
         Vec3 precedent = depart.pointe;
 
         for (int k = 1; k <= nombre; ++k) {
-            const PositionMachine ici =
-                interpoler(position_, cible, static_cast<double>(k) / nombre);
+            // Contrat 1 : c'est la pointe qui va en ligne droite (le firmware
+            // s'en charge, même quand B tourne) ; sinon, ce sont les axes.
+            const double part = static_cast<double>(k) / nombre;
+            const PositionMachine ici = machine_.contrat_gcode >= 1
+                                            ? axes_depuis(interpoler(ecrit_, ecrit_cible_, part))
+                                            : interpoler(position_, cible, part);
             const PoseOutil pose = pose_dans_piece(machine_, ici);
             const double avance = norme(pose.pointe - precedent);
             precedent = pose.pointe;
@@ -632,7 +670,9 @@ private:
     int ligne_ = 0;
     std::string texte_ligne_;
 
-    PositionMachine position_;
+    PositionMachine position_;      // position des axes
+    PositionMachine ecrit_;         // ce que le fichier a écrit en dernier (voir le contrat du G-code)
+    PositionMachine ecrit_cible_;   // ce qu'écrit la ligne en cours
     double e_ = 0.0;
     bool absolu_ = true;    // G90 / G91
     bool e_absolu_ = true;  // M82 / M83

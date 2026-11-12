@@ -67,4 +67,13 @@ PositionMachine position_avec_angles(const ReglagesMachine& machine, const Vec3&
 // « reference ». Exemple : -170 près de 170 donne 190.
 double angle_le_plus_proche(double angle, double reference);
 
+// Coordonnées écrites dans le G-code, d'après le réglage « contrat_gcode ».
+// Contrat 1 : X, Y, Z sont la position de la POINTE de la buse dans le repère
+// de la machine (le plateau a déjà tourné de C) ; c'est le firmware qui en
+// déduit la position des axes. Contrat 0 : X, Y, Z sont la position des axes.
+// B et C ne changent pas.
+PositionMachine vers_gcode(const ReglagesMachine& machine, const PositionMachine& axes);
+// L'inverse : la position des axes, à partir de ce qui est écrit dans le fichier.
+PositionMachine depuis_gcode(const ReglagesMachine& machine, const PositionMachine& ecrit);
+
 }  // namespace artprint

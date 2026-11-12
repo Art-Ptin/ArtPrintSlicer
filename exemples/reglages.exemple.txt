@@ -34,6 +34,17 @@ centre_plateau_y = 0
 # Butées de B, en degrés.
 b_min = -90
 b_max = 90
+# Inclinaison maximale de B acceptée par le firmware, en degrés. Le slicer ne
+# la dépasse jamais ; une partie qui demande plus est signalée avant l'export.
+b_inclinaison_max = 50
+# Vitesses de rotation maximales du firmware (degrés par seconde), pour
+# estimer la durée.
+vitesse_b_max = 5
+vitesse_c_max = 10
+# Contrat du G-code. 1 : le fichier donne la position de la pointe de la buse
+# et utilise les macros ARTPRINT_PRINT_START et ARTPRINT_PRINT_END (firmware
+# ArtPrint). 0 : ancien format, positions des axes.
+contrat_gcode = 1
 # Inclinaison maximale près du plateau, en degrés.
 b_limite_pres_plateau = 55
 # Hauteur (mm) au-dessus de laquelle B peut dépasser cette limite.
@@ -43,9 +54,10 @@ b_limite_pres_plateau = 55
 # imprime (1). Avec 0, elle pivote entre deux couches, sans extruder.
 pivot_continu = 1
 
-# Butées de C, en degrés. Sans ces réglages, le plateau tourne sans limite.
-# c_min =
-# c_max =
+# Butées de C, en degrés. Avant d'en atteindre une, le slicer retire le
+# filament, relève la buse, déroule le plateau et reprend.
+c_min = -360
+c_max = 360
 
 # Collisions avec la vraie forme de l'imprimante.
 # Le modèle de machine se fabrique à partir du fichier STEP (qui reste privé) :

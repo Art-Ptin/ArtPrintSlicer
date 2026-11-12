@@ -70,6 +70,17 @@ std::optional<PositionMachine> position_machine(const ReglagesMachine& machine,
         if (b < machine.b_min - 1e-9 || b > machine.b_max + 1e-9) {
             return;
         }
+        // Au-delà d'une butée de C, la même orientation du plateau existe un
+        // tour plus loin dans l'autre sens : c'est elle qui est proposée (il
+        // faudra dérouler le plateau, à vide, pour y aller).
+        if (machine.c_min && machine.c_max && *machine.c_max - *machine.c_min >= 360.0 - 1e-9) {
+            while (c > *machine.c_max + 1e-9) {
+                c -= 360.0;
+            }
+            while (c < *machine.c_min - 1e-9) {
+                c += 360.0;
+            }
+        }
         if ((machine.c_min && c < *machine.c_min) || (machine.c_max && c > *machine.c_max)) {
             return;
         }
@@ -111,6 +122,27 @@ PositionMachine position_avec_angles(const ReglagesMachine& machine, const Vec3&
     const Vec3 pointe = tourner_autour_de_z(pointe_piece, angle) + centre_plateau(machine);
     const Vec3 pivot = pointe + direction_machine(machine, b) * longueur;
     return PositionMachine{pivot.x, pivot.y, pivot.z - longueur, b, c};
+}
+
+PositionMachine vers_gcode(const ReglagesMachine& machine, const PositionMachine& axes) {
+    if (machine.contrat_gcode < 1) {
+        return axes;
+    }
+    // La pointe est sous le pivot, à la distance pivot-buse le long de la buse.
+    const double longueur = distance_pivot(machine, axes.b);
+    const Vec3 direction = direction_machine(machine, axes.b);
+    return {axes.x - direction.x * longueur, axes.y - direction.y * longueur,
+            axes.z + longueur - direction.z * longueur, axes.b, axes.c};
+}
+
+PositionMachine depuis_gcode(const ReglagesMachine& machine, const PositionMachine& ecrit) {
+    if (machine.contrat_gcode < 1) {
+        return ecrit;
+    }
+    const double longueur = distance_pivot(machine, ecrit.b);
+    const Vec3 direction = direction_machine(machine, ecrit.b);
+    return {ecrit.x + direction.x * longueur, ecrit.y + direction.y * longueur,
+            ecrit.z - longueur + direction.z * longueur, ecrit.b, ecrit.c};
 }
 
 }  // namespace artprint

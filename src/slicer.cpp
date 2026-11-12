@@ -58,7 +58,7 @@ public:
         const double vitesse = r_.vitesse_a_vide * 60.0;
         const double z_trajet = std::max(z_machine_, z_) + r_.levee_z;
         if (place_ && std::abs(z_trajet - z_machine_) > 1e-6) {
-            ligne(std::format("G0 Z{:.3f} F{:.0f}", z_trajet, vitesse));
+            ligne(std::format("G0 {} F{:.0f}", axes(position_, z_trajet), vitesse));
         }
         if (place_) {
             // Aperçu : montée, trajet, descente.
@@ -69,14 +69,13 @@ public:
         if (!place_) {
             // Premier déplacement : tous les axes sont écrits.
             // Buse verticale : B prend la valeur « verticale » de la machine.
-            ligne(std::format("G0 X{:.3f} Y{:.3f} Z{:.3f} B{} C0 F{:.0f}", x_machine(p),
-                              y_machine(p), z_trajet, machine_.b_vertical, vitesse));
+            ligne(std::format("G0 {} F{:.0f}", axes(p, z_trajet), vitesse));
         } else {
-            ligne(std::format("G0 X{:.3f} Y{:.3f} F{:.0f}", x_machine(p), y_machine(p), vitesse));
+            ligne(std::format("G0 {} F{:.0f}", axes(p, z_trajet), vitesse));
             duree_ += distance(position_, p) / r_.vitesse_a_vide;
         }
         if (std::abs(z_trajet - z_) > 1e-6) {
-            ligne(std::format("G0 Z{:.3f} F{:.0f}", z_, vitesse));
+            ligne(std::format("G0 {} F{:.0f}", axes(p, z_), vitesse));
         }
         z_machine_ = z_;
         position_ = p;
@@ -96,8 +95,7 @@ public:
             duree_ += r_.retraction_longueur / r_.retraction_vitesse;
         }
         const double e = longueur * e_par_mm_;
-        ligne(std::format("G1 X{:.3f} Y{:.3f} E{:.5f} F{:.0f}", x_machine(p), y_machine(p), e,
-                          vitesse * 60.0));
+        ligne(std::format("G1 {} E{:.5f} F{:.0f}", axes(p, z_), e, vitesse * 60.0));
         noter(position_, z_, p, z_, type_);
         filament_ += e;
         duree_ += longueur / vitesse;
@@ -112,8 +110,15 @@ public:
             retracte_ = true;
         }
         const double z = std::min(z_machine_ + hauteur, machine_.hauteur_impression);
-        ligne(std::format("G0 Z{:.3f} F{:.0f}", z, r_.vitesse_a_vide * 60.0));
+        ligne(std::format("G0 {} F{:.0f}", axes(position_, z), r_.vitesse_a_vide * 60.0));
         z_machine_ = z;
+    }
+
+    // Les cinq axes d'une ligne de mouvement : chaque ligne les porte tous.
+    // En 3 axes la buse reste verticale et le plateau ne tourne pas.
+    std::string axes(const Point2& p, double z) const {
+        return std::format("X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f}", x_machine(p), y_machine(p), z,
+                           machine_.b_vertical, 0.0);
     }
 
     // Type des prochaines extrusions, pour l'aperçu.
@@ -242,7 +247,7 @@ ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, b
     }
 
     EcrivainGcode ecrivain(reglages);
-    ecrire_entete(ecrivain, r, couches.size());
+    ecrire_entete(ecrivain, r, couches.size(), machine.contrat_gcode);
 
     for (std::size_t c = 0; c < couches.size(); ++c) {
         CoucheTrajectoires& couche = couches[c];
@@ -270,7 +275,7 @@ ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, b
         }
     }
 
-    ecrire_fin(ecrivain, r);
+    ecrire_fin(ecrivain, r, machine.contrat_gcode);
 
     ResultatTranchage resultat;
     resultat.couches = couches.size();

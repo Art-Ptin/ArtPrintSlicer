@@ -52,6 +52,18 @@ struct ReglagesMachine {
     bool pivot_continu = true;
     double b_min = -90.0;
     double b_max = 90.0;
+    // Inclinaison maximale de B que le firmware accepte, en degrés. Le slicer
+    // ne la dépasse jamais ; une partie qui demanderait plus est signalée.
+    double b_inclinaison_max = 50.0;
+    // Vitesses maximales des axes de rotation, en degrés par seconde : le
+    // firmware les impose, les durées estimées en tiennent compte.
+    double vitesse_b_max = 5.0;
+    double vitesse_c_max = 10.0;
+    // Contrat du G-code. 1 : les lignes donnent la position de la POINTE de
+    // la buse (le firmware calcule lui-même celle des axes), le fichier
+    // commence et finit par les macros ARTPRINT_PRINT_START et
+    // ARTPRINT_PRINT_END. 0 : ancien format, positions des axes.
+    int contrat_gcode = 1;
     // Inclinaison maximale près du plateau, en degrés.
     double b_limite_pres_plateau = 55.0;
     // Hauteur au-dessus de laquelle B peut dépasser la limite précédente.
@@ -59,8 +71,10 @@ struct ReglagesMachine {
     std::optional<double> hauteur_bascule_b;
 
     // Butées de l'axe C, en degrés. Absentes : le plateau tourne sans limite.
-    std::optional<double> c_min;
-    std::optional<double> c_max;
+    // Avant d'en atteindre une, le slicer déroule le plateau d'un tour, à
+    // vide, la buse relevée.
+    std::optional<double> c_min = -360.0;
+    std::optional<double> c_max = 360.0;
 
     // Collisions avec la vraie forme de l'imprimante.
     // Chemin du modèle de machine, fabriqué à partir du fichier STEP par

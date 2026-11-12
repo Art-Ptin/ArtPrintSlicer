@@ -36,7 +36,7 @@ double angle_entre(const Vec3& a, const Vec3& b) {
 // dont le point le plus bas est à la hauteur « z_bas ». Près du plateau, B
 // est limité ; plus haut, il peut aller jusqu'à sa butée.
 double inclinaison_possible(const ReglagesMachine& machine, double z_bas) {
-    const double butee = std::min(90.0, std::max(machine.b_max, -machine.b_min));
+    const double butee = std::min({90.0, std::max(machine.b_max, -machine.b_min), machine.b_inclinaison_max});
     const bool haut = machine.hauteur_bascule_b && z_bas >= *machine.hauteur_bascule_b;
     return haut ? butee : std::min(butee, machine.b_limite_pres_plateau);
 }
@@ -1247,6 +1247,20 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                     courbes.parties.size() - 1);
                 for (const std::string& ligne : plan.journal) {
                     courbes.remarques.push_back(ligne);
+                }
+                // Limite d'inclinaison de la machine : une partie qui en
+                // demande plus est signalée ici, avant l'export. Le fichier
+                // ne dépasse jamais la limite.
+                for (std::size_t p = 1; p < courbes.parties.size(); ++p) {
+                    const PartieImpression& partie = courbes.parties[p];
+                    if (partie.couches_courbes && partie.inclinaison > reglages.machine.b_inclinaison_max + 0.5) {
+                        courbes.remarques.push_back(std::format(
+                            "Partie {} : ses couches demandent jusqu'à {:.0f}° d'inclinaison, la machine est "
+                            "limitée à {:.0f}° (réglage « b_inclinaison_max »). La tête ne dépassera pas {:.0f}° : "
+                            "elle ne sera pas d'aplomb sur ces couches, le rendu peut être moins propre.",
+                            p + 1, partie.inclinaison, reglages.machine.b_inclinaison_max,
+                            reglages.machine.b_inclinaison_max));
+                    }
                 }
                 courbes.remarques.push_back("Les collisions de cette stratégie sont contrôlées au moment du tranchage.");
                 if (!reglages.machine.distance_pivot_buse) {

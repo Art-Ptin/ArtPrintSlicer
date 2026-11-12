@@ -3,6 +3,8 @@
 // branches), stratégies proposées, et G-code multi-directions relu par le
 // vérificateur. Les modèles et les réglages de machine sont inventés ici.
 #include <cmath>
+#include <vector>
+#include <cstdlib>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -63,6 +65,13 @@ Reglages reglages_essai() {
     Reglages r;
     r.machine.distance_pivot_buse = 37.5;
     r.machine.hauteur_bascule_b = 10.0;
+    // Ces essais portent sur les trajectoires : la tête y va jusqu'à 90° et
+    // le plateau tourne sans butée. Les limites du firmware (50°, un tour
+    // dans chaque sens) ont leurs propres essais (« contrat du G-code »).
+    r.machine.b_inclinaison_max = 90.0;
+    r.machine.c_min.reset();
+    r.machine.c_max.reset();
+    r.machine.contrat_gcode = 0;  // ancien format : les lignes donnent la position des axes
     return r;
 }
 
@@ -230,7 +239,7 @@ void test_b_vertical() {
     }
     const ResultatTranchage simple = trancher(pose, r);
     VERIFIER_ACCEPTE(simple.verification);
-    VERIFIER(simple.gcode.find(" B-90 C0 ") != std::string::npos);
+    VERIFIER(simple.gcode.find(" B-90.000 C0.000 ") != std::string::npos);
 }
 
 void test_cinematique() {
@@ -310,7 +319,7 @@ void test_couches_pivotantes() {
         std::istringstream relecture(resultat.gcode);
         for (std::string ligne; std::getline(relecture, ligne);) {
             const auto ou = ligne.find(" B");
-            if (ou == std::string::npos) {
+            if (ou == std::string::npos || !ligne.starts_with("G")) {
                 continue;
             }
             const double valeur = std::stod(ligne.substr(ou + 2));
@@ -714,6 +723,146 @@ void test_peau_courbe() {
 
 }  // namespace
 
+// Lit les lignes de mouvement d'un G-code : X, Y, Z, B, C (chaque axe garde
+// sa valeur quand la ligne ne l'écrit pas) et E (0 s'il est absent).
+struct LigneLue {
+    double x = 0, y = 0, z = 0, b = 0, c = 0, e = 0;
+    bool complete = false;  // la ligne écrit les cinq axes
+};
+std::vector<LigneLue> lire_mouvements(const std::string& gcode) {
+    std::vector<LigneLue> lues;
+    LigneLue etat;
+    std::istringstream lignes(gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        if (ligne.rfind("G0 ", 0) != 0 && ligne.rfind("G1 ", 0) != 0) {
+            continue;
+        }
+        int axes = 0;
+        etat.e = 0.0;
+        std::istringstream mots(ligne.substr(0, ligne.find(';')));
+        for (std::string mot; mots >> mot;) {
+            const double valeur = mot.size() > 1 ? std::atof(mot.c_str() + 1) : 0.0;
+            switch (mot[0]) {
+                case 'X': etat.x = valeur; ++axes; break;
+                case 'Y': etat.y = valeur; ++axes; break;
+                case 'Z': etat.z = valeur; ++axes; break;
+                case 'B': etat.b = valeur; ++axes; break;
+                case 'C': etat.c = valeur; ++axes; break;
+                case 'E': etat.e = valeur; break;
+                default: break;
+            }
+        }
+        if (axes == 0) {
+            continue;  // rétraction ou reprise sur place
+        }
+        etat.complete = axes == 5;
+        lues.push_back(etat);
+    }
+    return lues;
+}
+
+// Le contrat du G-code, version 1 : ce que le firmware ArtPrint attend.
+void test_contrat_gcode() {
+    const Maillage pose = poser_au_centre(essai::arbre());
+    Reglages r = reglages_essai();
+    r.machine.contrat_gcode = 1;
+    const double pivot = *r.machine.distance_pivot_buse;
+    const auto ondulation = [&](const Reglages& reglages) {
+        const std::vector<Strategie> proposees = proposer_strategies(pose, reglages);
+        const Strategie* choisie = trouver(proposees, TypeStrategie::couches_courbes);
+        return choisie ? trancher_strategie(*choisie, reglages) : ResultatTranchage{};
+    };
+
+    // 1. Les coordonnées. Le même tranchage, écrit dans l'ancien format
+    // (positions des axes) puis selon le contrat (position de la pointe) :
+    // pour chaque ligne, X perd pivot x sin(B), Z gagne pivot x (1 - cos(B)),
+    // et Y, B, C, E ne changent pas.
+    Reglages ancien = r;
+    ancien.machine.contrat_gcode = 0;
+    const ResultatTranchage avant = ondulation(ancien), apres = ondulation(r);
+    VERIFIER_ACCEPTE(avant.verification);
+    VERIFIER_ACCEPTE(apres.verification);
+    const std::vector<LigneLue> a = lire_mouvements(avant.gcode), b = lire_mouvements(apres.gcode);
+    VERIFIER(a.size() == b.size() && a.size() > 10000);
+    std::size_t differentes = 0, inclinees = 0, incompletes = 0;
+    double z_min = 1e9;
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        const double angle = en_radians(a[i].b);
+        const bool pareil = std::abs(b[i].x - (a[i].x - pivot * std::sin(angle))) < 0.0025 &&
+                            std::abs(b[i].z - (a[i].z + pivot * (1.0 - std::cos(angle)))) < 0.0025 &&
+                            std::abs(b[i].y - a[i].y) < 1e-9 && std::abs(b[i].b - a[i].b) < 1e-9 &&
+                            std::abs(b[i].c - a[i].c) < 1e-9 && std::abs(b[i].e - a[i].e) < 1e-9;
+        differentes += !pareil;
+        inclinees += std::abs(a[i].b) > 1.0;
+        incompletes += !b[i].complete;
+        z_min = std::min(z_min, b[i].z);
+    }
+    VERIFIER(differentes == 0);
+    VERIFIER(inclinees > 1000);    // l'essai porte bien sur des lignes où la tête penche
+    VERIFIER(incompletes == 0);    // chaque ligne de mouvement porte X Y Z B C
+    VERIFIER(z_min > -1e-3);       // la pointe ne passe jamais sous le plateau
+
+    // 2. Le début et la fin du fichier.
+    VERIFIER(apres.gcode.rfind("; CONTRAT_GCODE: 1\n", 0) == 0);
+    VERIFIER(apres.gcode.find("\nARTPRINT_PRINT_START BUSE=210 PLATEAU=0\n") != std::string::npos);
+    VERIFIER(apres.gcode.find("\nARTPRINT_PRINT_END\n") != std::string::npos);
+    VERIFIER(apres.gcode.find("G28") == std::string::npos && apres.gcode.find("M104") == std::string::npos &&
+             apres.gcode.find("M109") == std::string::npos && apres.gcode.find("M84") == std::string::npos &&
+             apres.gcode.find("G92") == std::string::npos && apres.gcode.find("\nG90") == std::string::npos);
+    VERIFIER(apres.gcode.find(";PARTIE:") != std::string::npos && apres.gcode.find(";COUCHE:") != std::string::npos &&
+             apres.gcode.find(";TYPE:") != std::string::npos && apres.gcode.find(";Z:") != std::string::npos);
+    VERIFIER(avant.gcode.find("G28") != std::string::npos && avant.gcode.find("ARTPRINT") == std::string::npos);
+
+    // 3. Les limites du firmware, avec les réglages d'office : B ne dépasse
+    // jamais 50°, C reste entre -360° et +360°, et le tranchage est accepté.
+    Reglages firmware = r;
+    firmware.machine.b_inclinaison_max = Reglages{}.machine.b_inclinaison_max;
+    firmware.machine.c_min = Reglages{}.machine.c_min;
+    firmware.machine.c_max = Reglages{}.machine.c_max;
+    VERIFIER(firmware.machine.b_inclinaison_max == 50.0 && firmware.machine.c_min && *firmware.machine.c_min == -360.0 &&
+             firmware.machine.c_max && *firmware.machine.c_max == 360.0 && firmware.machine.contrat_gcode == 1);
+    const Maillage buisson = poser_au_centre(essai::buisson());
+    for (const Maillage* modele : {&pose, &buisson}) {
+        const std::vector<Strategie> proposees = proposer_strategies(*modele, firmware);
+        const Strategie* choisie = trouver(proposees, TypeStrategie::couches_courbes);
+        VERIFIER(choisie != nullptr);
+        if (!choisie) {
+            continue;
+        }
+        const ResultatTranchage limite = trancher_strategie(*choisie, firmware);
+        VERIFIER_ACCEPTE(limite.verification);
+        double b_max = 0.0, c_min = 0.0, c_max = 0.0, saut = 0.0, c_avant = 0.0;
+        for (const LigneLue& ligne : lire_mouvements(limite.gcode)) {
+            b_max = std::max(b_max, std::abs(ligne.b));
+            c_min = std::min(c_min, ligne.c);
+            c_max = std::max(c_max, ligne.c);
+            saut = std::max(saut, std::abs(ligne.c - c_avant));
+            c_avant = ligne.c;
+        }
+        VERIFIER(b_max <= 50.0 + 1e-6);
+        VERIFIER(c_min >= -360.0 - 1e-6 && c_max <= 360.0 + 1e-6);
+        VERIFIER(saut <= 180.0);  // le plateau ne fait jamais plus d'un demi-tour d'un coup
+    }
+
+    // 4. Le vérificateur refuse ce que le firmware refuserait.
+    const std::string debut = "; CONTRAT_GCODE: 1\nARTPRINT_PRINT_START BUSE=210 PLATEAU=0\n";
+    VERIFIER_ACCEPTE(verifier_gcode_texte(debut + "G0 X0 Y0 Z50 B50 C0 F600\nARTPRINT_PRINT_END\n", firmware));
+    VERIFIER(verifier_gcode_texte(debut + "G0 X0 Y0 Z50 B60 C0 F600\n", firmware).contient(TypeErreur::limite_b));
+    VERIFIER(verifier_gcode_texte(debut + "G0 X0 Y0 Z50 B0 C170 F600\nG0 X0 Y0 Z50 B0 C300 F600\nG0 X0 Y0 Z50 B0 C400 F600\n",
+                                  firmware).contient(TypeErreur::limite_c));
+    // Contrat 1 : Z est la hauteur de la pointe, même tête inclinée ; elle ne passe pas sous le plateau.
+    VERIFIER_ACCEPTE(verifier_gcode_texte(debut + "G0 X0 Y0 Z2 B45 C0 F600\n", firmware));
+    VERIFIER(verifier_gcode_texte(debut + "G0 X0 Y0 Z-1 B45 C0 F600\n", firmware).contient(TypeErreur::sous_plateau));
+
+    // 5. La durée tient compte des vitesses de rotation du firmware (B à
+    // 5 °/s, C à 10 °/s) : avec des axes de rotation dix fois plus lents,
+    // la même impression est estimée plus longue.
+    Reglages lent = r;
+    lent.machine.vitesse_b_max = 0.5;
+    lent.machine.vitesse_c_max = 1.0;
+    VERIFIER(ondulation(lent).duree_estimee > apres.duree_estimee + 30.0);
+}
+
 int main() {
     test_decoupe();
     test_squelette();
@@ -725,6 +874,7 @@ int main() {
     test_objets_organiques();
     test_courses();
     test_couches_courbes();
+    test_contrat_gcode();
     test_peau_courbe();
     if (echecs == 0) {
         std::cout << "Tests du 5 axes : tout est correct.\n";

@@ -289,12 +289,9 @@ public:
                 const double f = avant + (apres - avant) * t;
                 b_ = b_debut_ + (b_fin_ - b_debut_) * f;
                 c_ = c_debut_ + (c_fin_ - c_debut_) * f;
-                const PositionMachine m = position_avec_angles(machine_, etape, b_, c_);
-                ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z,
-                                  m.b + machine_.b_vertical, m.c, e, vitesse * 60.0));
+                ligne(std::format("G1 {} E{:.5f} F{:.0f}", axes(etape, longueur / morceaux / vitesse), e, vitesse * 60.0));
             } else {
-                const PositionMachine m = position_avec_angles(machine_, etape, b_, c_);
-                ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z, e, vitesse * 60.0));
+                ligne(std::format("G1 {} E{:.5f} F{:.0f}", axes(etape, longueur / morceaux / vitesse), e, vitesse * 60.0));
             }
             filament_ += e;
             pointe_ = etape;
@@ -350,9 +347,29 @@ private:
     }
 
     // Plus grande inclinaison permise à cette hauteur, en degrés.
+    // Les cinq axes d'une ligne de mouvement vers ce point de la pièce, avec
+    // l'orientation en cours : chaque ligne les porte tous. Les coordonnées
+    // sont celles du contrat du G-code (voir « vers_gcode »). B est compté
+    // depuis la valeur « buse verticale » de la machine.
+    // « temps » : durée du mouvement à sa vitesse d'avance. Si B ou C ont à
+    // tourner plus longtemps que cela (le firmware limite leur vitesse), la
+    // différence est ajoutée à la durée estimée.
+    std::string axes(const Vec3& cible, double temps) {
+        const PositionMachine m = vers_gcode(machine_, position_avec_angles(machine_, cible, b_, c_));
+        if (axes_ecrits_) {
+            const double rotation = std::max(std::abs(b_ - b_ecrit_) / machine_.vitesse_b_max,
+                                             std::abs(c_ - c_ecrit_) / machine_.vitesse_c_max);
+            duree_ += std::max(0.0, rotation - temps);
+        }
+        b_ecrit_ = b_, c_ecrit_ = c_, axes_ecrits_ = true;
+        return std::format("X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f}", m.x, m.y, m.z, m.b + machine_.b_vertical, m.c);
+    }
+
     double limite_inclinaison(double z) const {
         const bool haut = machine_.hauteur_bascule_b && z >= *machine_.hauteur_bascule_b + 0.5;
-        const double butee = std::max(std::abs(machine_.b_min), std::abs(machine_.b_max));
+        // (Le firmware a sa propre limite d'inclinaison : elle n'est jamais dépassée.)
+        const double butee = std::min(std::max(std::abs(machine_.b_min), std::abs(machine_.b_max)),
+                                      machine_.b_inclinaison_max);
         return std::min(limite_partie_, haut ? butee : std::min(butee, machine_.b_limite_pres_plateau));
     }
 
@@ -580,9 +597,7 @@ private:
                 return;  // morceau trop court pour être écrit : il est joint au suivant
             }
             b_ = b.b, c_ = b.c;
-            const PositionMachine m = position_avec_angles(machine_, b.point, b_, c_);
-            ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z,
-                              m.b + machine_.b_vertical, m.c, e, vitesse * 60.0));
+            ligne(std::format("G1 {} E{:.5f} F{:.0f}", axes(b.point, longueur / vitesse), e, vitesse * 60.0));
             noter(pointe_, b.point, type_);
             filament_ += e;
             duree_ += longueur / vitesse;
@@ -685,18 +700,15 @@ private:
         if (norme(cible - pointe_) < 1e-6) {
             return;
         }
-        const PositionMachine m = position_avec_angles(machine_, cible, b_, c_);
-        ligne(std::format("G0 X{:.3f} Y{:.3f} Z{:.3f} F{:.0f}", m.x, m.y, m.z, r_.vitesse_a_vide * 60.0));
+        ligne(std::format("G0 {} F{:.0f}", axes(cible, norme(cible - pointe_) / r_.vitesse_a_vide), r_.vitesse_a_vide * 60.0));
         noter(pointe_, cible, type_apercu_vide);
         duree_ += norme(cible - pointe_) / r_.vitesse_a_vide;
         pointe_ = cible;
     }
 
     void deplacer_tous_axes(const Vec3& cible) {
-        const PositionMachine m = position_avec_angles(machine_, cible, b_, c_);
-        // Dans le G-code, B est compté depuis la valeur « buse verticale » de la machine.
-        ligne(std::format("G0 X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f} F{:.0f}", m.x, m.y, m.z,
-                          m.b + machine_.b_vertical, m.c, r_.vitesse_a_vide * 60.0));
+        ligne(std::format("G0 {} F{:.0f}", axes(cible, place_ ? norme(cible - pointe_) / r_.vitesse_a_vide : 0.0),
+                          r_.vitesse_a_vide * 60.0));
         if (place_) {
             noter(pointe_, cible, type_apercu_vide);
             duree_ += norme(cible - pointe_) / r_.vitesse_a_vide;
@@ -810,6 +822,8 @@ private:
     const ReglagesMachine machine_;
     const ReglagesImpression r_;
     const OptionsMultiaxe options_;
+    double b_ecrit_ = 0.0, c_ecrit_ = 0.0;  // B et C de la dernière ligne écrite
+    bool axes_ecrits_ = false;
     const double hauteur_sure_;
     std::string gcode_;
     Vec3 origine_, u_{1, 0, 0}, v_{0, 1, 0}, w_{0, 0, 1};  // repère de la partie en cours
@@ -1676,7 +1690,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
     }
 
     auto ecrivain_courant = std::make_unique<EcrivainCinqAxes>(reglages, hauteur_sure, options);
-    ecrire_entete(*ecrivain_courant, r, nombre_couches);
+    ecrire_entete(*ecrivain_courant, r, nombre_couches, machine.contrat_gcode);
     // Ordre d'impression. D'ordinaire, une partie après l'autre. En couches
     // courbes, tout monte ensemble : la couche k de chaque partie, puis la
     // couche k + 1, comme dans une impression classique.
@@ -1995,7 +2009,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         debut = fin;
     }
     EcrivainCinqAxes& ecrivain = *ecrivain_courant;
-    ecrire_fin(ecrivain, r);
+    ecrire_fin(ecrivain, r, machine.contrat_gcode);
 
     ResultatTranchage resultat;
     resultat.couches = nombre_couches;
@@ -2008,6 +2022,13 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         resultat.verification = suivi->terminer();
     } else {
         resultat.verification = verifier_gcode_texte(resultat.gcode, reglages);
+    }
+    // Les parties qui demandent plus d'inclinaison que la machine n'en
+    // permet restent signalées dans le résultat.
+    for (const std::string& remarque : strategie.remarques) {
+        if (remarque.find("b_inclinaison_max") != std::string::npos) {
+            resultat.remarques.push_back(remarque);
+        }
     }
     return resultat;
 }

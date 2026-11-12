@@ -30,6 +30,13 @@ Sur les soixante, **aucun n'est refusé** :
   les découper en couches courbes : les trois ponts, l'arche, l'anse, le
   champignon, la table et l'arc en demi-tour.
 
+Ces chiffres ont été mesurés de nouveau avec les limites du firmware
+(contrat G-code version 1 : B limité à 50°, C entre -360° et +360°) : même
+résultat, 52 en couches courbes et 8 en classique, tous vérifiés. Mais sur
+50 des 52, au moins une branche demande plus de 50° d'inclinaison : la tête
+s'arrête à 50°, elle n'est pas d'aplomb sur ces couches, et le slicer le
+signale. Le rendu réel de ces branches reste à juger sur la machine.
+
 Parmi les 52, quelques-uns ont une ou plusieurs branches imprimées **à plat,
 avec le tronc** : le socle à quatre bras (ses quatre bras, trop près du
 plateau), le tronc penché (une branche), le banc d'essai (un morceau). C'est

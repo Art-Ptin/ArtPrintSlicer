@@ -12,14 +12,45 @@ aujourd'hui, comment il s'y prend, et ce qui reste à faire pour arriver au
 | Y | le plateau, d'avant en arrière |
 | Z | la tête, de bas en haut |
 | B | la tête qui s'incline autour de son pivot |
-| C | le plateau qui tourne, sans limite, dans les deux sens |
+| C | le plateau qui tourne, dans les deux sens, entre -360° et +360° |
 
 Le slicer raisonne dans le **repère de la pièce** (fixé au plateau) : il
 décide où doit être la pointe de la buse et dans quelle direction elle doit
 pointer. La **cinématique** (`src/cinematique.*`) traduit ensuite cela en
-valeurs X, Y, Z, B, C. Le firmware ne compense rien : c'est le slicer qui
-calcule tout, à partir de réglages mesurés sur la machine (aucune cote n'est
-écrite dans le code).
+valeurs X, Y, Z, B, C, à partir de réglages mesurés sur la machine (aucune
+cote n'est écrite dans le code).
+
+## Le contrat G-code version 1
+
+C'est l'accord entre le slicer et le firmware de l'imprimante ArtPrint
+(réglage `contrat_gcode = 1`, par défaut).
+
+- Première ligne du fichier : `; CONTRAT_GCODE: 1`.
+- X, Y, Z sont la position de la **pointe de la buse**, dans le repère de la
+  machine (origine au centre du plateau, sur sa surface), la rotation C déjà
+  appliquée. Le firmware calcule lui-même où placer le pivot de la tête : le
+  slicer n'ajoute plus cette correction.
+- B : 0 quand la buse est verticale, positif quand la tête s'incline. Il ne
+  dépasse jamais `b_inclinaison_max` (50° par défaut). Une partie dont les
+  couches demandent plus est signalée avant l'export, dans le choix de la
+  stratégie et dans les messages du tranchage.
+- C reste entre `c_min` et `c_max` (-360° et +360° par défaut). Avant une
+  limite : retrait du filament, buse relevée, plateau déroulé, reprise.
+- Z de la pointe n'est jamais négatif.
+- Début : une seule ligne `ARTPRINT_PRINT_START BUSE=... PLATEAU=...`
+  (températures des réglages). Fin : le retrait final, puis
+  `ARTPRINT_PRINT_END`.
+- Chaque ligne G0 ou G1 de déplacement porte X Y Z B C. Quand C change
+  pendant une extrusion, le trajet est découpé en segments courts.
+- La durée estimée tient compte des vitesses de rotation du firmware
+  (`vitesse_b_max`, `vitesse_c_max`).
+- Les commentaires `;PARTIE`, `;COUCHE`, `;Z`, `;TYPE` et l'extrusion
+  relative ne changent pas.
+
+Avec `contrat_gcode = 0`, le slicer écrit l'ancien format : les positions des
+axes (correction du pivot comprise) et les commandes G-code habituelles de
+début et de fin. Un test automatique (`tests/test_strategie.cpp`) contrôle
+que les deux formats décrivent exactement les mêmes mouvements.
 
 ## L'idée : une stratégie d'impression
 
@@ -290,6 +321,11 @@ Dans l'interface, la commande `strategies` rend la même liste, et
 - `hauteur_bascule_b` : tant qu'elle n'est pas renseignée, l'inclinaison
   est limitée partout à `b_limite_pres_plateau`.
 - `b_min`, `b_max` : inclinaisons extrêmes, comptées depuis la verticale.
+- `b_inclinaison_max` : limite du firmware (50° par défaut), jamais dépassée.
+- `c_min`, `c_max` : limites du plateau (-360° et +360° par défaut).
+- `vitesse_b_max`, `vitesse_c_max` : vitesses de rotation du firmware, pour
+  estimer la durée.
+- `contrat_gcode` : format du fichier (voir plus haut).
 - `b_vertical` : valeur de B, dans le G-code, quand la buse est verticale
   (0 par défaut). À régler si la machine affiche une autre valeur pour la
   buse verticale.

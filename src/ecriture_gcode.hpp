@@ -76,12 +76,23 @@ void ecrire_groupe(Ecrivain& ecrivain, std::vector<Trait>& traits, std::size_t d
     }
 }
 
-// Début du fichier : en-tête, chauffe, prise d'origine.
+// Début du fichier. Contrat 1 : la première ligne annonce le contrat, puis
+// une seule macro du firmware fait tout (prise d'origine de X Y Z B C,
+// chauffe, positions absolues, extrusion relative). Contrat 0 : les commandes
+// une à une, comme avant.
 template <class Ecrivain>
-void ecrire_entete(Ecrivain& ecrivain, const ReglagesImpression& r, std::size_t nombre_couches) {
+void ecrire_entete(Ecrivain& ecrivain, const ReglagesImpression& r, std::size_t nombre_couches, int contrat = 0) {
+    if (contrat >= 1) {
+        ecrivain.ligne(std::format("; CONTRAT_GCODE: {}", contrat));
+    }
     ecrivain.ligne(std::format("; Fichier produit par ArtPrint Slicer {}", version()));
     ecrivain.ligne(std::format("; Couches : {}   Hauteur de couche : {:.2f} mm   Largeur : {:.2f} mm",
                                nombre_couches, r.hauteur_couche, r.largeur_extrusion));
+    if (contrat >= 1) {
+        ecrivain.ligne(std::format("ARTPRINT_PRINT_START BUSE={:.0f} PLATEAU={:.0f}", r.temperature_buse,
+                                   r.temperature_plateau));
+        return;
+    }
     ecrivain.ligne("G90 ; positions absolues");
     ecrivain.ligne("M83 ; extrusion relative");
     if (r.temperature_plateau > 0.0) {
@@ -96,12 +107,18 @@ void ecrire_entete(Ecrivain& ecrivain, const ReglagesImpression& r, std::size_t 
     ecrivain.ligne("G92 E0");
 }
 
-// Fin du fichier : dégagement, arrêt des chauffes et des moteurs.
+// Fin du fichier : retrait et dégagement, puis l'arrêt. Contrat 1 : la macro
+// du firmware relève la buse, redresse la tête, ramène le plateau à C 0 et
+// coupe la chauffe.
 template <class Ecrivain>
-void ecrire_fin(Ecrivain& ecrivain, const ReglagesImpression& r) {
+void ecrire_fin(Ecrivain& ecrivain, const ReglagesImpression& r, int contrat = 0) {
     ecrivain.ligne("; Fin de l'impression");
     ecrivain.degager(10.0);
     ecrivain.ligne("M107 ; arrêt du ventilateur");
+    if (contrat >= 1) {
+        ecrivain.ligne("ARTPRINT_PRINT_END");
+        return;
+    }
     ecrivain.ligne("M104 S0 ; arrêt de la chauffe de la buse");
     if (r.temperature_plateau > 0.0) {
         ecrivain.ligne("M140 S0 ; arrêt de la chauffe du plateau");

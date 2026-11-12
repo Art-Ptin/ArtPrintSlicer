@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -230,7 +231,25 @@ void test_trancher_cube() {
     VERIFIER(resultat.couches == 100);
     VERIFIER(resultat.gcode.find(";COUCHE:100\n") != std::string::npos);
     VERIFIER(resultat.gcode.find(";COUCHE:101\n") == std::string::npos);
-    VERIFIER(resultat.gcode.find(" B0 C0 ") != std::string::npos);
+    // Contrat du G-code : première ligne, macros du firmware, et les cinq
+    // axes sur chaque ligne de mouvement (buse verticale, plateau immobile).
+    VERIFIER(resultat.gcode.rfind("; CONTRAT_GCODE: 1\n", 0) == 0);
+    VERIFIER(resultat.gcode.find("\nARTPRINT_PRINT_START BUSE=210 PLATEAU=0\n") != std::string::npos);
+    VERIFIER(resultat.gcode.find("\nARTPRINT_PRINT_END\n") != std::string::npos);
+    VERIFIER(resultat.gcode.find("G28") == std::string::npos && resultat.gcode.find("M104") == std::string::npos &&
+             resultat.gcode.find("M84") == std::string::npos && resultat.gcode.find("G92") == std::string::npos);
+    {
+        std::istringstream lignes(resultat.gcode);
+        std::size_t mouvements = 0, complets = 0;
+        for (std::string ligne; std::getline(lignes, ligne);) {
+            if (ligne.rfind("G0 ", 0) == 0 || (ligne.rfind("G1 ", 0) == 0 && ligne.find(" X") != std::string::npos)) {
+                ++mouvements;
+                complets += ligne.find(" X") != std::string::npos && ligne.find(" Y") != std::string::npos &&
+                            ligne.find(" Z") != std::string::npos && ligne.find(" B0.000 C0.000") != std::string::npos;
+            }
+        }
+        VERIFIER(mouvements > 1000 && complets == mouvements);
+    }
     VERIFIER(resultat.gcode.find(";TYPE:paroi externe\n") != std::string::npos);
     VERIFIER(resultat.gcode.find(";TYPE:remplissage\n") != std::string::npos);
     // Un cube de 20 mm à 15 % de remplissage consomme environ 1,1 m de filament.

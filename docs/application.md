@@ -45,6 +45,12 @@ En haut de la vue, les **caractéristiques** :
 - durée totale (préparation + impression) et coût ;
 - pour l'ondulation : l'écart de durée avec le classique.
 
+Le fichier G-code suit le **contrat G-code version 1** du firmware ArtPrint
+(voir `docs/5-axes.md`). Si une partie demande plus d'inclinaison que la
+machine n'en permet (réglage « b_inclinaison_max », 50° par défaut), un
+message le dit avant de trancher, dans le choix de la stratégie, et après,
+dans les messages.
+
 En bas, à droite : l'**état** (« G-code vérifié »...), une petite barre
 d'avancement, et tout à droite le bouton des **messages** du tranchage.
 
