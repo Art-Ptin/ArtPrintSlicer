@@ -67,6 +67,14 @@ PositionMachine position_avec_angles(const ReglagesMachine& machine, const Vec3&
 // « reference ». Exemple : -170 près de 170 donne 190.
 double angle_le_plus_proche(double angle, double reference);
 
+// Plus grande inclinaison de la tête que la machine permet, en degrés :
+// ses butées, et la limite du firmware. Elle peut dépasser 90° : la buse
+// pointe alors vers le haut, pour imprimer par en dessous.
+double inclinaison_machine_max(const ReglagesMachine& machine);
+// Plus grande inclinaison qu'une couche courbe peut demander. Un peu plus
+// que la machine : la tête, à sa limite, n'est alors pas tout à fait d'aplomb.
+double inclinaison_des_couches_max(const ReglagesMachine& machine);
+
 // Coordonnées écrites dans le G-code, d'après le réglage « contrat_gcode ».
 // Contrat 1 : X, Y, Z sont la position de la POINTE de la buse dans le repère
 // de la machine (le plateau a déjà tourné de C) ; c'est le firmware qui en

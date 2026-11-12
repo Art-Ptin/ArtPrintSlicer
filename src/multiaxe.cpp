@@ -144,7 +144,7 @@ public:
         oriente_ = false;
         partie_ = numero >= 0 ? numero : partie_ + 1;
         surface_ = nullptr;
-        limite_partie_ = 90.0;
+        limite_partie_ = 180.0;
     }
 
     // Plus grande inclinaison de la tête pour la partie en cours, en degrés.
@@ -368,8 +368,7 @@ private:
     double limite_inclinaison(double z) const {
         const bool haut = machine_.hauteur_bascule_b && z >= *machine_.hauteur_bascule_b + 0.5;
         // (Le firmware a sa propre limite d'inclinaison : elle n'est jamais dépassée.)
-        const double butee = std::min(std::max(std::abs(machine_.b_min), std::abs(machine_.b_max)),
-                                      machine_.b_inclinaison_max);
+        const double butee = inclinaison_machine_max(machine_);
         return std::min(limite_partie_, haut ? butee : std::min(butee, machine_.b_limite_pres_plateau));
     }
 
@@ -843,7 +842,7 @@ private:
     double hauteur_trajet_ = 0.0;   // hauteur des déplacements à vide au-dessus de la carte
     double hauteur_surface_ = 0.0;  // hauteur de la surface au dernier point calculé
     double b_couche_ = 0.0;         // valeur de B pour la direction moyenne de la couche
-    double limite_partie_ = 90.0;   // inclinaison maximale de la tête pour la partie en cours
+    double limite_partie_ = 180.0;  // inclinaison maximale de la tête pour la partie en cours
     bool suivie_ = false;           // vrai : la hauteur sûre suit ce qui est imprimé
     double z_haut_ = 0.0;           // point le plus haut déjà imprimé
     bool variable_ = false;   // vrai quand l'épaisseur de la couche varie d'un point à l'autre
@@ -1213,6 +1212,12 @@ std::vector<Trait> sans_les_points(const Trait& trait, const std::function<bool(
     return morceaux;
 }
 
+// Inclinaison de la tête dont on part pour une partie : celle que demande
+// l'utilisateur, sans dépasser ce que la machine permet.
+double inclinaison_de_depart(const ReglagesMachine& machine, const PartieImpression& partie) {
+    return std::min(partie.inclinaison_outil_max, inclinaison_machine_max(machine));
+}
+
 ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& reglages_demandes,
                                 const OptionsMultiaxe& options, std::vector<double>& reductions,
                                 std::vector<int>& cotes, bool avec_peau = true, bool planifier = false) {
@@ -1275,7 +1280,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         int tige = -1;  // numéro de la tige, dans l'analyse des branches
         std::vector<CoucheTrajectoires> couches;
         bool sur_plateau = true;
-        double inclinaison_outil_max = 90.0;
+        double inclinaison_outil_max = 180.0;
         // Peau courbe : la surface du dessus, et le numéro de sa passe
         // (la dernière « couche » de la partie).
         std::shared_ptr<PeauCourbe> peau;
@@ -1290,7 +1295,8 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         if (strategie.modele.triangles.empty()) {
             throw ErreurTranchage("La stratégie en couches courbes ne contient pas le modèle entier.");
         }
-        plan = preparer_branches(strategie.modele, r.hauteur_couche, 0.45 * r.largeur_extrusion, strategie.a_plat);
+        plan = preparer_branches(strategie.modele, r.hauteur_couche, 0.45 * r.largeur_extrusion, strategie.a_plat,
+                                 inclinaison_des_couches_max(machine));
     }
     const ChampCouches& champ = plan.analyse.champ;
     const std::vector<double>& dessus = plan.dessus;
@@ -1311,7 +1317,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         const bool sur_plateau = partie.parent < 0;
         t.sur_plateau = sur_plateau;
         t.cote = p < cotes.size() && cotes[p] != 0 ? cotes[p] : partie.cote;
-        t.inclinaison_outil_max = partie.inclinaison_outil_max - (p < reductions.size() ? reductions[p] : 0.0);
+        t.inclinaison_outil_max = inclinaison_de_depart(machine, partie) - (p < reductions.size() ? reductions[p] : 0.0);
         if (partie.couches_courbes) {
             // La tige suivante du plan (celles qui n'ont pas de couche ne sont pas des parties).
             while (tige_suivante < plan.tiges.size() && plan.tiges[tige_suivante].empty()) {
@@ -1957,7 +1963,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         std::optional<Essai> meilleur;
         std::optional<VerificationSuivie> suivi_du_meilleur;
         std::string derniere_erreur;
-        const double inclinaison_de_base = strategie.parties[p].inclinaison_outil_max;
+        const double inclinaison_de_base = inclinaison_de_depart(machine, strategie.parties[p]);
         for (int etape = 0; etape <= options.redressements; ++etape) {
             Essai essai;
             essai.cote = etape == 0 ? t.cote : etape % 2 == 1 ? 1 : -1;
@@ -2341,7 +2347,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
                 resultat.remarques.push_back(std::format(
                     "Partie {} : pour ne rien toucher, la tête a été limitée à {:.0f}° d'inclinaison ; elle "
                     "n'est pas toujours d'aplomb sur les couches de cette branche.",
-                    p + 1, strategie.parties[p].inclinaison_outil_max - reductions[p]));
+                    p + 1, inclinaison_de_depart(reglages.machine, strategie.parties[p]) - reductions[p]));
             }
         }
     }

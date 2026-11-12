@@ -63,8 +63,11 @@ struct PlanBranches {
 // est imprimée à plat, avec le tronc (en couches horizontales), au lieu
 // d'être découpée en couches courbes. Les branches qui la portent aussi ;
 // celles qu'elle porte restent en couches courbes et se soudent sur elle.
+// « inclinaison_max » : au-delà de cet angle depuis la verticale (en degrés),
+// une couche regarde trop vers le bas pour la machine ; sa branche est rendue
+// au tronc.
 PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe,
-                               const std::vector<Vec3>& a_plat = {});
+                               const std::vector<Vec3>& a_plat = {}, double inclinaison_max = 100.0);
 
 // Point de la surface de niveau « niveau » qui se trouve à l'aplomb du point
 // (x, y) de la carte : la carte est quittée le long de w jusqu'à la surface.

@@ -124,6 +124,14 @@ PositionMachine position_avec_angles(const ReglagesMachine& machine, const Vec3&
     return PositionMachine{pivot.x, pivot.y, pivot.z - longueur, b, c};
 }
 
+double inclinaison_machine_max(const ReglagesMachine& machine) {
+    return std::min(std::max(std::abs(machine.b_min), std::abs(machine.b_max)), machine.b_inclinaison_max);
+}
+
+double inclinaison_des_couches_max(const ReglagesMachine& machine) {
+    return std::clamp(inclinaison_machine_max(machine) + 10.0, 100.0, 170.0);
+}
+
 PositionMachine vers_gcode(const ReglagesMachine& machine, const PositionMachine& axes) {
     if (machine.contrat_gcode < 1) {
         return axes;

@@ -47,6 +47,20 @@ C'est l'accord entre le slicer et le firmware de l'imprimante ArtPrint
 - Les commentaires `;PARTIE`, `;COUCHE`, `;Z`, `;TYPE` et l'extrusion
   relative ne changent pas.
 
+### Au-delà de 90° : imprimer par en dessous
+
+Si la mécanique le permet, les réglages `b_min`, `b_max` et
+`b_inclinaison_max` peuvent dépasser 90° (110° par exemple). La buse pointe
+alors vers le haut : une branche qui redescend est imprimée d'aplomb, par en
+dessous, au lieu d'être rendue au tronc. Une couche courbe peut regarder
+vers le bas jusqu'à 10° de plus que la limite de la machine ; au-delà, sa
+branche est imprimée avec le tronc, comme avant.
+
+À ces inclinaisons, le corps de la tête passe plus bas que la pointe de la
+buse : le contrôle des collisions avec la vraie forme de la machine
+(`modele_machine`) est indispensable avant d'imprimer. Près du plateau,
+`b_limite_pres_plateau` et `hauteur_bascule_b` s'appliquent toujours.
+
 Avec `contrat_gcode = 0`, le slicer écrit l'ancien format : les positions des
 axes (correction du pivot comprise) et les commandes G-code habituelles de
 début et de fin. Un test automatique (`tests/test_strategie.cpp`) contrôle

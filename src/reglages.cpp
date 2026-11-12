@@ -274,7 +274,8 @@ std::vector<DescriptionReglage> construire() {
         "Inclinaison la plus positive de la tête, comptée depuis la verticale."}, -180.0, 180.0));
     d.push_back(nombre(M, &RM::b_inclinaison_max, {"b_inclinaison_max", machine,
         "Inclinaison maximale de B", "°",
-        "Limite du firmware : le slicer ne la dépasse jamais. Une partie qui demande plus est signalée."},
+        "Limite du firmware : le slicer ne la dépasse jamais. Une partie qui demande plus est signalée. "
+        "Au-delà de 90°, la buse pointe vers le haut et imprime par en dessous (les butées de B doivent le permettre)."},
         0.0, 180.0));
     d.push_back(nombre(M, &RM::vitesse_b_max, {"vitesse_b_max", machine, "Vitesse maximale de B", "°/s",
         "Limite du firmware, pour estimer la durée."}, 0.1, 1000.0));

@@ -67,7 +67,7 @@ Les pièces du STEP sont séparées en groupes qui bougent ensemble. Pour chaque
 ### Réglages
 
 - **Marge de sécurité** : réglable, **2 mm** par défaut.
-- **Inclinaison de B** : limitée à **55°** près du plateau, jusqu'à **90°** plus haut. La **hauteur de bascule** entre les deux limites est un réglage (valeur à mesurer sur la machine, pas de valeur inventée dans le code).
+- **Inclinaison de B** : limitée à **55°** près du plateau, jusqu'à la limite de la machine plus haut (réglages « butées de B » et « inclinaison maximale de B » ; au-delà de 90°, la buse imprime par en dessous). La **hauteur de bascule** entre les deux limites est un réglage (valeur à mesurer sur la machine, pas de valeur inventée dans le code).
 - **Chemin du fichier STEP** : réglage (voir plus haut).
 
 ### En cas de collision

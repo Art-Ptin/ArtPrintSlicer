@@ -1140,7 +1140,8 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
             PlanBranches plan;
             if (surplomb_classique > 1.0) {
                 plan = preparer_branches(pose, reglages.impression.hauteur_couche,
-                                         0.45 * reglages.impression.largeur_extrusion, options.a_plat);
+                                         0.45 * reglages.impression.largeur_extrusion, options.a_plat,
+                                         inclinaison_des_couches_max(reglages.machine));
             }
             Strategie courbes;
             courbes.type = TypeStrategie::couches_courbes;
@@ -1253,13 +1254,13 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                 // ne dépasse jamais la limite.
                 for (std::size_t p = 1; p < courbes.parties.size(); ++p) {
                     const PartieImpression& partie = courbes.parties[p];
-                    if (partie.couches_courbes && partie.inclinaison > reglages.machine.b_inclinaison_max + 0.5) {
+                    if (partie.couches_courbes && partie.inclinaison > inclinaison_machine_max(reglages.machine) + 0.5) {
                         courbes.remarques.push_back(std::format(
                             "Partie {} : ses couches demandent jusqu'à {:.0f}° d'inclinaison, la machine est "
                             "limitée à {:.0f}° (réglage « b_inclinaison_max »). La tête ne dépassera pas {:.0f}° : "
                             "elle ne sera pas d'aplomb sur ces couches, le rendu peut être moins propre.",
-                            p + 1, partie.inclinaison, reglages.machine.b_inclinaison_max,
-                            reglages.machine.b_inclinaison_max));
+                            p + 1, partie.inclinaison, inclinaison_machine_max(reglages.machine),
+                            inclinaison_machine_max(reglages.machine)));
                     }
                 }
                 courbes.remarques.push_back("Les collisions de cette stratégie sont contrôlées au moment du tranchage.");

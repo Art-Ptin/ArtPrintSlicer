@@ -45,7 +45,8 @@ def main():
     (dossier / "base.json").write_text(
         json.dumps({"infos": infos, "reglages": reglages["reglages"]}, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")
-    exemple = {"commande": "definir_reglages", "valeurs": {"distance_pivot_buse": "37,5", "hauteur_bascule_b": "10"}}
+    exemple = {"commande": "definir_reglages", "valeurs": {"distance_pivot_buse": "37,5", "hauteur_bascule_b": "10",
+                                                           "b_min": "-110", "b_max": "110", "b_inclinaison_max": "110"}}
     for piece in pieces:
         modele, tranche = appeler(programme, [{"commande": "charger_modele", "chemin": piece}, {"commande": "trancher"}])
         if not (modele["ok"] and tranche["ok"]):

@@ -236,9 +236,12 @@ export const BOBINES_EXEMPLE = [
 // ils se changent dans la fiche de l'imprimante. « version » : changer ce
 // texte fait reposer les valeurs une fois chez tout le monde.
 export const PROFIL_MACHINE = {
-  version: 'prototype-2',
+  version: 'prototype-3',
   reglages: {
     distance_pivot_buse: '55',   // du pivot de la tête à la pointe de la buse, en mm
     hauteur_impression: '260',   // hauteur imprimable, en mm
+    b_min: '-110',               // la tête bascule jusqu'à 110° de chaque côté :
+    b_max: '110',                // au-delà de 90°, la buse imprime par en dessous
+    b_inclinaison_max: '110',
   },
 };

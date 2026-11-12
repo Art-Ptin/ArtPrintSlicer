@@ -54,7 +54,7 @@ struct PartieImpression {
     bool tronc_lisse = false;
     // En couches courbes : plus grande inclinaison donnée à la tête, en
     // degrés (celle qui a été trouvée sans collision pour cette partie).
-    double inclinaison_outil_max = 90.0;
+    double inclinaison_outil_max = 180.0;  // (la limite de la machine s'applique toujours)
     // Couches courbes : un point à l'intérieur de la branche, qui sert à la
     // désigner (pour demander qu'elle soit imprimée à plat, par exemple).
     Vec3 repere;

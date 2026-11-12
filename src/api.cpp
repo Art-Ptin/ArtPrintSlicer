@@ -426,7 +426,7 @@ std::string Session::executer(std::string_view demande_json) {
                             if (proche) {
                                 proche->cote = c.cote < 0 ? -1 : c.cote > 0 ? 1 : proche->cote;
                                 if (c.inclinaison_max > 0.0) {
-                                    proche->inclinaison_outil_max = std::clamp(c.inclinaison_max, 10.0, 90.0);
+                                    proche->inclinaison_outil_max = std::clamp(c.inclinaison_max, 10.0, 180.0);
                                 }
                             }
                         }

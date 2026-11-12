@@ -2,6 +2,7 @@
 // Tests du 5 axes : découpe d'un modèle par un plan, squelette (tronc et
 // branches), stratégies proposées, et G-code multi-directions relu par le
 // vérificateur. Les modèles et les réglages de machine sont inventés ici.
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <cstdlib>
@@ -16,6 +17,7 @@
 #include "champ_couches.hpp"
 #include "couches_courbes.hpp"
 #include "modeles_essai.hpp"
+#include "modeles_vingt.hpp"
 #include "multiaxe.hpp"
 #include "slicer.hpp"
 #include "squelette.hpp"
@@ -863,6 +865,57 @@ void test_contrat_gcode() {
     VERIFIER(ondulation(lent).duree_estimee > apres.duree_estimee + 30.0);
 }
 
+// La tête peut s'incliner de plus de 90° si les réglages de la machine le
+// permettent : la buse pointe alors vers le haut et imprime par en dessous.
+void test_au_dela_de_90() {
+    const Maillage pose = poser_au_centre(essai::v03_branche_tombante());
+    const auto ondulation = [&](const Reglages& reglages) {
+        const std::vector<Strategie> proposees = proposer_strategies(pose, reglages);
+        const Strategie* choisie = trouver(proposees, TypeStrategie::couches_courbes);
+        return choisie ? trancher_strategie(*choisie, reglages) : ResultatTranchage{};
+    };
+    const auto b_max = [](const ResultatTranchage& resultat, double& z_min) {
+        double plus_grand = 0.0;
+        z_min = 1e9;
+        for (const LigneLue& ligne : lire_mouvements(resultat.gcode)) {
+            plus_grand = std::max(plus_grand, std::abs(ligne.b));
+            z_min = std::min(z_min, ligne.z);
+        }
+        return plus_grand;
+    };
+    Reglages r = reglages_essai();
+    r.machine.contrat_gcode = 1;
+
+    // Limite à 90° : la branche qui retombe est imprimée, la tête ne dépasse pas 90°.
+    double z_min = 0.0;
+    const ResultatTranchage a_90 = ondulation(r);
+    VERIFIER_ACCEPTE(a_90.verification);
+    VERIFIER(b_max(a_90, z_min) <= 90.0 + 1e-6);
+
+    // Limite à 110° : la tête dépasse 90° sans jamais dépasser 110°, la pointe
+    // reste au-dessus du plateau, et le vérificateur accepte le fichier.
+    r.machine.b_min = -110.0;
+    r.machine.b_max = 110.0;
+    r.machine.b_inclinaison_max = 110.0;
+    r.machine.b_limite_pres_plateau = 110.0;
+    const ResultatTranchage a_110 = ondulation(r);
+    VERIFIER_ACCEPTE(a_110.verification);
+    const double atteint = b_max(a_110, z_min);
+    VERIFIER(atteint > 95.0 && atteint <= 110.0 + 1e-6);
+    VERIFIER(z_min >= 0.0);
+    // Aucune remarque de limite : la machine suit les couches.
+    for (const std::string& remarque : a_110.remarques) {
+        VERIFIER(remarque.find("b_inclinaison_max") == std::string::npos);
+    }
+
+    // Le même fichier, relu avec une machine limitée à 90° : refusé.
+    Reglages etroit = r;
+    etroit.machine.b_inclinaison_max = 90.0;
+    const RapportVerification refus = verifier_gcode_texte(a_110.gcode, etroit);
+    VERIFIER(std::any_of(refus.erreurs.begin(), refus.erreurs.end(),
+                         [](const ErreurVerification& e) { return e.type == TypeErreur::limite_b; }));
+}
+
 int main() {
     test_decoupe();
     test_squelette();
@@ -875,6 +928,7 @@ int main() {
     test_courses();
     test_couches_courbes();
     test_contrat_gcode();
+    test_au_dela_de_90();
     test_peau_courbe();
     if (echecs == 0) {
         std::cout << "Tests du 5 axes : tout est correct.\n";

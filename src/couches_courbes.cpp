@@ -244,7 +244,7 @@ struct Brut {
 
 // Construit les cartes d'une tige à partir de ses boucles. Rend « faux » si
 // une couche est trop bombée pour sa carte.
-bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, double pointe,
+bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, double pointe, double inclinaison_max,
                        std::vector<CoucheCourbe>& couches, std::string& raison) {
     for (Brut& brut : bruts) {
         Vec3 somme, direction;
@@ -408,10 +408,11 @@ bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, doub
                                  couche.bombement);
             return false;
         }
-        // Une couche qui regarde vers le bas (plus de 100° depuis la
-        // verticale) demanderait d'imprimer la tête en bas : impossible.
-        // C'est le cas de la moitié haute d'une anse, attaquée par le haut.
-        if (couche.w.z < -0.17) {
+        // Une couche qui regarde trop vers le bas (plus que ce que la tête
+        // de la machine peut suivre) demanderait d'imprimer la tête en bas :
+        // impossible. C'est le cas de la moitié haute d'une anse, attaquée
+        // par le haut.
+        if (couche.w.z < std::cos(en_radians(inclinaison_max))) {
             raison = std::format("sa couche {} sur {} regarde vers le bas", couches.size() + 1, bruts.size());
             return false;
         }
@@ -434,7 +435,8 @@ bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, doub
 std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele, const AnalyseBranches& analyse,
                                                           const std::vector<double>& dessus,
                                                           const std::vector<double>& epaisseurs,
-                                                          double pointe, std::map<int, std::string>& impossibles) {
+                                                          double pointe, double inclinaison_max,
+                                                          std::map<int, std::string>& impossibles) {
     const ChampCouches& champ = analyse.champ;
     // Loin des branches, le champ n'est pas calculé : c'est le tronc.
     const double loin = -1.0e3;
@@ -509,7 +511,7 @@ std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele
     std::vector<std::vector<CoucheCourbe>> tiges(nombre);
     for (std::size_t n = 0; n < nombre; ++n) {
         std::string raison;
-        if (!cartes_de_la_tige(bruts[n], champ, pointe, tiges[n], raison)) {
+        if (!cartes_de_la_tige(bruts[n], champ, pointe, inclinaison_max, tiges[n], raison)) {
             impossibles.emplace(static_cast<int>(n), raison);
         }
     }
@@ -519,7 +521,7 @@ std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele
 }  // namespace
 
 PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe,
-                               const std::vector<Vec3>& a_plat) {
+                               const std::vector<Vec3>& a_plat, double inclinaison_max) {
     PlanBranches plan;
     // La matière des tiges qu'on n'a pas su découper : elle est imprimée avec le tronc.
     std::vector<std::uint8_t> avec_le_tronc;
@@ -537,7 +539,7 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
             plan.dessus.push_back(haut);
         }
         std::map<int, std::string> impossibles;
-        plan.tiges = trancher_les_tiges(pose, plan.analyse, plan.dessus, plan.epaisseurs, pointe, impossibles);
+        plan.tiges = trancher_les_tiges(pose, plan.analyse, plan.dessus, plan.epaisseurs, pointe, inclinaison_max, impossibles);
         plan.journal = journal;
         // Une tige très mince (moins de 1,7 mm d'épaisseur en tout : une
         // pellicule ou un collier autour du tronc, là où des raccords

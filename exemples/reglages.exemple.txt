@@ -32,6 +32,8 @@ centre_plateau_y = 0
 # course_z_max =
 
 # Butées de B, en degrés.
+# Elles peuvent dépasser 90 (110 par exemple) si la mécanique le permet :
+# la buse pointe alors vers le haut et imprime par en dessous.
 b_min = -90
 b_max = 90
 # Inclinaison maximale de B acceptée par le firmware, en degrés. Le slicer ne
