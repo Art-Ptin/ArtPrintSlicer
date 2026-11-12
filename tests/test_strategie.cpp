@@ -11,6 +11,8 @@
 #include "cinematique.hpp"
 #include "decoupe.hpp"
 #include "formes_organiques.hpp"
+#include "champ_couches.hpp"
+#include "couches_courbes.hpp"
 #include "modeles_essai.hpp"
 #include "multiaxe.hpp"
 #include "slicer.hpp"
@@ -425,6 +427,96 @@ void test_courses() {
     }
 }
 
+// Couches courbes : le champ (longueur du chemin jusqu'au plateau), la
+// découpe d'une branche selon ce champ, puis le tranchage complet.
+void test_couches_courbes() {
+    const Reglages r = reglages_essai();
+    const Maillage pose = poser_au_centre(essai::arbre_organique());
+    const ChampCouches champ = calculer_champ_couches(pose);
+    // Dans le tronc, le chemin le plus court est la verticale : la longueur
+    // vaut la hauteur, les couches sont des plans horizontaux.
+    for (const double z : {5.0, 20.0, 40.0}) {
+        double f = 0.0;
+        VERIFIER(champ.valeur({0.0, 0.0, z}, f) && std::abs(f - z) < 0.02);
+    }
+    const std::vector<Strategie> strategies = proposer_strategies(pose, r);
+    VERIFIER(strategies.front().type == TypeStrategie::classique);
+    const Strategie* courbes = trouver(strategies, TypeStrategie::couches_courbes);
+    VERIFIER(courbes != nullptr);
+    if (!courbes) {
+        return;
+    }
+    VERIFIER(courbes->parties.size() >= 3 && !courbes->modele.triangles.empty());
+    VERIFIER(!courbes->parties.front().couches_courbes && courbes->parties.back().couches_courbes);
+
+    // Dans une branche : le chemin est plus long que la hauteur, et la
+    // longueur augmente partout d'environ 1 mm par mm : les couches ont une
+    // épaisseur régulière.
+    std::vector<double> dessus, epaisseurs;
+    for (double haut = r.impression.hauteur_premiere_couche; haut < champ.maximum + r.impression.hauteur_couche;
+         haut += r.impression.hauteur_couche) {
+        dessus.push_back(haut);
+        epaisseurs.push_back(dessus.size() == 1 ? r.impression.hauteur_premiere_couche : r.impression.hauteur_couche);
+    }
+    const std::vector<CoucheCourbe> couches =
+        trancher_selon_champ(courbes->parties.back().maillage, champ, dessus, epaisseurs, courbes->parties.size());
+    VERIFIER(couches.size() > 30);
+    double relief = 0.0, pente_min = 9.0, pente_max = 0.0;
+    bool plus_long = false;
+    for (const CoucheCourbe& couche : couches) {
+        double bas = 1e9, haut = -1e9;
+        for (const Contour& contour : couche.contour) {
+            for (const PointEntier& sommet : contour) {
+                Vec3 point;
+                double hauteur = 0.0;
+                if (!poser_sur_la_surface(champ, couche, en_mm(sommet), dessus[couche.niveau], hauteur, point)) {
+                    continue;
+                }
+                bas = std::min(bas, hauteur), haut = std::max(haut, hauteur);
+                plus_long = plus_long || dessus[couche.niveau] > point.z + 0.5;
+                Vec3 direction;
+                double pente = 1.0;
+                if (champ.gradient(point, direction, pente)) {
+                    pente_min = std::min(pente_min, pente), pente_max = std::max(pente_max, pente);
+                }
+            }
+        }
+        relief = std::max(relief, haut - bas);
+    }
+    VERIFIER(plus_long);
+    // Les couches ne sont pas planes : leur surface s'écarte de sa carte.
+    VERIFIER(relief > 0.3);
+    VERIFIER(pente_min > 0.7 && pente_max < 1.4);
+
+    // Tranchage complet : accepté par le vérificateur, la tête tourne
+    // pendant l'extrusion, et tout monte ensemble (les parties alternent).
+    const ResultatTranchage resultat = trancher_strategie(*courbes, r);
+    VERIFIER_ACCEPTE(resultat.verification);
+    VERIFIER(resultat.verification.extrusions_en_rotation > 1000);
+    std::size_t reprises = 0;
+    double c_min = 0.0, c_max = 0.0;
+    std::istringstream lignes(resultat.gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        reprises += ligne.starts_with(";PARTIE:");
+        const auto ou = ligne.find(" C");
+        if (ligne.starts_with("G") && ou != std::string::npos) {
+            const double c = std::stod(ligne.substr(ou + 2));
+            c_min = std::min(c_min, c), c_max = std::max(c_max, c);
+        }
+    }
+    VERIFIER(reprises > 20 * courbes->parties.size());
+    // Le plateau va et vient : il ne s'enroule pas sur des dizaines de tours.
+    VERIFIER(c_max - c_min < 1080.0);
+    // Pas plus de parois dans le vide qu'en 3 axes.
+    VERIFIER(resultat.verification.longueur_dans_le_vide <=
+             trancher(pose, r).verification.longueur_dans_le_vide + 1.0);
+
+    // Une branche qui redescend (le crochet) ne peut pas être imprimée ainsi :
+    // la stratégie n'est pas proposée.
+    VERIFIER(trouver(proposer_strategies(poser_au_centre(essai::crochet()), r), TypeStrategie::couches_courbes) ==
+             nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -437,6 +529,7 @@ int main() {
     test_couches_pivotantes();
     test_objets_organiques();
     test_courses();
+    test_couches_courbes();
     if (echecs == 0) {
         std::cout << "Tests du 5 axes : tout est correct.\n";
         return 0;

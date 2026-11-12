@@ -4,11 +4,14 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <functional>
 #include <limits>
 #include <numbers>
 #include <vector>
 
+#include "champ_couches.hpp"
 #include "cinematique.hpp"
+#include "couches_courbes.hpp"
 #include "decoupe.hpp"
 #include "ecriture_gcode.hpp"
 #include "tranchage.hpp"
@@ -80,12 +83,37 @@ public:
     // Commence une partie : son repère est (origine, u, v, w), w étant la
     // direction d'impression. La tête ne bouge qu'au prochain déplacement.
     // « cote » : côté vers lequel la tête penche (0 : le plus proche).
-    void partie(const Vec3& origine, const Vec3& u, const Vec3& v, const Vec3& w, int cote) {
+    // « numero » : numéro de la partie pour l'aperçu (-1 : la suivante).
+    void partie(const Vec3& origine, const Vec3& u, const Vec3& v, const Vec3& w, int cote, int numero = -1) {
         origine_ = origine, u_ = u, v_ = v, w_ = w;
         outil_ = direction_outil(w);
         cote_ = cote;
         oriente_ = false;
-        ++partie_;
+        partie_ = numero >= 0 ? numero : partie_ + 1;
+        champ_ = nullptr;
+        limite_partie_ = 90.0;
+    }
+
+    // Plus grande inclinaison de la tête pour la partie en cours, en degrés.
+    void limiter_inclinaison(double maximum) { limite_partie_ = maximum; }
+
+    // Couches courbes : tronc et branches montent ensemble. La hauteur sûre
+    // pour changer d'orientation suit alors ce qui est déjà imprimé.
+    void hauteur_sure_suivie() { suivie_ = true; }
+
+    // Couche courbe : la couche en cours est une surface du champ, dessinée
+    // sur la carte donnée par partie() ou pivoter(). « hauteur_trajet » :
+    // hauteur, au-dessus de la carte, du point le plus haut de la couche ;
+    // « z_min » : son point le plus bas au-dessus du plateau.
+    void couche_courbe(const ChampCouches& champ, const CoucheCourbe& carte, double niveau,
+                       double epaisseur, double hauteur_trajet, double z_min) {
+        champ_ = &champ, carte_ = &carte, niveau_ = niveau;
+        h_nominale_ = epaisseur;
+        hauteur_trajet_ = hauteur_trajet + r_.levee_z;
+        hauteur_surface_ = 0.0;
+        variable_ = false;
+        continu_ = a_preparer_ = false;
+        outil_ = direction_outil(incliner_au_plus(w_, limite_inclinaison(z_min)));
     }
 
     // Fait pivoter le repère pour la couche suivante d'une partie courbe.
@@ -131,6 +159,10 @@ public:
 
     // Déplacement à vide jusqu'au point de la couche en cours.
     void aller_a(const Point2& p) {
+        if (champ_) {
+            aller_sur_la_surface(p);
+            return;
+        }
         if (place_ && oriente_ && distance(position_, p) < 1e-4 && std::abs(z_local_ - z_) < 1e-6) {
             return;  // déjà sur place
         }
@@ -153,6 +185,10 @@ public:
     void extruder_vers(const Point2& p, double vitesse) {
         const double longueur = distance(position_, p);
         if (longueur < 1e-4) {
+            return;
+        }
+        if (champ_) {
+            extruder_sur_la_surface(p, vitesse);
             return;
         }
         if (retracte_) {
@@ -202,6 +238,7 @@ public:
             }
             filament_ += e;
             pointe_ = etape;
+            z_haut_ = std::max(z_haut_, pointe_.z);
         }
         noter(depart, cible, type_);
         parcouru_ += longueur;
@@ -213,7 +250,7 @@ public:
     void degager(double hauteur) {
         retracter();
         deplacer(pointe_ + outil_ * r_.levee_z);
-        const double z = std::min(std::max(pointe_.z + hauteur, hauteur_sure_), machine_.hauteur_impression);
+        const double z = std::min(std::max(pointe_.z + hauteur, hauteur_sure()), machine_.hauteur_impression);
         if (z > pointe_.z) {
             deplacer({pointe_.x, pointe_.y, z});
         }
@@ -236,8 +273,179 @@ private:
         return w.z > std::cos(en_radians(1.5)) ? Vec3{0.0, 0.0, 1.0} : w;
     }
 
-    // Point de la pièce correspondant à un point (x, y, z) du repère de la partie.
-    Vec3 point(const Point2& p, double z) const { return origine_ + u_ * p.x + v_ * p.y + w_ * z; }
+    // Point de la pièce correspondant à un point (x, y, z) du repère de la
+    // partie. Sur une couche courbe, z est compté au-dessus de la surface.
+    Vec3 point(const Point2& p, double z) {
+        if (champ_) {
+            return sur_la_surface(p) + w_ * z;
+        }
+        return origine_ + u_ * p.x + v_ * p.y + w_ * z;
+    }
+
+    // --- Couches courbes ---------------------------------------------------
+
+    double hauteur_sure() const {
+        return suivie_ ? std::min(z_haut_ + options_.degagement, machine_.hauteur_impression) : hauteur_sure_;
+    }
+
+    // Plus grande inclinaison permise à cette hauteur, en degrés.
+    double limite_inclinaison(double z) const {
+        const bool haut = machine_.hauteur_bascule_b && z >= *machine_.hauteur_bascule_b + 0.2;
+        const double butee = std::max(std::abs(machine_.b_min), std::abs(machine_.b_max));
+        return std::min(limite_partie_, haut ? butee : std::min(butee, machine_.b_limite_pres_plateau));
+    }
+
+    // La même direction, redressée si elle penche de plus de « maximum » degrés.
+    static Vec3 incliner_au_plus(const Vec3& direction, double maximum) {
+        const double inclinaison = en_degres(std::acos(std::clamp(direction.z, -1.0, 1.0)));
+        if (inclinaison <= maximum) {
+            return direction;
+        }
+        const double horizontal = std::hypot(direction.x, direction.y);
+        const double i = en_radians(maximum);
+        return {direction.x / horizontal * std::sin(i), direction.y / horizontal * std::sin(i), std::cos(i)};
+    }
+
+    Vec3 sur_la_surface(const Point2& p) {
+        Vec3 resultat;
+        if (!poser_sur_la_surface(*champ_, *carte_, p, niveau_, hauteur_surface_, resultat)) {
+            throw ErreurTranchage(
+                "Une trajectoire sort de la surface d'une couche courbe : cette partie ne peut "
+                "pas être imprimée en couches courbes.");
+        }
+        return resultat;
+    }
+
+    // Valeur de B en ce point de la surface : la tête penche dans le même
+    // sens que pour toute la couche (C ne bouge pas), mais de l'angle que
+    // fait la surface à cet endroit.
+    double inclinaison_locale(const Vec3& ici) const {
+        const double moyenne = en_degres(std::acos(std::clamp(outil_.z, -1.0, 1.0)));
+        Vec3 normale;
+        double pente = 1.0;
+        if (moyenne < 1e-6 || !champ_->gradient(ici, normale, pente)) {
+            return b_couche_;
+        }
+        const double horizontal = std::hypot(outil_.x, outil_.y);
+        const double vers = (normale.x * outil_.x + normale.y * outil_.y) / horizontal;
+        const double limite = limite_inclinaison(ici.z);
+        const double angle = std::clamp(en_degres(std::atan2(vers, normale.z)), -limite, limite);
+        return std::clamp(b_couche_ * (angle / moyenne), machine_.b_min, machine_.b_max);
+    }
+
+    void aller_sur_la_surface(const Point2& p) {
+        const Vec3 cible = sur_la_surface(p);
+        if (place_ && oriente_ && !pivot_ && norme(cible - pointe_) < 1e-4) {
+            return;  // déjà sur place
+        }
+        retracter();
+        const Vec3 pied = origine_ + u_ * p.x + v_ * p.y;
+        bool grand_changement = !oriente_;
+        if (!grand_changement && pivot_) {
+            // Couche suivante de la même partie : la carte a un peu tourné.
+            const auto orientation = position_machine(machine_, {cible, outil_}, c_, cote_);
+            if (!orientation) {
+                throw ErreurTranchage(
+                    "La machine ne peut pas suivre cette couche courbe : l'orientation demandée "
+                    "dépasse les butées des axes B ou C.");
+            }
+            if (std::abs(orientation->b - b_couche_) > 4.0 || std::abs(orientation->c - c_) > 4.0) {
+                grand_changement = true;
+            } else {
+                monter_au_plan_de_trajet();
+                b_ = b_couche_ = orientation->b;
+                c_ = orientation->c;
+                deplacer_tous_axes(pied + w_ * hauteur_trajet_);
+                w_ancien_ = outil_;
+            }
+        } else if (!grand_changement) {
+            monter_au_plan_de_trajet();
+            deplacer(pied + w_ * hauteur_trajet_);
+        }
+        pivot_ = false;
+        if (grand_changement) {
+            changer_orientation(p);
+        }
+        // Arrivée : la tête prend l'inclinaison de la surface à cet endroit.
+        b_ = inclinaison_locale(cible);
+        deplacer_tous_axes(cible);
+        position_ = p;
+    }
+
+    // Monte le long de la direction de la carte jusqu'au-dessus de toute la couche.
+    void monter_au_plan_de_trajet() {
+        const double manque = hauteur_trajet_ - produit_scalaire(pointe_ - origine_, w_);
+        if (manque > 1e-6) {
+            deplacer(pointe_ + w_ * manque);
+        }
+    }
+
+    void extruder_sur_la_surface(const Point2& p, double vitesse) {
+        if (retracte_) {
+            ligne(std::format("G1 E{:.3f} F{:.0f}", r_.retraction_longueur, r_.retraction_vitesse * 60.0));
+            retracte_ = false;
+            duree_ += r_.retraction_longueur / r_.retraction_vitesse;
+        }
+        struct Etape {
+            Point2 q;
+            Vec3 point;
+            double b;
+        };
+        const double section_filament = std::numbers::pi * r_.diametre_filament * r_.diametre_filament / 4.0;
+        const auto emettre = [&](const Etape& a, const Etape& b) {
+            const double longueur = norme(b.point - pointe_);
+            if (longueur < 1e-6) {
+                return;
+            }
+            // Épaisseur de la couche ici, et écartement réel des cordons : la
+            // carte est vue de biais là où la surface est inclinée.
+            double epaisseur = h_nominale_, largeur = r_.largeur_extrusion;
+            Vec3 normale;
+            double pente = 1.0;
+            if (champ_->gradient((pointe_ + b.point) * 0.5, normale, pente)) {
+                epaisseur = std::clamp(h_nominale_ / pente, 0.3 * h_nominale_, 1.6 * h_nominale_);
+                const double biais = std::max(0.3, produit_scalaire(normale, w_));
+                const double allongement = longueur / std::max(1e-9, distance(a.q, b.q));
+                largeur *= std::clamp(1.0 / (biais * allongement), 0.8, 1.5);
+            }
+            const double section = (largeur - epaisseur) * epaisseur + std::numbers::pi * epaisseur * epaisseur / 4.0;
+            const double e = longueur * section / section_filament * r_.debit;
+            b_ = b.b;
+            const PositionMachine m = position_avec_angles(machine_, b.point, b_, c_);
+            ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z,
+                              m.b + machine_.b_vertical, m.c, e, vitesse * 60.0));
+            noter(pointe_, b.point, type_);
+            filament_ += e;
+            duree_ += longueur / vitesse;
+            pointe_ = b.point;
+            z_haut_ = std::max(z_haut_, pointe_.z);
+        };
+        // Le segment de la carte est recoupé tant que la surface s'écarte de
+        // la corde, ou que la tête tourne trop d'un point à l'autre.
+        const std::function<void(const Etape&, const Etape&, int)> tracer = [&](const Etape& a, const Etape& b,
+                                                                             int profondeur) {
+            const double longueur = distance(a.q, b.q);
+            if (profondeur < 12 && longueur > 0.3) {
+                Etape milieu;
+                milieu.q = {(a.q.x + b.q.x) / 2.0, (a.q.y + b.q.y) / 2.0};
+                milieu.point = sur_la_surface(milieu.q);
+                milieu.b = inclinaison_locale(milieu.point);
+                const double fleche = norme(milieu.point - (a.point + b.point) * 0.5);
+                if (longueur > 2.0 || fleche > 0.02 || std::abs(b.b - a.b) > options_.pas_pivot_continu) {
+                    tracer(a, milieu, profondeur + 1);
+                    tracer(milieu, b, profondeur + 1);
+                    return;
+                }
+            }
+            emettre(a, b);
+        };
+        Etape arrivee;
+        arrivee.q = p;
+        arrivee.point = sur_la_surface(p);
+        arrivee.b = inclinaison_locale(arrivee.point);
+        tracer(Etape{position_, pointe_, b_}, arrivee, 0);
+        position_ = p;
+    }
 
     void retracter() {
         // Avant la toute première extrusion, la buse est vide : rien à rétracter.
@@ -286,7 +494,7 @@ private:
         }
         // Point d'approche : en retrait le long de la buse ; et son aplomb à la hauteur sûre.
         const Vec3 approche = point(p, z_ + options_.approche);
-        const Vec3 aplomb{approche.x, approche.y, std::max(hauteur_sure_, approche.z)};
+        const Vec3 aplomb{approche.x, approche.y, std::max(hauteur_sure(), approche.z)};
         if (!place_) {
             // Tout premier déplacement : tous les axes sont écrits.
             b_ = cible->b, c_ = cible->c;
@@ -294,8 +502,8 @@ private:
         } else {
             // 1. Recul le long de l'ancienne direction, 2. montée à la verticale.
             deplacer(pointe_ + w_ancien_ * r_.levee_z);
-            if (pointe_.z < hauteur_sure_) {
-                deplacer({pointe_.x, pointe_.y, hauteur_sure_});
+            if (pointe_.z < hauteur_sure()) {
+                deplacer({pointe_.x, pointe_.y, hauteur_sure()});
             }
             // 3. Rotation de B et de C par petits pas, la pointe allant en
             // ligne droite vers l'aplomb du point d'approche.
@@ -312,6 +520,7 @@ private:
             b_ = cible->b, c_ = cible->c;
             ++changements_;
         }
+        b_couche_ = b_;
         // 4. Descente jusqu'au point d'approche.
         deplacer(approche);
         oriente_ = true;
@@ -335,7 +544,7 @@ private:
             return changer_orientation(p);
         }
         deplacer(pointe_ + w_ancien_ * r_.levee_z);
-        b_ = cible->b, c_ = cible->c;
+        b_ = b_couche_ = cible->b, c_ = cible->c;
         deplacer_tous_axes(point(p, z_ + r_.levee_z));
         w_ancien_ = outil_;
         return z_ + r_.levee_z;
@@ -390,6 +599,16 @@ private:
     bool place_ = false;      // faux tant que la buse n'a pas été positionnée
     bool oriente_ = false;    // faux tant que la tête n'est pas dans l'orientation de la partie
     bool pivot_ = false;      // vrai quand le repère vient de pivoter un peu (partie courbe)
+    // Couche courbe en cours (sinon champ_ est nul) : sa surface, sa carte.
+    const ChampCouches* champ_ = nullptr;
+    const CoucheCourbe* carte_ = nullptr;
+    double niveau_ = 0.0;
+    double hauteur_trajet_ = 0.0;   // hauteur des déplacements à vide au-dessus de la carte
+    double hauteur_surface_ = 0.0;  // hauteur de la surface au dernier point calculé
+    double b_couche_ = 0.0;         // valeur de B pour la direction moyenne de la couche
+    double limite_partie_ = 90.0;   // inclinaison maximale de la tête pour la partie en cours
+    bool suivie_ = false;           // vrai : la hauteur sûre suit ce qui est imprimé
+    double z_haut_ = 0.0;           // point le plus haut déjà imprimé
     bool variable_ = false;   // vrai quand l'épaisseur de la couche varie d'un point à l'autre
     // Pivot continu (partie courbe) : pendant la couche, B et C vont de
     // (b_debut_, c_debut_) à (b_fin_, c_fin_) au fil de la longueur imprimée.
@@ -539,8 +758,12 @@ bool couches_pivotantes_possibles(const PartieImpression& partie, const Reglages
     }
 }
 
-ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
-                                     const OptionsMultiaxe& options) {
+namespace {
+
+// « reduction » : degrés retirés à l'inclinaison maximale de la tête des
+// parties en couches courbes (voir trancher_strategie).
+ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& reglages,
+                                const OptionsMultiaxe& options, double reduction) {
     if (strategie.parties.empty()) {
         throw ErreurTranchage("La stratégie ne contient aucune partie à imprimer.");
     }
@@ -590,8 +813,29 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
         int cote = 0;
         // Partie courbe : un repère par couche (sinon vide).
         std::vector<RepereCouche> reperes;
+        // Couches courbes : la carte de chaque couche (sinon vide).
+        std::vector<CoucheCourbe> cartes;
         std::vector<CoucheTrajectoires> couches;
+        bool sur_plateau = true;
+        double inclinaison_outil_max = 90.0;
     };
+    // Couches courbes : le chemin de la matière dans tout le modèle, et la
+    // longueur de chemin du dessus de chaque couche.
+    const bool courbes = std::any_of(strategie.parties.begin(), strategie.parties.end(),
+                                     [](const PartieImpression& p) { return p.couches_courbes; });
+    ChampCouches champ;
+    std::vector<double> dessus, epaisseurs;
+    if (courbes) {
+        if (strategie.modele.triangles.empty()) {
+            throw ErreurTranchage("La stratégie en couches courbes ne contient pas le modèle entier.");
+        }
+        champ = calculer_champ_couches(strategie.modele);
+        for (double haut = r.hauteur_premiere_couche; haut < champ.maximum + r.hauteur_couche;
+             haut += r.hauteur_couche) {
+            dessus.push_back(haut);
+            epaisseurs.push_back(dessus.size() == 1 ? r.hauteur_premiere_couche : r.hauteur_couche);
+        }
+    }
     std::vector<PartieTranchee> tranchees;
     std::size_t nombre_couches = 0;
     for (std::size_t p = 0; p < strategie.parties.size(); ++p) {
@@ -605,7 +849,25 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
             repere_autour(t.w, t.u, t.v);
         }
         const bool sur_plateau = partie.parent < 0;
+        t.sur_plateau = sur_plateau;
         t.cote = partie.cote;
+        t.inclinaison_outil_max = partie.inclinaison_outil_max - reduction;
+        if (partie.couches_courbes) {
+            t.cartes = trancher_selon_champ(partie.maillage, champ, dessus, epaisseurs, p + 1);
+            std::vector<Polygones> contours;
+            for (const CoucheCourbe& carte : t.cartes) {
+                contours.push_back(carte.contour);
+            }
+            ReglagesImpression reglages_courbe = r;
+            reglages_courbe.jupe_boucles = 0;
+            reglages_courbe.hauteur_premiere_couche = r.hauteur_couche;
+            t.couches = calculer_trajectoires(contours, reglages_courbe);
+            t.origine = t.cartes.front().origine, t.u = t.cartes.front().u;
+            t.v = t.cartes.front().v, t.w = t.cartes.front().w;
+            nombre_couches += t.couches.size();
+            tranchees.push_back(std::move(t));
+            continue;
+        }
         if (!partie.guide.empty()) {
             // Partie courbe : ses couches pivotent le long de sa courbe.
             std::vector<Polygones> contours = sections_pivotantes(partie, r, sur_plateau, p + 1, t.reperes);
@@ -673,61 +935,142 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
 
     EcrivainCinqAxes ecrivain(reglages, hauteur_sure, options);
     ecrire_entete(ecrivain, r, nombre_couches);
-    std::size_t numero = 0;
+    // Ordre d'impression. D'ordinaire, une partie après l'autre. En couches
+    // courbes, tout monte ensemble : la couche k de chaque partie, puis la
+    // couche k + 1, comme dans une impression classique.
+    struct Passe {
+        std::size_t niveau, partie, couche;
+    };
+    std::vector<Passe> passes;
     for (std::size_t p = 0; p < tranchees.size(); ++p) {
-        PartieTranchee& t = tranchees[p];
-        ecrivain.ligne(std::format(";PARTIE:{} direction {:.4f} {:.4f} {:.4f}", p + 1, t.w.x, t.w.y, t.w.z));
-        ecrivain.partie(t.origine, t.u, t.v, t.w, t.cote);
-        ecrivain.epaisseur_fixe();
-        ecrivain.pivoter_entre_les_couches();
-        for (std::size_t c = 0; c < t.couches.size(); ++c) {
-            CoucheTrajectoires& couche = t.couches[c];
-            ecrivain.ligne(std::format(";COUCHE:{}", ++numero));
-            ecrivain.ligne(std::format(";Z:{:.3f}", couche.z));
-            if (numero == 2 && r.ventilation) {
-                ecrivain.ligne("M106 S255 ; ventilateur de pièce");
+        for (std::size_t c = 0; c < tranchees[p].couches.size(); ++c) {
+            if (courbes && tranchees[p].couches[c].traits.empty()) {
+                continue;
             }
-            if (!t.reperes.empty()) {
-                // Couche d'une partie courbe : son propre repère, la buse sur son plan.
-                const RepereCouche& repere = t.reperes[c];
-                if (c > 0) {
-                    ecrivain.pivoter(repere.origine, repere.u, repere.v, repere.w);
+            const std::size_t niveau = !courbes ? 0 : tranchees[p].cartes.empty() ? c : tranchees[p].cartes[c].niveau;
+            passes.push_back({niveau, p, c});
+        }
+    }
+    if (courbes) {
+        ecrivain.hauteur_sure_suivie();
+        // D'un niveau au suivant, les parties sont visitées dans l'ordre
+        // inverse (aller, puis retour) : le plateau revient sur ses pas au
+        // lieu de s'enrouler toujours dans le même sens.
+        std::stable_sort(passes.begin(), passes.end(), [](const Passe& a, const Passe& b) {
+            if (a.niveau != b.niveau) {
+                return a.niveau < b.niveau;
+            }
+            return a.niveau % 2 == 0 ? a.partie < b.partie : a.partie > b.partie;
+        });
+    }
+    std::size_t numero = 0;
+    std::size_t en_cours = tranchees.size();  // partie en cours d'impression (aucune)
+    for (const Passe& passe : passes) {
+        const std::size_t p = passe.partie, c = passe.couche;
+        PartieTranchee& t = tranchees[p];
+        CoucheTrajectoires& couche = t.couches[c];
+        const bool changement = en_cours != p;
+        if (changement) {
+            en_cours = p;
+            // La partie est reprise là où elle en est : avec la carte de sa couche.
+            const Vec3 origine = t.cartes.empty() ? t.origine : t.cartes[c].origine;
+            const Vec3 u = t.cartes.empty() ? t.u : t.cartes[c].u;
+            const Vec3 v = t.cartes.empty() ? t.v : t.cartes[c].v;
+            const Vec3 w = t.cartes.empty() ? t.w : t.cartes[c].w;
+            ecrivain.ligne(std::format(";PARTIE:{} direction {:.4f} {:.4f} {:.4f}", p + 1, w.x, w.y, w.z));
+            ecrivain.partie(origine, u, v, w, t.cote, static_cast<int>(p));
+            if (!t.cartes.empty()) {
+                ecrivain.limiter_inclinaison(std::max(10.0, t.inclinaison_outil_max));
+            }
+            ecrivain.epaisseur_fixe();
+            ecrivain.pivoter_entre_les_couches();
+        }
+        ecrivain.ligne(std::format(";COUCHE:{}", ++numero));
+        ecrivain.ligne(std::format(";Z:{:.3f}", couche.z));
+        if (numero == 2 && r.ventilation) {
+            ecrivain.ligne("M106 S255 ; ventilateur de pièce");
+        }
+        if (!t.cartes.empty()) {
+            // Couche courbe : sa carte, et la surface sur laquelle la buse se pose.
+            const CoucheCourbe& carte = t.cartes[c];
+            if (!changement) {
+                ecrivain.pivoter(carte.origine, carte.u, carte.v, carte.w);
+            }
+            // Point le plus haut au-dessus de la carte (pour les déplacements
+            // à vide) et point le plus bas au-dessus du plateau.
+            double hauteur_trajet = -std::numeric_limits<double>::max();
+            double z_min = std::numeric_limits<double>::max(), hauteur = 0.0;
+            // Un trait dont un point ne trouve pas la surface (un éclat au
+            // tout début ou au bout de la partie) est retiré ; s'il y en a
+            // beaucoup, la partie ne peut pas être imprimée ainsi.
+            double garde = 0.0, retire = 0.0;
+            std::erase_if(couche.traits, [&](const Trait& trait) {
+                double longueur = 0.0;
+                bool pose = true;
+                for (std::size_t i = 0; i < trait.points.size() && pose; ++i) {
+                    Vec3 ici;
+                    pose = poser_sur_la_surface(champ, carte, trait.points[i], dessus[carte.niveau], hauteur, ici);
+                    if (pose) {
+                        hauteur_trajet = std::max(hauteur_trajet, hauteur);
+                        z_min = std::min(z_min, ici.z);
+                        longueur += i > 0 ? distance(trait.points[i - 1], trait.points[i]) : 0.0;
+                    }
                 }
-                ecrivain.epaisseur_depuis(repere.origine_dessous, repere.normale_dessous, couche.hauteur);
-                ecrivain.couche(0.0, couche.hauteur);
-                if (c + 1 < t.reperes.size()) {
-                    // Longueur de cordon de la couche, et son point le plus bas.
-                    double longueur = 0.0, z_min = std::numeric_limits<double>::max();
-                    for (const Trait& trait : couche.traits) {
-                        for (std::size_t i = 0; i < trait.points.size(); ++i) {
-                            const Point2& q = trait.points[i];
-                            z_min = std::min(z_min, (repere.origine + repere.u * q.x + repere.v * q.y).z);
-                            if (i > 0) {
-                                longueur += distance(trait.points[i - 1], q);
-                            }
-                        }
-                        if (trait.ferme && trait.points.size() > 1) {
-                            longueur += distance(trait.points.back(), trait.points.front());
+                (pose ? garde : retire) += longueur;
+                return !pose;
+            });
+            if (retire > 2.0 + 0.2 * garde) {
+                throw ErreurTranchage(std::format(
+                    "Des trajectoires de la partie {} sortent de la surface de leur couche courbe.", p + 1));
+            }
+            if (couche.traits.empty()) {
+                continue;
+            }
+            ecrivain.couche_courbe(champ, carte, dessus[carte.niveau], epaisseurs[carte.niveau],
+                                   hauteur_trajet + 0.5, z_min);
+            ecrivain.couche(0.0, epaisseurs[carte.niveau]);
+        } else if (!t.reperes.empty()) {
+            // Couche d'une partie courbe : son propre repère, la buse sur son plan.
+            const RepereCouche& repere = t.reperes[c];
+            if (c > 0) {
+                ecrivain.pivoter(repere.origine, repere.u, repere.v, repere.w);
+            }
+            ecrivain.epaisseur_depuis(repere.origine_dessous, repere.normale_dessous, couche.hauteur);
+            ecrivain.couche(0.0, couche.hauteur);
+            if (c + 1 < t.reperes.size()) {
+                // Longueur de cordon de la couche, et son point le plus bas.
+                double longueur = 0.0, z_min = std::numeric_limits<double>::max();
+                for (const Trait& trait : couche.traits) {
+                    for (std::size_t i = 0; i < trait.points.size(); ++i) {
+                        const Point2& q = trait.points[i];
+                        z_min = std::min(z_min, (repere.origine + repere.u * q.x + repere.v * q.y).z);
+                        if (i > 0) {
+                            longueur += distance(trait.points[i - 1], q);
                         }
                     }
-                    ecrivain.pivoter_en_imprimant(longueur, t.reperes[c + 1].w, z_min);
-                } else {
-                    ecrivain.pivoter_entre_les_couches();
+                    if (trait.ferme && trait.points.size() > 1) {
+                        longueur += distance(trait.points.back(), trait.points.front());
+                    }
                 }
+                ecrivain.pivoter_en_imprimant(longueur, t.reperes[c + 1].w, z_min);
             } else {
-                ecrivain.couche(couche.z, couche.hauteur);
+                ecrivain.pivoter_entre_les_couches();
             }
-            for (std::size_t debut = 0; debut < couche.traits.size();) {
-                std::size_t fin = debut;
-                while (fin < couche.traits.size() && couche.traits[fin].type == couche.traits[debut].type) {
-                    ++fin;
-                }
-                const TypeTrait type = couche.traits[debut].type;
-                ecrivain.ligne(std::format(";TYPE:{}", nom_type(type)));
-                ecrivain.type(type);
-                ecrire_groupe(ecrivain, couche.traits, debut, fin, vitesse_du_type(r, type, c == 0));
-                debut = fin;
+        } else {
+            ecrivain.couche(couche.z, couche.hauteur);
+        }
+        const bool premiere = c == 0 && (t.cartes.empty() || t.sur_plateau);
+        for (std::size_t debut_groupe = 0; debut_groupe < couche.traits.size();) {
+            std::size_t fin_groupe = debut_groupe;
+            while (fin_groupe < couche.traits.size() &&
+                   couche.traits[fin_groupe].type == couche.traits[debut_groupe].type) {
+                ++fin_groupe;
             }
+            const TypeTrait type = couche.traits[debut_groupe].type;
+            ecrivain.ligne(std::format(";TYPE:{}", nom_type(type)));
+            ecrivain.type(type);
+            ecrire_groupe(ecrivain, couche.traits, debut_groupe, fin_groupe, vitesse_du_type(r, type, premiere));
+            debut_groupe = fin_groupe;
         }
     }
     ecrire_fin(ecrivain, r);
@@ -739,6 +1082,26 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     resultat.apercu = ecrivain.prendre_apercu();
     resultat.gcode = ecrivain.prendre_gcode();
     resultat.verification = verifier_gcode_texte(resultat.gcode, reglages);
+    return resultat;
+}
+
+}  // namespace
+
+ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
+                                     const OptionsMultiaxe& options) {
+    ResultatTranchage resultat = trancher_avec(strategie, reglages, options, 0.0);
+    // Couches courbes : si le vérificateur trouve que la tête ou le bras
+    // touche quelque chose, on recommence en penchant moins la tête. Les
+    // couches gardent la même forme ; seule l'orientation de la buse change.
+    const bool courbes = std::any_of(strategie.parties.begin(), strategie.parties.end(),
+                                     [](const PartieImpression& p) { return p.couches_courbes; });
+    const auto touche = [](const RapportVerification& v) {
+        return v.contient(TypeErreur::collision_matiere) || v.contient(TypeErreur::collision_plateau) ||
+               v.contient(TypeErreur::collision_machine);
+    };
+    for (double reduction = 10.0; courbes && reduction <= 40.0 && touche(resultat.verification); reduction += 10.0) {
+        resultat = trancher_avec(strategie, reglages, options, reduction);
+    }
     return resultat;
 }
 

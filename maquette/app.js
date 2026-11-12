@@ -622,9 +622,12 @@ function afficherProcede() {
 
 // --- Stratégies d'impression ------------------------------------------------------
 
+// Les stratégies qui inclinent la tête et font tourner le plateau.
+const STRATEGIES_5_AXES = ['par_branches', 'couches_courbes'];
+
 // Liste des façons d'imprimer le modèle ouvert, avec ce qu'il resterait à soutenir.
 function afficherStrategies() {
-  const cinqAxes = etat.strategie === 'par_branches';
+  const cinqAxes = STRATEGIES_5_AXES.includes(etat.strategie);
   for (const [id, actif] of [['mode-3axes', !cinqAxes], ['mode-5axes', cinqAxes]]) {
     $(id).classList.toggle('actif', actif);
     $(id).setAttribute('aria-pressed', String(actif));
@@ -1065,7 +1068,7 @@ function choisirMode(cinqAxes) {
     return;
   }
   const voulue = cinqAxes ? 'par_branches' : 'classique';
-  if (voulue === etat.strategie || (!cinqAxes && etat.strategie !== 'par_branches')) return;
+  if (cinqAxes === STRATEGIES_5_AXES.includes(etat.strategie)) return;
   etat.strategie = voulue;
   afficherStrategies();
   perimer();

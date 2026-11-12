@@ -99,4 +99,5 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Couches qui pivotent le long d'une branche courbe | ✅ | B et C changent à chaque couche |
 | Banc d'essai sur quatorze objets (dont châssis de drone organique) | ✅ | `tests/banc_strategies.cpp` |
 | B et C qui tournent pendant l'extrusion (pivot continu) | ✅ | sur les branches courbes, par pas de 0,25° au plus |
-| Tranchage 5 axes continu (couches courbes) | ⬜ | recherche |
+| Couches courbes : du tronc vers les branches, tout monte ensemble | 🟡 | pas encore pour les branches creuses ou très bombées |
+| Vérificateur : croisement de cordons sur une couche inclinée | ✅ | toléré sur une courte longueur, comme à plat |

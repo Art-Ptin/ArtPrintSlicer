@@ -108,6 +108,8 @@ std::string_view nom_type_strategie(TypeStrategie type) {
             return "autre_pose";
         case TypeStrategie::par_branches:
             return "par_branches";
+        case TypeStrategie::couches_courbes:
+            return "couches_courbes";
     }
     return "classique";
 }
@@ -125,7 +127,7 @@ Json decrire_strategie(const Strategie& strategie) {
             {{"direction", {partie.direction.x, partie.direction.y, partie.direction.z}},
              {"inclinaison", std::round(partie.inclinaison * 10.0) / 10.0},
              {"cote", partie.cote},
-             {"courbe", !partie.guide.empty()},
+             {"courbe", !partie.guide.empty() || partie.couches_courbes},
              {"volume_cm3", std::round(partie.volume) / 1000.0},
              {"surplomb_mm2", std::round(partie.surplomb)},
              {"parent", partie.parent}});
@@ -242,7 +244,7 @@ std::string Session::executer(std::string_view demande_json) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");
             }
             verifier_coherence(etat.reglages);
-            // « strategie » (facultatif) : "classique", "autre_pose" ou "par_branches".
+            // « strategie » (facultatif) : "classique", "autre_pose", "par_branches" ou "couches_courbes".
             const std::string voulue = demande.value("strategie", std::string("classique"));
             if (voulue == "classique") {
                 etat.resultat = trancher(*etat.modele, etat.reglages);

@@ -17,6 +17,8 @@ add_library(artprint_core
     collisions.cpp
     decoupe.cpp
     squelette.cpp
+    champ_couches.cpp
+    couches_courbes.cpp
     strategie.cpp
     multiaxe.cpp)
 target_include_directories(artprint_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

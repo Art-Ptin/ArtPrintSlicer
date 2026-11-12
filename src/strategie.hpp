@@ -44,9 +44,16 @@ struct PartieImpression {
     int cote = 0;
     double volume = 0.0;       // mm³
     double surplomb = 0.0;     // mm² à soutenir quand on l'imprime dans sa direction
+    // Vrai : la partie est imprimée en couches courbes, qui suivent le chemin
+    // de la matière depuis le plateau (voir champ_couches.hpp). Sa direction
+    // et sa courbe ne servent alors pas.
+    bool couches_courbes = false;
+    // En couches courbes : plus grande inclinaison donnée à la tête, en
+    // degrés (celle qui a été trouvée sans collision pour cette partie).
+    double inclinaison_outil_max = 90.0;
 };
 
-enum class TypeStrategie { classique, autre_pose, par_branches };
+enum class TypeStrategie { classique, autre_pose, par_branches, couches_courbes };
 
 struct Strategie {
     TypeStrategie type = TypeStrategie::classique;
@@ -55,6 +62,9 @@ struct Strategie {
     std::vector<PartieImpression> parties;  // dans l'ordre d'impression
     double surplomb = 0.0;                  // mm² à soutenir, toutes parties réunies
     std::vector<std::string> remarques;     // limites et avertissements, en français
+    // Pour les couches courbes : le modèle entier, posé sur le plateau. Le
+    // chemin de la matière se calcule sur tout le modèle, pas partie par partie.
+    Maillage modele;
 };
 
 struct OptionsStrategie {

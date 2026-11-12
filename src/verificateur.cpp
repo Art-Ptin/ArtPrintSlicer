@@ -527,19 +527,35 @@ private:
             return;
         }
         const double pas = grille_.pas();
+        double au_dessus = -1.0;
         for (double t = pas; t <= verif_.hauteur_controle_dessus; t += pas) {
             if (grille_.occupe(pose.pointe + pose.direction * t)) {
-                dessus_signale = true;
-                signaler(TypeErreur::sous_matiere, ici,
-                         std::format("Le cordon est imprimé sous de la matière déjà déposée "
-                                     "({:.2f} mm au-dessus de la pointe) : la buse devrait "
-                                     "traverser la pièce.",
-                                     t),
-                         "Imprimer cette zone avant celle du dessus, ou changer "
-                         "l'orientation de la buse.");
+                au_dessus = t;
+                break;
+            }
+        }
+        if (au_dessus < 0.0) {
+            longueur_sous_ = 0.0;
+            return;
+        }
+        // Tout près de la pointe (moins d'une demi-épaisseur de cordon), ce
+        // peut être un cordon voisin qui déborde un peu, sur une couche
+        // inclinée : comme un croisement, c'est toléré sur une courte
+        // longueur. Si cela dure, la buse est bien sous la matière.
+        if (au_dessus <= hauteur / 2.0 + 1e-9) {
+            longueur_sous_ += avance;
+            if (longueur_sous_ <= verif_.tolerance_croisement * largeur_) {
                 return;
             }
         }
+        dessus_signale = true;
+        signaler(TypeErreur::sous_matiere, ici,
+                 std::format("Le cordon est imprimé sous de la matière déjà déposée "
+                             "({:.2f} mm au-dessus de la pointe) : la buse devrait "
+                             "traverser la pièce.",
+                             au_dessus),
+                 "Imprimer cette zone avant celle du dessus, ou changer "
+                 "l'orientation de la buse.");
     }
 
     // Vrai si le cordon déposé ici repose sur le plateau ou sur de la matière.
@@ -579,6 +595,7 @@ private:
     void fin_de_trait() {
         vider_attente();
         longueur_dans_ = 0.0;
+        longueur_sous_ = 0.0;
         dans_signale_ = false;
     }
 
@@ -614,6 +631,7 @@ private:
     std::deque<Depot> attente_;
     double distance_extrusion_ = 0.0;
     double longueur_dans_ = 0.0;
+    double longueur_sous_ = 0.0;  // longueur parcourue avec de la matière juste au-dessus de la pointe
     bool dans_signale_ = false;
 };
 

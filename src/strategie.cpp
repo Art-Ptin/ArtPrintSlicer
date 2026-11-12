@@ -11,8 +11,10 @@
 #include <limits>
 #include <numbers>
 
+#include "champ_couches.hpp"
 #include "cinematique.hpp"
 #include "collisions.hpp"
+#include "couches_courbes.hpp"
 #include "decoupe.hpp"
 #include "machine.hpp"
 #include "multiaxe.hpp"
@@ -390,6 +392,36 @@ private:
     std::unique_ptr<ModeleMachine> modele_;
     std::vector<Vec3> peau_;
 };
+
+// Surface (mm²) d'une partie imprimée en couches courbes qui resterait dans
+// le vide : les faces tournées vers le bas par rapport à la direction locale
+// des couches. Les faces cachées dans la matière ne comptent pas.
+double surplomb_selon_champ(const Maillage& maillage, const ChampCouches& champ, double surplomb_max,
+                            const GrilleVoxels& matiere) {
+    const double seuil = std::sin(en_radians(surplomb_max));
+    double total = 0.0;
+    for (const Triangle& t : maillage.triangles) {
+        const Vec3 a = en_vec(maillage.sommets[t.sommets[0]]);
+        const Vec3 b = en_vec(maillage.sommets[t.sommets[1]]);
+        const Vec3 c = en_vec(maillage.sommets[t.sommets[2]]);
+        const Vec3 croix = produit_vectoriel(b - a, c - a);
+        const double double_aire = norme(croix);
+        if (double_aire < 1e-12) {
+            continue;
+        }
+        const Vec3 centre = (a + b + c) * (1.0 / 3.0);
+        const Vec3 normale = croix * (1.0 / double_aire);
+        if (centre.z < 0.3 || matiere.contient(centre + normale * (1.5 * matiere.pas))) {
+            continue;
+        }
+        Vec3 direction;
+        double pente;
+        if (champ.gradient(centre, direction, pente) && -produit_scalaire(normale, direction) > seuil) {
+            total += 0.5 * double_aire;
+        }
+    }
+    return total;
+}
 
 // Découpe le modèle en suivant son squelette : une branche qui s'écarte trop
 // de la direction de la partie qui la porte devient une partie à elle seule.
@@ -1125,6 +1157,62 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
             branches.parties = std::move(parties);
             branches.remarques = regrouper(std::move(branches.remarques));
             strategies.push_back(std::move(branches));
+
+            // --- 4. Couches courbes : les mêmes parties, mais chaque branche
+            // est imprimée en couches qui suivent le chemin de la matière.
+            Strategie courbes;
+            courbes.type = TypeStrategie::couches_courbes;
+            courbes.nom = "Couches courbes (5 axes continu)";
+            courbes.parties = strategies.back().parties;
+            const ChampCouches champ = calculer_champ_couches(pose);
+            std::vector<double> dessus, epaisseurs;
+            for (double haut = reglages.impression.hauteur_premiere_couche;
+                 haut < champ.maximum + reglages.impression.hauteur_couche; haut += reglages.impression.hauteur_couche) {
+                dessus.push_back(haut);
+                epaisseurs.push_back(dessus.size() == 1 ? reglages.impression.hauteur_premiere_couche
+                                                        : reglages.impression.hauteur_couche);
+            }
+            bool possible = true;
+            for (std::size_t n = 0; n < courbes.parties.size() && possible; ++n) {
+                PartieImpression& partie = courbes.parties[n];
+                if (partie.parent < 0) {
+                    courbes.surplomb += partie.surplomb;
+                    continue;
+                }
+                partie.couches_courbes = true;
+                partie.guide.clear();
+                // La tête ne penche pas plus que ce qui a été trouvé sans
+                // collision pour cette branche, et du même côté.
+                partie.inclinaison_outil_max = std::max(partie.inclinaison, 15.0);
+                try {
+                    partie.inclinaison = 0.0;
+                    for (const CoucheCourbe& couche : trancher_selon_champ(partie.maillage, champ, dessus, epaisseurs, n + 1)) {
+                        partie.inclinaison = std::max(partie.inclinaison, angle_entre(couche.w, {0.0, 0.0, 1.0}));
+                    }
+                    // Une partie qui redescend ne peut pas être imprimée : la
+                    // buse ne peut pas pointer vers le haut.
+                    possible = partie.inclinaison < 100.0;
+                } catch (const ErreurTranchage&) {
+                    possible = false;
+                }
+                partie.surplomb = surplomb_selon_champ(partie.maillage, champ, options.surplomb_max, matiere);
+                courbes.surplomb += partie.surplomb;
+            }
+            if (possible) {
+                courbes.modele = pose;
+                courbes.description = std::format(
+                    "Le tronc est imprimé en couches horizontales. Les {} autres parties sont imprimées en "
+                    "couches courbes : elles partent à plat du tronc et s'arrondissent pour entrer dans "
+                    "chaque branche. Tout monte ensemble, couche après couche, et la tête s'incline "
+                    "pendant qu'elle imprime.",
+                    courbes.parties.size() - 1);
+                courbes.remarques.push_back("Tronc et branches sont imprimés en même temps : la tête change d'orientation à chaque couche, l'impression est plus longue.");
+                courbes.remarques.push_back("Les collisions de cette stratégie sont contrôlées au moment du tranchage.");
+                if (!reglages.machine.distance_pivot_buse) {
+                    courbes.remarques.push_back("Pour trancher cette stratégie, le réglage « distance_pivot_buse » doit être mesuré sur la machine.");
+                }
+                strategies.push_back(std::move(courbes));
+            }
         }
     }
     return strategies;

@@ -25,7 +25,9 @@ Ce qui fonctionne aujourd'hui :
 
 Sur une branche courbe, la tête et le plateau tournent pendant l'extrusion : c'est le premier mouvement 5 axes continu du slicer.
 
-Ce qui n'existe pas encore : les couches courbes (5 axes continu sur toute la pièce) et les supports.
+- **Couches courbes (5 axes continu)** : pour une forme en arbre, les couches partent à plat du tronc et s'arrondissent pour entrer dans chaque branche ; le tronc et les branches montent ensemble et la tête s'incline pendant qu'elle imprime.
+
+Ce qui n'existe pas encore : les supports, et les couches courbes pour les branches creuses.
 
 ## Installation (Windows 64 bits)
 
