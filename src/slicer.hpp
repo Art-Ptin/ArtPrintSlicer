@@ -46,6 +46,9 @@ struct ResultatTranchage {
     std::vector<CoucheApercu> apercu;
     // Contrôle du G-code produit par le vérificateur.
     RapportVerification verification;
+    // Ce que le slicer a dû faire autrement que demandé, en français
+    // (par exemple : la peau courbe abandonnée à cause d'une collision).
+    std::vector<std::string> remarques;
 };
 
 // Rend une copie du modèle posée au centre du plateau, le dessous à la

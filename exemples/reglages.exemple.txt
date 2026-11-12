@@ -64,6 +64,12 @@ marge_buse = 0,2
 
 # Cordon déposé, en mm.
 largeur_extrusion = 0,45
+# Peau courbe : une dernière passe suit la forme du dessus de la pièce pour
+# effacer les marches d'escalier (1 : oui, 0 : non). L'intérieur reste en
+# couches planes.
+peau_courbe = 0
+# Pente la plus raide suivie par cette passe, en degrés.
+peau_courbe_pente_max = 30
 hauteur_couche = 0,2
 hauteur_premiere_couche = 0,2
 diametre_filament = 1,75

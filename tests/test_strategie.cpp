@@ -517,6 +517,71 @@ void test_couches_courbes() {
              nullptr);
 }
 
+// Peau courbe : une dernière passe suit la forme du dessus de la pièce.
+void test_peau_courbe() {
+    Reglages r = reglages_essai();
+    const Maillage champignon = essai::champignon();
+    const ResultatTranchage sans = trancher_classique(champignon, r);
+    VERIFIER_ACCEPTE(sans.verification);
+    VERIFIER(sans.gcode.find(";PEAU COURBE") == std::string::npos);
+
+    r.impression.peau_courbe = true;
+    const ResultatTranchage avec = trancher_classique(champignon, r);
+    VERIFIER_ACCEPTE(avec.verification);
+    const auto debut = avec.gcode.find(";PEAU COURBE");
+    VERIFIER(debut != std::string::npos);
+    if (debut != std::string::npos) {
+        // Pendant la passe, la buse monte et descend pour suivre le chapeau
+        // (plus d'un millimètre d'écart), et la tête s'incline pour rester
+        // d'aplomb sur la surface, sans dépasser la pente maximale.
+        double z_min = 1e9, z_max = -1e9, b_max = 0.0;
+        std::size_t cordons = 0;
+        std::istringstream lignes(avec.gcode.substr(debut));
+        for (std::string ligne; std::getline(lignes, ligne);) {
+            const auto z = ligne.find(" Z"), e = ligne.find(" E"), b = ligne.find(" B");
+            if (!ligne.starts_with("G1") || z == std::string::npos || e == std::string::npos) {
+                continue;
+            }
+            ++cordons;
+            z_min = std::min(z_min, std::stod(ligne.substr(z + 2)));
+            z_max = std::max(z_max, std::stod(ligne.substr(z + 2)));
+            if (b != std::string::npos) {
+                b_max = std::max(b_max, std::abs(std::stod(ligne.substr(b + 2))));
+            }
+        }
+        VERIFIER(cordons > 100);
+        VERIFIER(z_max - z_min > 1.0);
+        VERIFIER(b_max > 10.0 && b_max <= r.impression.peau_courbe_pente_max + 1e-6);
+        VERIFIER(avec.remarques.empty());
+    }
+    // La peau ne coûte presque rien : à peu près autant de filament.
+    VERIFIER(std::abs(avec.longueur_filament - sans.longueur_filament) < 0.1 * sans.longueur_filament);
+
+    // Un dessus plat est déjà lisse : pas de passe de peau.
+    ConstructeurMaillage plat;
+    essai::ajouter_cylindre(plat, {0, 0, 0}, {0, 0, 20}, 8.0);
+    const ResultatTranchage cylindre = trancher_classique(plat.terminer(), r);
+    VERIFIER_ACCEPTE(cylindre.verification);
+    VERIFIER(cylindre.gcode.find(";PEAU COURBE") == std::string::npos);
+
+    // Sans la distance pivot-buse, la tête ne peut pas s'incliner : la passe
+    // est faite buse verticale.
+    Reglages sans_pivot = r;
+    sans_pivot.machine.distance_pivot_buse.reset();
+    const ResultatTranchage vertical = trancher_classique(champignon, sans_pivot);
+    VERIFIER_ACCEPTE(vertical.verification);
+    VERIFIER(vertical.gcode.find(";PEAU COURBE") != std::string::npos);
+    VERIFIER(vertical.verification.extrusions_en_rotation == 0);
+
+    // Avec les couches courbes aussi, le dessus du tronc reçoit sa peau.
+    const std::vector<Strategie> strategies = proposer_strategies(poser_au_centre(essai::arbre_organique()), r);
+    if (const Strategie* courbes = trouver(strategies, TypeStrategie::couches_courbes)) {
+        const ResultatTranchage resultat = trancher_strategie(*courbes, r);
+        VERIFIER_ACCEPTE(resultat.verification);
+        VERIFIER(resultat.gcode.find(";PEAU COURBE") != std::string::npos);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -530,6 +595,7 @@ int main() {
     test_objets_organiques();
     test_courses();
     test_couches_courbes();
+    test_peau_courbe();
     if (echecs == 0) {
         std::cout << "Tests du 5 axes : tout est correct.\n";
         return 0;

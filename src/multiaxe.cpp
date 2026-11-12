@@ -6,6 +6,7 @@
 #include <format>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "couches_courbes.hpp"
 #include "decoupe.hpp"
 #include "ecriture_gcode.hpp"
+#include "peau_courbe.hpp"
 #include "tranchage.hpp"
 #include "trajectoires.hpp"
 
@@ -66,6 +68,54 @@ Polygones autour_de_l_axe(const Polygones& section) {
     return garde;
 }
 
+// Surface sur laquelle la buse se pose pendant une couche qui n'est pas plane.
+struct Surface {
+    virtual ~Surface() = default;
+    // Point de la surface à l'aplomb du point de la carte. « hauteur » :
+    // distance entre la carte et la surface (une première idée en entrée).
+    virtual bool poser(const Point2& p, double& hauteur, Vec3& point) const = 0;
+    // Normale à la surface, et vitesse à laquelle les couches s'empilent le
+    // long de cette normale (1 : épaisseur nominale).
+    virtual bool normale(const Vec3& ici, Vec3& direction, double& pente) const = 0;
+    // Vrai si ce point de l'espace est libre (hors de la pièce finie).
+    virtual bool libre(const Vec3&) const { return true; }
+};
+
+// Une couche courbe : une surface du champ de couches.
+struct SurfaceChamp final : Surface {
+    SurfaceChamp(const ChampCouches& champ, const CoucheCourbe& carte, double niveau)
+        : champ_(champ), carte_(carte), niveau_(niveau) {}
+    bool poser(const Point2& p, double& hauteur, Vec3& point) const override {
+        return poser_sur_la_surface(champ_, carte_, p, niveau_, hauteur, point);
+    }
+    bool normale(const Vec3& ici, Vec3& direction, double& pente) const override {
+        return champ_.gradient(ici, direction, pente);
+    }
+    const ChampCouches& champ_;
+    const CoucheCourbe& carte_;
+    const double niveau_;
+};
+
+// La peau courbe : la surface du dessus de la pièce, vue de dessus.
+struct SurfacePeau final : Surface {
+    explicit SurfacePeau(const PeauCourbe& peau) : peau_(peau) {}
+    bool poser(const Point2& p, double& hauteur, Vec3& point) const override {
+        Vec3 normale;
+        if (!peau_.poser(p, point, normale)) {
+            return false;
+        }
+        hauteur = point.z;
+        return true;
+    }
+    bool normale(const Vec3& ici, Vec3& direction, double& pente) const override {
+        Vec3 point;
+        pente = 1.0;
+        return peau_.poser({ici.x, ici.y}, point, direction);
+    }
+    bool libre(const Vec3& point) const override { return !peau_.dans_la_matiere(point); }
+    const PeauCourbe& peau_;
+};
+
 // Écrit le G-code 5 axes. Les trajectoires d'une partie sont données dans
 // son repère (x, y dans le plan des couches, z le long de sa direction) ;
 // l'écrivain calcule la position des cinq axes de la machine.
@@ -90,7 +140,7 @@ public:
         cote_ = cote;
         oriente_ = false;
         partie_ = numero >= 0 ? numero : partie_ + 1;
-        champ_ = nullptr;
+        surface_ = nullptr;
         limite_partie_ = 90.0;
     }
 
@@ -101,13 +151,20 @@ public:
     // pour changer d'orientation suit alors ce qui est déjà imprimé.
     void hauteur_sure_suivie() { suivie_ = true; }
 
-    // Couche courbe : la couche en cours est une surface du champ, dessinée
-    // sur la carte donnée par partie() ou pivoter(). « hauteur_trajet » :
+    // La surface n'est plus disponible : retour aux couches planes.
+    void quitter_la_surface() { surface_ = nullptr; }
+
+    // Couche courbe : la couche en cours est une surface, dessinée sur la
+    // carte donnée par partie() ou pivoter(). « hauteur_trajet » :
     // hauteur, au-dessus de la carte, du point le plus haut de la couche ;
     // « z_min » : son point le plus bas au-dessus du plateau.
-    void couche_courbe(const ChampCouches& champ, const CoucheCourbe& carte, double niveau,
-                       double epaisseur, double hauteur_trajet, double z_min) {
-        champ_ = &champ, carte_ = &carte, niveau_ = niveau;
+    // « libre » : en chaque point, la tête se met d'aplomb sur la surface
+    // quelle que soit la direction de la pente (B et C changent tous les
+    // deux). Sinon, elle penche toujours dans le sens de la carte : seul B change.
+    void couche_courbe(const Surface& surface, double epaisseur, double hauteur_trajet, double z_min,
+                       bool libre = false) {
+        surface_ = &surface;
+        libre_ = libre;
         h_nominale_ = epaisseur;
         hauteur_trajet_ = hauteur_trajet + r_.levee_z;
         hauteur_surface_ = 0.0;
@@ -159,7 +216,7 @@ public:
 
     // Déplacement à vide jusqu'au point de la couche en cours.
     void aller_a(const Point2& p) {
-        if (champ_) {
+        if (surface_) {
             aller_sur_la_surface(p);
             return;
         }
@@ -187,7 +244,7 @@ public:
         if (longueur < 1e-4) {
             return;
         }
-        if (champ_) {
+        if (surface_) {
             extruder_sur_la_surface(p, vitesse);
             return;
         }
@@ -276,7 +333,7 @@ private:
     // Point de la pièce correspondant à un point (x, y, z) du repère de la
     // partie. Sur une couche courbe, z est compté au-dessus de la surface.
     Vec3 point(const Point2& p, double z) {
-        if (champ_) {
+        if (surface_) {
             return sur_la_surface(p) + w_ * z;
         }
         return origine_ + u_ * p.x + v_ * p.y + w_ * z;
@@ -308,7 +365,7 @@ private:
 
     Vec3 sur_la_surface(const Point2& p) {
         Vec3 resultat;
-        if (!poser_sur_la_surface(*champ_, *carte_, p, niveau_, hauteur_surface_, resultat)) {
+        if (!surface_->poser(p, hauteur_surface_, resultat)) {
             throw ErreurTranchage(
                 "Une trajectoire sort de la surface d'une couche courbe : cette partie ne peut "
                 "pas être imprimée en couches courbes.");
@@ -323,7 +380,7 @@ private:
         const double moyenne = en_degres(std::acos(std::clamp(outil_.z, -1.0, 1.0)));
         Vec3 normale;
         double pente = 1.0;
-        if (moyenne < 1e-6 || !champ_->gradient(ici, normale, pente)) {
+        if (moyenne < 1e-6 || !surface_->normale(ici, normale, pente)) {
             return b_couche_;
         }
         const double horizontal = std::hypot(outil_.x, outil_.y);
@@ -331,6 +388,93 @@ private:
         const double limite = limite_inclinaison(ici.z);
         const double angle = std::clamp(en_degres(std::atan2(vers, normale.z)), -limite, limite);
         return std::clamp(b_couche_ * (angle / moyenne), machine_.b_min, machine_.b_max);
+    }
+
+    // Orientation de la tête (B, C) en ce point de la surface.
+    struct Orientation {
+        double b, c;
+    };
+    Orientation orientation_locale(const Vec3& ici) const {
+        if (!libre_) {
+            return {inclinaison_locale(ici), c_};
+        }
+        Vec3 normale;
+        double pente = 1.0;
+        if (!surface_->normale(ici, normale, pente)) {
+            return {b_, c_};
+        }
+        normale = incliner_au_plus(normale, limite_inclinaison(ici.z));
+        // Presque à plat : la tête reste verticale, le plateau ne bouge pas.
+        if (normale.z > std::cos(en_radians(3.0))) {
+            return {0.0, c_};
+        }
+        // Des deux façons de pencher, celle qui fait le moins tourner le plateau.
+        const auto position = position_machine(machine_, {ici, normale}, c_, 0);
+        return position ? degager(ici, {position->b, position->c}) : Orientation{b_, c_};
+    }
+
+    // Orientation libre, en suivant le cordon : la tête se met d'aplomb sur
+    // la surface, mais le plateau ne tourne pas de plus de quelques degrés
+    // par millimètre parcouru. Quand il ne peut pas suivre (près d'un sommet,
+    // la pente change de direction très vite), la tête penche au mieux dans
+    // le sens que permet la position du plateau.
+    Orientation orientation_suivie(const Vec3& ici, double b_avant, double c_avant, double parcouru) const {
+        Vec3 normale;
+        double pente = 1.0;
+        if (!surface_->normale(ici, normale, pente)) {
+            return {b_avant, c_avant};
+        }
+        const double limite = limite_inclinaison(ici.z);
+        normale = incliner_au_plus(normale, limite);
+        if (normale.z > std::cos(en_radians(3.0))) {
+            return {0.0, c_avant};
+        }
+        double c = c_avant;
+        if (const auto position = position_machine(machine_, {ici, normale}, c_avant, 0)) {
+            const double permis = options_.rotation_plateau_par_mm * parcouru;
+            c = c_avant + std::clamp(position->c - c_avant, -permis, permis);
+            if (std::abs(position->c - c) < 1e-9) {
+                return degager(ici, {position->b, c});
+            }
+        }
+        // Sens dans lequel la tête penche, pour B positif, avec le plateau à cet angle.
+        const Vec3 sens = pose_dans_piece(machine_, PositionMachine{0.0, 0.0, 0.0, 45.0, c}).direction;
+        const double horizontal = std::hypot(sens.x, sens.y);
+        const double vers = (normale.x * sens.x + normale.y * sens.y) / horizontal;
+        const double b = std::clamp(en_degres(std::atan2(vers, normale.z)), -limite, limite);
+        return degager(ici, {std::clamp(b, machine_.b_min, machine_.b_max), c});
+    }
+
+    // Si l'axe de la buse, ainsi orientée, rencontre la pièce (un mur tout
+    // près), la tête est redressée par paliers jusqu'à être dégagée.
+    Orientation degager(const Vec3& ici, Orientation o) const {
+        for (const double part : {1.0, 0.66, 0.33}) {
+            const double b = o.b * part;
+            const Vec3 axe = pose_dans_piece(machine_, PositionMachine{0.0, 0.0, 0.0, b, o.c}).direction;
+            bool degage = true;
+            for (double t = 0.6; t <= 8.0 && degage; t += 0.3) {
+                degage = surface_->libre(ici + axe * t);
+            }
+            if (degage) {
+                return {b, o.c};
+            }
+        }
+        return {0.0, o.c};
+    }
+
+    // Tourne la tête et le plateau par petits pas, la pointe restant sur place.
+    void tourner_sur_place(const Orientation& cible) {
+        const double b0 = b_, c0 = c_;
+        const double ecart = std::max(std::abs(cible.b - b0), std::abs(cible.c - c0));
+        const int pas = static_cast<int>(std::ceil(ecart / options_.pas_rotation));
+        const Vec3 ici = pointe_;
+        for (int k = 1; k <= pas; ++k) {
+            const double t = static_cast<double>(k) / pas;
+            b_ = b0 + (cible.b - b0) * t;
+            c_ = c0 + (cible.c - c0) * t;
+            deplacer_tous_axes(ici);
+        }
+        b_ = cible.b, c_ = cible.c;
     }
 
     void aller_sur_la_surface(const Point2& p) {
@@ -367,7 +511,11 @@ private:
             changer_orientation(p);
         }
         // Arrivée : la tête prend l'inclinaison de la surface à cet endroit.
-        b_ = inclinaison_locale(cible);
+        const Orientation arrivee = orientation_locale(cible);
+        if (libre_) {
+            tourner_sur_place(arrivee);  // au-dessus de la couche, avant de descendre
+        }
+        b_ = arrivee.b, c_ = arrivee.c;
         deplacer_tous_axes(cible);
         position_ = p;
     }
@@ -389,7 +537,7 @@ private:
         struct Etape {
             Point2 q;
             Vec3 point;
-            double b;
+            double b, c;
         };
         const double section_filament = std::numbers::pi * r_.diametre_filament * r_.diametre_filament / 4.0;
         const auto emettre = [&](const Etape& a, const Etape& b) {
@@ -402,7 +550,7 @@ private:
             double epaisseur = h_nominale_, largeur = r_.largeur_extrusion;
             Vec3 normale;
             double pente = 1.0;
-            if (champ_->gradient((pointe_ + b.point) * 0.5, normale, pente)) {
+            if (surface_->normale((pointe_ + b.point) * 0.5, normale, pente)) {
                 epaisseur = std::clamp(h_nominale_ / pente, 0.3 * h_nominale_, 1.6 * h_nominale_);
                 const double biais = std::max(0.3, produit_scalaire(normale, w_));
                 const double allongement = longueur / std::max(1e-9, distance(a.q, b.q));
@@ -410,7 +558,10 @@ private:
             }
             const double section = (largeur - epaisseur) * epaisseur + std::numbers::pi * epaisseur * epaisseur / 4.0;
             const double e = longueur * section / section_filament * r_.debit;
-            b_ = b.b;
+            if (e < 1e-5) {
+                return;  // morceau trop court pour être écrit : il est joint au suivant
+            }
+            b_ = b.b, c_ = b.c;
             const PositionMachine m = position_avec_angles(machine_, b.point, b_, c_);
             ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z,
                               m.b + machine_.b_vertical, m.c, e, vitesse * 60.0));
@@ -429,9 +580,15 @@ private:
                 Etape milieu;
                 milieu.q = {(a.q.x + b.q.x) / 2.0, (a.q.y + b.q.y) / 2.0};
                 milieu.point = sur_la_surface(milieu.q);
-                milieu.b = inclinaison_locale(milieu.point);
+                const Orientation au_milieu = orientation_locale(milieu.point);
+                milieu.b = au_milieu.b, milieu.c = au_milieu.c;
                 const double fleche = norme(milieu.point - (a.point + b.point) * 0.5);
-                if (longueur > 2.0 || fleche > 0.02 || std::abs(b.b - a.b) > options_.pas_pivot_continu) {
+                // En orientation libre, le plateau peut tourner beaucoup sur
+                // une courte distance : des pas de 2° suffisent à garder la
+                // pointe sur son chemin.
+                const double pas_angle = libre_ ? 2.0 : options_.pas_pivot_continu;
+                if (longueur > 2.0 || fleche > 0.02 || std::abs(b.b - a.b) > pas_angle ||
+                    std::abs(b.c - a.c) > pas_angle) {
                     tracer(a, milieu, profondeur + 1);
                     tracer(milieu, b, profondeur + 1);
                     return;
@@ -439,11 +596,55 @@ private:
             }
             emettre(a, b);
         };
+        if (libre_) {
+            // Orientation libre : on avance par petits pas le long du segment,
+            // l'orientation de chaque pas partant de celle du pas d'avant.
+            Etape avant{position_, pointe_, b_, c_};
+            const int pas = std::max(1, static_cast<int>(std::ceil(distance(position_, p) / 0.5)));
+            for (int k = 1; k <= pas; ++k) {
+                const double t = static_cast<double>(k) / pas;
+                Etape ici;
+                ici.q = {position_.x + (p.x - position_.x) * t, position_.y + (p.y - position_.y) * t};
+                // Un pas intermédiaire qui frôle le bord de la zone peut ne
+                // pas trouver la surface : il est sauté (le bout du segment,
+                // lui, a été contrôlé d'avance).
+                if (k < pas && !surface_->poser(ici.q, hauteur_surface_, ici.point)) {
+                    continue;
+                }
+                if (k == pas) {
+                    ici.point = sur_la_surface(ici.q);
+                }
+                const Orientation o = orientation_suivie(ici.point, avant.b, avant.c, norme(ici.point - avant.point));
+                ici.b = o.b, ici.c = o.c;
+                // Une grande rotation est répartie sur plusieurs lignes.
+                const double ecart = std::max(std::abs(ici.b - avant.b), std::abs(ici.c - avant.c));
+                const int morceaux = std::max(1, static_cast<int>(std::ceil(ecart / 2.0)));
+                Etape depart = avant;
+                for (int j = 1; j <= morceaux; ++j) {
+                    const double u = static_cast<double>(j) / morceaux;
+                    Etape etape = ici;
+                    if (j < morceaux) {
+                        etape.q = {avant.q.x + (ici.q.x - avant.q.x) * u, avant.q.y + (ici.q.y - avant.q.y) * u};
+                        if (!surface_->poser(etape.q, hauteur_surface_, etape.point)) {
+                            continue;
+                        }
+                        etape.b = avant.b + (ici.b - avant.b) * u;
+                        etape.c = avant.c + (ici.c - avant.c) * u;
+                    }
+                    emettre(depart, etape);
+                    depart = etape;
+                }
+                avant = ici;
+            }
+            position_ = p;
+            return;
+        }
         Etape arrivee;
         arrivee.q = p;
         arrivee.point = sur_la_surface(p);
-        arrivee.b = inclinaison_locale(arrivee.point);
-        tracer(Etape{position_, pointe_, b_}, arrivee, 0);
+        const Orientation a_l_arrivee = orientation_locale(arrivee.point);
+        arrivee.b = a_l_arrivee.b, arrivee.c = a_l_arrivee.c;
+        tracer(Etape{position_, pointe_, b_, c_}, arrivee, 0);
         position_ = p;
     }
 
@@ -599,10 +800,9 @@ private:
     bool place_ = false;      // faux tant que la buse n'a pas été positionnée
     bool oriente_ = false;    // faux tant que la tête n'est pas dans l'orientation de la partie
     bool pivot_ = false;      // vrai quand le repère vient de pivoter un peu (partie courbe)
-    // Couche courbe en cours (sinon champ_ est nul) : sa surface, sa carte.
-    const ChampCouches* champ_ = nullptr;
-    const CoucheCourbe* carte_ = nullptr;
-    double niveau_ = 0.0;
+    // Couche non plane en cours (sinon surface_ est nul).
+    const Surface* surface_ = nullptr;
+    bool libre_ = false;  // vrai : la tête se met d'aplomb sur la surface en chaque point
     double hauteur_trajet_ = 0.0;   // hauteur des déplacements à vide au-dessus de la carte
     double hauteur_surface_ = 0.0;  // hauteur de la surface au dernier point calculé
     double b_couche_ = 0.0;         // valeur de B pour la direction moyenne de la couche
@@ -762,14 +962,17 @@ namespace {
 
 // « reduction » : degrés retirés à l'inclinaison maximale de la tête des
 // parties en couches courbes (voir trancher_strategie).
-ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& reglages,
-                                const OptionsMultiaxe& options, double reduction) {
+// « avec_peau » : faux pour ne pas faire la passe de peau courbe.
+ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& reglages_demandes,
+                                const OptionsMultiaxe& options, double reduction, bool avec_peau = true) {
+    Reglages reglages = reglages_demandes;
+    reglages.impression.peau_courbe = reglages.impression.peau_courbe && avec_peau;
     if (strategie.parties.empty()) {
         throw ErreurTranchage("La stratégie ne contient aucune partie à imprimer.");
     }
     // Une seule partie verticale : c'est le slicer 3 axes.
     if (strategie.parties.size() == 1 && strategie.parties.front().direction.z > 1.0 - 1e-9 &&
-        strategie.parties.front().guide.empty()) {
+        strategie.parties.front().guide.empty() && !reglages.impression.peau_courbe) {
         return trancher(strategie.parties.front().maillage, reglages);
     }
 
@@ -818,6 +1021,10 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         std::vector<CoucheTrajectoires> couches;
         bool sur_plateau = true;
         double inclinaison_outil_max = 90.0;
+        // Peau courbe : la surface du dessus, et le numéro de sa passe
+        // (la dernière « couche » de la partie).
+        std::shared_ptr<PeauCourbe> peau;
+        std::size_t couche_peau = 0;
     };
     // Couches courbes : le chemin de la matière dans tout le modèle, et la
     // longueur de chemin du dessus de chaque couche.
@@ -889,7 +1096,23 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             continue;
         }
         t.origine = sur_plateau ? Vec3{} : partie.base;
-        const Maillage local = dans_repere(partie.maillage, t.origine, t.u, t.v, t.w);
+        // Peau courbe : le dessus de la partie est abaissé, les couches
+        // planes s'arrêtent dessous et une dernière passe suit la surface.
+        std::shared_ptr<PeauCourbe> peau;
+        if (r.peau_courbe && sur_plateau && verticale) {
+            std::vector<const Maillage*> tout;
+            for (const PartieImpression& autre : strategie.parties) {
+                tout.push_back(&autre.maillage);
+            }
+            auto trouvee = std::make_shared<PeauCourbe>(
+                preparer_peau_courbe(partie.maillage, tout, r.hauteur_couche, r.peau_courbe_pente_max,
+                                     r.hauteur_premiere_couche));
+            if (!trouvee->vide()) {
+                peau = std::move(trouvee);
+            }
+        }
+        const double haut_origine = calculer_boite(partie.maillage).max.z;
+        const Maillage local = dans_repere(peau ? peau->abaisse() : partie.maillage, t.origine, t.u, t.v, t.w);
         const double haut = calculer_boite(local).max.z;
 
         // Une partie posée sur une autre n'a ni jupe ni première couche spéciale.
@@ -924,6 +1147,43 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             }
         }
         t.couches = calculer_trajectoires(coupe.couches, reglages_partie);
+        if (peau && !t.couches.empty()) {
+            // La passe de peau : un tour le long du bord de la zone, puis des
+            // allers-retours serrés, tous reposés ensuite sur la surface.
+            CoucheTrajectoires passe;
+            passe.z = haut_origine;
+            passe.hauteur = r.hauteur_couche;
+            // Les endroits trop étroits pour deux cordons côte à côte sont
+            // laissés aux couches planes : la zone est rétrécie puis regonflée.
+            const Polygones zone = decaler_arrondi(decaler(peau->zone(), -r.largeur_extrusion), r.largeur_extrusion);
+            for (const Contour& contour : decaler(zone, -0.5 * r.largeur_extrusion)) {
+                Trait trait;
+                trait.type = TypeTrait::paroi_externe;
+                trait.ferme = true;
+                for (const PointEntier& sommet : contour) {
+                    trait.points.push_back(en_mm(sommet));
+                }
+                if (trait.points.size() >= 3) {
+                    passe.traits.push_back(std::move(trait));
+                }
+            }
+            for (std::vector<Point2>& ligne :
+                 lignes_de_remplissage(decaler(zone, -r.largeur_extrusion), r.largeur_extrusion, 45.0)) {
+                // Un tout petit zigzag, dans un coin, se replierait sur lui-même : il est laissé.
+                double longueur = 0.0;
+                for (std::size_t i = 1; i < ligne.size(); ++i) {
+                    longueur += distance(ligne[i - 1], ligne[i]);
+                }
+                if (ligne.size() >= 2 && longueur > 6.0 * r.largeur_extrusion) {
+                    passe.traits.push_back({TypeTrait::remplissage_plein, std::move(ligne), false});
+                }
+            }
+            if (!passe.traits.empty()) {
+                t.peau = peau;
+                t.couche_peau = t.couches.size();
+                t.couches.push_back(std::move(passe));
+            }
+        }
         if (t.couches.empty() || t.couches.front().traits.empty()) {
             throw ErreurTranchage(std::format(
                 "La première couche de la partie {} est vide : elle ne touche pas assez {}.",
@@ -990,7 +1250,33 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         if (numero == 2 && r.ventilation) {
             ecrivain.ligne("M106 S255 ; ventilateur de pièce");
         }
-        if (!t.cartes.empty()) {
+        std::unique_ptr<Surface> surface;  // doit vivre jusqu'à la fin de la couche
+        if (t.peau && c == t.couche_peau) {
+            // Passe de peau courbe : les trajectoires sont reposées sur le dessus de la pièce.
+            surface = std::make_unique<SurfacePeau>(*t.peau);
+            double hauteur_trajet = 0.0, z_min = std::numeric_limits<double>::max(), hauteur = 0.0;
+            std::erase_if(couche.traits, [&](const Trait& trait) {
+                for (const Point2& q : trait.points) {
+                    Vec3 ici;
+                    if (!surface->poser(q, hauteur, ici)) {
+                        return true;
+                    }
+                    hauteur_trajet = std::max(hauteur_trajet, hauteur);
+                    z_min = std::min(z_min, ici.z);
+                }
+                return false;
+            });
+            if (couche.traits.empty()) {
+                continue;
+            }
+            ecrivain.ligne(";PEAU COURBE");
+            // Un peu plus de matière que l'épaisseur nominale : la peau comble
+            // aussi le creux des marches laissées par les couches planes.
+            // La tête se met d'aplomb sur la surface, si la machine sait où est son pivot.
+            ecrivain.couche_courbe(*surface, 1.25 * r.hauteur_couche, hauteur_trajet + 0.5, z_min,
+                                   machine.distance_pivot_buse.has_value());
+            ecrivain.couche(0.0, r.hauteur_couche);
+        } else if (!t.cartes.empty()) {
             // Couche courbe : sa carte, et la surface sur laquelle la buse se pose.
             const CoucheCourbe& carte = t.cartes[c];
             if (!changement) {
@@ -1026,8 +1312,8 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             if (couche.traits.empty()) {
                 continue;
             }
-            ecrivain.couche_courbe(champ, carte, dessus[carte.niveau], epaisseurs[carte.niveau],
-                                   hauteur_trajet + 0.5, z_min);
+            surface = std::make_unique<SurfaceChamp>(champ, carte, dessus[carte.niveau]);
+            ecrivain.couche_courbe(*surface, epaisseurs[carte.niveau], hauteur_trajet + 0.5, z_min);
             ecrivain.couche(0.0, epaisseurs[carte.niveau]);
         } else if (!t.reperes.empty()) {
             // Couche d'une partie courbe : son propre repère, la buse sur son plan.
@@ -1072,6 +1358,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             ecrire_groupe(ecrivain, couche.traits, debut_groupe, fin_groupe, vitesse_du_type(r, type, premiere));
             debut_groupe = fin_groupe;
         }
+        ecrivain.quitter_la_surface();
     }
     ecrire_fin(ecrivain, r);
 
@@ -1087,20 +1374,47 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
 
 }  // namespace
 
+ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reglages) {
+    if (!reglages.impression.peau_courbe) {
+        return trancher(modele, reglages);
+    }
+    const RapportFermeture fermeture = verifier_fermeture(modele);
+    if (modele.triangles.empty() || !fermeture.ferme || !fermeture.orientation_coherente) {
+        return trancher(modele, reglages);  // le tranchage classique explique ce qui ne va pas
+    }
+    Strategie classique;
+    classique.type = TypeStrategie::classique;
+    classique.parties.emplace_back();
+    classique.parties.back().maillage = poser_au_centre(modele);
+    return trancher_strategie(classique, reglages);
+}
+
 ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
                                      const OptionsMultiaxe& options) {
     ResultatTranchage resultat = trancher_avec(strategie, reglages, options, 0.0);
+    const auto touche = [](const RapportVerification& v) {
+        return v.contient(TypeErreur::collision_matiere) || v.contient(TypeErreur::collision_plateau) ||
+               v.contient(TypeErreur::collision_machine);
+    };
+    // Peau courbe : si la tête touche quelque chose pendant cette passe (en
+    // s'inclinant près d'une autre partie de la pièce, par exemple), le
+    // slicer y renonce : le dessus est imprimé en couches planes, et il le dit.
+    const bool sans_peau = reglages.impression.peau_courbe && touche(resultat.verification);
+    if (sans_peau) {
+        resultat = trancher_avec(strategie, reglages, options, 0.0, false);
+        resultat.remarques.push_back(
+            "La peau courbe a été abandonnée pour cette pièce : pendant cette passe, la tête aurait "
+            "touché la pièce ou la machine. Le dessus est imprimé en couches planes.");
+    }
     // Couches courbes : si le vérificateur trouve que la tête ou le bras
     // touche quelque chose, on recommence en penchant moins la tête. Les
     // couches gardent la même forme ; seule l'orientation de la buse change.
     const bool courbes = std::any_of(strategie.parties.begin(), strategie.parties.end(),
                                      [](const PartieImpression& p) { return p.couches_courbes; });
-    const auto touche = [](const RapportVerification& v) {
-        return v.contient(TypeErreur::collision_matiere) || v.contient(TypeErreur::collision_plateau) ||
-               v.contient(TypeErreur::collision_machine);
-    };
     for (double reduction = 10.0; courbes && reduction <= 40.0 && touche(resultat.verification); reduction += 10.0) {
-        resultat = trancher_avec(strategie, reglages, options, reduction);
+        std::vector<std::string> remarques = std::move(resultat.remarques);
+        resultat = trancher_avec(strategie, reglages, options, reduction, !sans_peau);
+        resultat.remarques = std::move(remarques);
     }
     return resultat;
 }

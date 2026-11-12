@@ -80,6 +80,11 @@ struct ReglagesMachine {
 struct ReglagesImpression {
     // Cordon déposé, en millimètres.
     double largeur_extrusion = 0.45;
+    // Peau courbe : une dernière passe suit la forme du dessus de la pièce
+    // pour effacer les marches d'escalier (voir peau_courbe.hpp).
+    bool peau_courbe = false;
+    // Pente la plus raide suivie par la peau courbe, en degrés depuis l'horizontale.
+    double peau_courbe_pente_max = 30.0;
     double hauteur_couche = 0.2;
     double hauteur_premiere_couche = 0.2;
     double diametre_filament = 1.75;

@@ -19,6 +19,7 @@ add_library(artprint_core
     squelette.cpp
     champ_couches.cpp
     couches_courbes.cpp
+    peau_courbe.cpp
     strategie.cpp
     multiaxe.cpp)
 target_include_directories(artprint_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

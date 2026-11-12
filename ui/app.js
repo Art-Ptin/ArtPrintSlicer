@@ -308,9 +308,10 @@ async function trancher() {
   $('t-retractions').textContent = `${entier(verification.retractions)} rétractions`;
 
   if (verification.valide) {
-    definirEtat('bon', 'G-code vérifié', verification.extrusions_en_rotation
+    definirEtat('bon', 'G-code vérifié', (verification.extrusions_en_rotation
       ? `Aucune règle physique violée. 5 axes continu : la tête pivote pendant ${entier(verification.extrusions_en_rotation)} extrusions. Prêt à exporter.`
-      : 'Aucune règle physique violée. Prêt à exporter.');
+      : 'Aucune règle physique violée. Prêt à exporter.') +
+      (resultat.remarques && resultat.remarques.length ? ' ' + resultat.remarques.join(' ') : ''));
   } else {
     definirEtat('mauvais', 'Tranchage refusé',
       `${entier(verification.nombre_erreurs)} erreur(s) : le G-code ne peut pas être exporté.`);

@@ -156,6 +156,13 @@ std::vector<DescriptionReglage> construire() {
     d.push_back(nombre(I, &RI::largeur_extrusion, {"largeur_extrusion", qualite, "Largeur d'extrusion", "mm",
         "Largeur du cordon déposé. En général un peu plus que le diamètre de la buse."}, 0.05, 5.0));
 
+    d.push_back(booleen(I, &RI::peau_courbe, {"peau_courbe", qualite, "Peau courbe (dessus lisse)", "",
+        "Une dernière passe suit la forme du dessus de la pièce pour effacer les marches "
+        "d'escalier. L'intérieur reste en couches planes."}));
+    d.push_back(nombre(I, &RI::peau_courbe_pente_max, {"peau_courbe_pente_max", qualite,
+        "Pente maximale de la peau courbe", "°",
+        "Pente la plus raide que la buse suit pendant la passe de peau courbe."}, 5.0, 60.0));
+
     // --- Solidité ---
     d.push_back(entier(I, &RI::nombre_parois, {"nombre_parois", solidite, "Nombre de parois", "",
         "Nombre de contours autour de chaque couche."}, 1, 20));

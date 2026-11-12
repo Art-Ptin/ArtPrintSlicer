@@ -32,6 +32,8 @@ struct OptionsMultiaxe {
     bool pivot_continu = true;
     // Angle maximal de B ou de C entre deux lignes de G-code pendant l'extrusion, en degrés.
     double pas_pivot_continu = 0.25;
+    // Peau courbe : rotation maximale du plateau par millimètre de cordon, en degrés.
+    double rotation_plateau_par_mm = 4.0;
 };
 
 // Tranche une stratégie. Une stratégie à une seule partie verticale passe par
@@ -40,6 +42,10 @@ struct OptionsMultiaxe {
 // Lève ErreurTranchage si une partie ne peut pas être tranchée.
 ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
                                      const OptionsMultiaxe& options = {});
+
+// Tranchage classique d'un modèle entier (3 axes). Si le réglage
+// « peau_courbe » est coché, une dernière passe suit la forme du dessus.
+ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reglages);
 
 // Vrai si les couches d'une partie courbe (qui a un « guide ») peuvent être
 // calculées : la courbe ne tourne pas trop serré pour l'épaisseur de la partie.

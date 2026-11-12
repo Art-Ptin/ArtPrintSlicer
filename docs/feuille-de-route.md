@@ -100,4 +100,5 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Banc d'essai sur quatorze objets (dont châssis de drone organique) | ✅ | `tests/banc_strategies.cpp` |
 | B et C qui tournent pendant l'extrusion (pivot continu) | ✅ | sur les branches courbes, par pas de 0,25° au plus |
 | Couches courbes : du tronc vers les branches, tout monte ensemble | 🟡 | pas encore pour les branches creuses ou très bombées |
+| Peau courbe : une dernière passe suit la forme du dessus (option) | 🟡 | tête d'aplomb sur la surface ; abandonnée si elle provoquerait un contact |
 | Vérificateur : croisement de cordons sur une couche inclinée | ✅ | toléré sur une courte longueur, comme à plat |

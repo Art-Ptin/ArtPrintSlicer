@@ -39,6 +39,13 @@ export const PARAMETRES = [
     n('largeur_plein', 'Remplissage plein', 'mm', 0.42, 0.05, 5, { avance: true }),
     n('largeur_supports', 'Supports', 'mm', 0.42, 0.05, 5, { avance: true }),
   ]),
+  ...groupe('Qualité', 'Surface du dessus', [
+    b('peau_courbe', 'Peau courbe (dessus lisse)', false, { moteur: 'peau_courbe',
+      aide: 'Une dernière passe suit la forme du dessus de la pièce pour effacer les marches d\'escalier. ' +
+        'L\'intérieur reste en couches planes. Dans cette simulation, les aperçus sont préenregistrés sans cette option.' }),
+    n('peau_courbe_pente_max', 'Pente maximale suivie', '°', 30, 5, 60, { moteur: 'peau_courbe_pente_max',
+      aide: 'Pente la plus raide que la buse suit pendant la passe de peau courbe.' }),
+  ]),
   ...groupe('Qualité', 'Couture', [
     c('couture_position', 'Position', 'Arrière', ['Arrière', 'Plus proche', 'Alignée', 'Aléatoire'],
       { aide: 'Endroit où chaque contour commence et finit. Seul « Arrière » est appliqué aujourd\'hui.' }),

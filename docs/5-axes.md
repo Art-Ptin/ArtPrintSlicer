@@ -188,6 +188,42 @@ dans l'autre à la couche suivante. La hauteur sûre pour changer
 d'orientation suit ce qui est déjà imprimé (20 mm au-dessus), au lieu de
 passer au-dessus du modèle entier.
 
+## La peau courbe (option)
+
+Réglage « Peau courbe (dessus lisse) », onglet Qualité (`peau_courbe = 1`
+dans un fichier de réglages). Elle s'ajoute à n'importe quelle stratégie.
+
+Avec des couches planes, un dessus bombé est imprimé en marches d'escalier.
+Avec cette option (`src/peau_courbe.*`) :
+
+1. le slicer cherche le **dessus** de la pièce : les faces tournées vers le
+   haut, sans rien au-dessus d'elles, dont la pente ne dépasse pas
+   `peau_courbe_pente_max` (30° par défaut), avec assez de matière dessous ;
+2. ce dessus est **abaissé** d'un peu plus d'une épaisseur de couche, et
+   l'intérieur est tranché normalement : les couches planes s'arrêtent sous
+   la surface ;
+3. une **dernière passe** (un tour le long du bord, puis des allers-retours
+   serrés) est reposée sur la vraie surface : la buse monte et descend pour
+   la suivre.
+
+Pendant cette passe, la tête s'incline pour rester d'aplomb sur la surface :
+B et C changent en continu. Le plateau ne tourne pas de plus de 4° par
+millimètre de cordon ; quand il ne peut pas suivre (près d'un sommet, où la
+pente change de direction très vite), la tête penche au mieux dans le sens
+que permet la position du plateau. Près d'un mur, elle se redresse pour ne
+pas le toucher. Sans le réglage `distance_pivot_buse`, la passe est faite
+buse verticale.
+
+Si, malgré cela, le vérificateur trouve que la tête toucherait la pièce ou
+la machine pendant cette passe (en s'inclinant près d'une branche voisine,
+par exemple), le slicer **renonce à la peau** : le dessus est imprimé en
+couches planes, et une remarque le dit.
+
+Un dessus plat est laissé tel quel (il est déjà lisse). Deux dessus
+voisins séparés par une falaise (le dessus d'un tronc et celui d'une
+branche) sont traités séparément, et les endroits trop étroits pour deux
+cordons sont laissés aux couches planes.
+
 ## L'essayer
 
 Lister les stratégies proposées pour un modèle :
@@ -284,6 +320,10 @@ tranchable, et contrôlent le pivot continu (jamais plus de 0,25° par ligne).
   firmware la partage entre les cinq axes reste à vérifier sur la machine
   (les rotations sont très lentes ici : quelques dixièmes de degré par
   couche).
+- **Peau courbe : tout ou rien.** Si la tête toucherait quelque chose à un
+  seul endroit, la peau est abandonnée pour toute la pièce. La pente suivie
+  est limitée (30° par défaut) : le bas d'un dôme reste en marches. Une
+  seule passe, d'une seule épaisseur.
 - **Pas de supports.** Ce qui reste en surplomb (surtout le pied des
   branches) est annoncé en mm², mais rien n'est généré pour le soutenir.
 - **Le vérificateur ne contrôle pas qu'un cordon est posé sur quelque

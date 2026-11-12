@@ -140,6 +140,7 @@ Json decrire_resultat(const ResultatTranchage& resultat) {
     reponse["couches"] = resultat.couches;
     reponse["filament_m"] = arrondi(resultat.longueur_filament / 1000.0);
     reponse["duree_s"] = std::round(resultat.duree_estimee);
+    reponse["remarques"] = resultat.remarques;
     reponse["taille_gcode"] = resultat.gcode.size();
 
     const RapportVerification& v = resultat.verification;
@@ -247,7 +248,7 @@ std::string Session::executer(std::string_view demande_json) {
             // « strategie » (facultatif) : "classique", "autre_pose", "par_branches" ou "couches_courbes".
             const std::string voulue = demande.value("strategie", std::string("classique"));
             if (voulue == "classique") {
-                etat.resultat = trancher(*etat.modele, etat.reglages);
+                etat.resultat = trancher_classique(*etat.modele, etat.reglages);
             } else {
                 const Strategie* choisie = nullptr;
                 const std::vector<Strategie> strategies =

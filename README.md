@@ -27,6 +27,8 @@ Sur une branche courbe, la tête et le plateau tournent pendant l'extrusion : c'
 
 - **Couches courbes (5 axes continu)** : pour une forme en arbre, les couches partent à plat du tronc et s'arrondissent pour entrer dans chaque branche ; le tronc et les branches montent ensemble et la tête s'incline pendant qu'elle imprime.
 
+- **Peau courbe (option)** : une dernière passe suit la forme du dessus de la pièce pour effacer les marches d'escalier.
+
 Ce qui n'existe pas encore : les supports, et les couches courbes pour les branches creuses.
 
 ## Installation (Windows 64 bits)

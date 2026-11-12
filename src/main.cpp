@@ -134,7 +134,7 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
 
         ResultatTranchage resultat;
         if (strategie <= 0) {
-            resultat = trancher(modele.maillage, reglages);
+            resultat = trancher_classique(modele.maillage, reglages);
         } else {
             const std::vector<Strategie> strategies =
                 proposer_strategies(poser_au_centre(modele.maillage), reglages);
@@ -161,9 +161,13 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
             std::cout << std::format("5 axes continu : {} extrusions pendant lesquelles la tête ou le plateau tourne\n",
                                      resultat.verification.extrusions_en_rotation);
         }
-        std::cout << std::format("Parois imprimées dans le vide (à soutenir) : {:.0f} mm sur {:.0f} mm de cordon\n\n",
+        std::cout << std::format("Parois imprimées dans le vide (à soutenir) : {:.0f} mm sur {:.0f} mm de cordon\n",
                                  resultat.verification.longueur_dans_le_vide,
                                  resultat.verification.longueur_extrusions);
+        for (const std::string& remarque : resultat.remarques) {
+            std::cout << "Remarque : " << remarque << "\n";
+        }
+        std::cout << "\n";
 
         if (!resultat.verification.valide()) {
             afficher_erreurs(resultat.verification);
