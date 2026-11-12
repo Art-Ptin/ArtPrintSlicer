@@ -427,18 +427,65 @@ void test_courses() {
     }
 }
 
-// Couches courbes : le champ (longueur du chemin jusqu'au plateau), la
-// découpe d'une branche selon ce champ, puis le tranchage complet.
+// Couches courbes : le tronc d'abord, lisse ; puis les branches, imprimées
+// contre lui en couches qui épousent sa surface.
 void test_couches_courbes() {
     const Reglages r = reglages_essai();
-    const Maillage pose = poser_au_centre(essai::arbre_organique());
-    const ChampCouches champ = calculer_champ_couches(pose);
-    // Dans le tronc, le chemin le plus court est la verticale : la longueur
-    // vaut la hauteur, les couches sont des plans horizontaux.
-    for (const double z : {5.0, 20.0, 40.0}) {
-        double f = 0.0;
-        VERIFIER(champ.valeur({0.0, 0.0, z}, f) && std::abs(f - z) < 0.02);
+    const Maillage brut = essai::arbre();
+    const Maillage pose = poser_au_centre(brut);
+    // Le modèle est recentré sur le plateau : l'axe du tronc, lui, est ici.
+    const BoiteEnglobante boite = calculer_boite(brut);
+    const Vec3 axe{-(boite.min.x + boite.max.x) / 2.0, -(boite.min.y + boite.max.y) / 2.0, 0.0};
+
+    // L'analyse sépare le tronc (ce qui tient debout tout seul) des deux branches.
+    const AnalyseBranches analyse = analyser_branches(pose);
+    VERIFIER(analyse.nombre_tiges() == 2);
+    VERIFIER(analyse.meres.size() == 2 && analyse.meres[0] == -1 && analyse.meres[1] == -1);
+    VERIFIER(analyse.tige_en(axe + Vec3{0.0, 0.0, 30.0}) == -1);
+    VERIFIER(analyse.zone_a(5.0).empty());
+    VERIFIER(!analyse.zone_a(30.0).empty());
+    // Dans une branche : la distance au tronc augmente d'environ 1 mm par mm.
+    const Vec3 dans_la_branche = axe + Vec3{0, 0, 22} + essai::direction(60.0, 0.0) * 16.0;
+    double distance = 0.0, pente = 0.0;
+    Vec3 normale;
+    VERIFIER(analyse.champ.valeur(dans_la_branche, distance) && distance > 3.0);
+    VERIFIER(analyse.champ.gradient(dans_la_branche, normale, pente) && pente > 0.8 && pente < 1.25);
+    VERIFIER(analyse.tige_en(dans_la_branche) >= 0);
+
+    // Les couches d'une branche : la première épouse le tronc (elle est
+    // presque verticale), elles ne sont pas planes, puis elles se redressent
+    // en travers de la branche.
+    const PlanBranches plan = preparer_branches(pose, r.impression.hauteur_couche, 0.45 * r.impression.largeur_extrusion);
+    VERIFIER(!plan.vide() && plan.tiges.size() == 2);
+    for (const std::vector<CoucheCourbe>& tige : plan.tiges) {
+        VERIFIER(tige.size() > 50);
+        if (tige.size() <= 50) {
+            continue;
+        }
+        const auto inclinaison = [](const CoucheCourbe& couche) {
+            return en_degres(std::acos(std::clamp(couche.w.z, -1.0, 1.0)));
+        };
+        VERIFIER(inclinaison(tige.front()) > 75.0);
+        VERIFIER(inclinaison(tige[tige.size() / 2]) < inclinaison(tige.front()) - 2.0);
+        double relief = 0.0;
+        for (std::size_t n = 2; n < 12; ++n) {
+            double bas = 1e9, haut = -1e9;
+            for (const Contour& contour : tige[n].contour) {
+                for (const PointEntier& sommet : contour) {
+                    Vec3 point;
+                    double hauteur = 0.0;
+                    if (poser_sur_la_surface(plan.analyse.champ, tige[n], en_mm(sommet), plan.dessus[tige[n].niveau],
+                                             hauteur, point)) {
+                        bas = std::min(bas, hauteur), haut = std::max(haut, hauteur);
+                    }
+                }
+            }
+            relief = std::max(relief, haut - bas);
+        }
+        VERIFIER(relief > 0.3);
     }
+
+    // La stratégie : le tronc, puis une partie par branche.
     const std::vector<Strategie> strategies = proposer_strategies(pose, r);
     VERIFIER(strategies.front().type == TypeStrategie::classique);
     const Strategie* courbes = trouver(strategies, TypeStrategie::couches_courbes);
@@ -446,74 +493,82 @@ void test_couches_courbes() {
     if (!courbes) {
         return;
     }
-    VERIFIER(courbes->parties.size() >= 3 && !courbes->modele.triangles.empty());
-    VERIFIER(!courbes->parties.front().couches_courbes && courbes->parties.back().couches_courbes);
+    VERIFIER(courbes->parties.size() == 3 && courbes->parties.front().tronc_lisse);
+    VERIFIER(courbes->parties[1].couches_courbes && courbes->parties[1].parent == 0);
+    VERIFIER(courbes->surplomb < 5.0);
 
-    // Dans une branche : le chemin est plus long que la hauteur, et la
-    // longueur augmente partout d'environ 1 mm par mm : les couches ont une
-    // épaisseur régulière.
-    std::vector<double> dessus, epaisseurs;
-    for (double haut = r.impression.hauteur_premiere_couche; haut < champ.maximum + r.impression.hauteur_couche;
-         haut += r.impression.hauteur_couche) {
-        dessus.push_back(haut);
-        epaisseurs.push_back(dessus.size() == 1 ? r.impression.hauteur_premiere_couche : r.impression.hauteur_couche);
-    }
-    const std::vector<CoucheCourbe> couches =
-        trancher_selon_champ(courbes->parties.back().maillage, champ, dessus, epaisseurs, courbes->parties.size());
-    VERIFIER(couches.size() > 30);
-    double relief = 0.0, pente_min = 9.0, pente_max = 0.0;
-    bool plus_long = false;
-    for (const CoucheCourbe& couche : couches) {
-        double bas = 1e9, haut = -1e9;
-        for (const Contour& contour : couche.contour) {
-            for (const PointEntier& sommet : contour) {
-                Vec3 point;
-                double hauteur = 0.0;
-                if (!poser_sur_la_surface(champ, couche, en_mm(sommet), dessus[couche.niveau], hauteur, point)) {
-                    continue;
-                }
-                bas = std::min(bas, hauteur), haut = std::max(haut, hauteur);
-                plus_long = plus_long || dessus[couche.niveau] > point.z + 0.5;
-                Vec3 direction;
-                double pente = 1.0;
-                if (champ.gradient(point, direction, pente)) {
-                    pente_min = std::min(pente_min, pente), pente_max = std::max(pente_max, pente);
-                }
-            }
-        }
-        relief = std::max(relief, haut - bas);
-    }
-    VERIFIER(plus_long);
-    // Les couches ne sont pas planes : leur surface s'écarte de sa carte.
-    VERIFIER(relief > 0.3);
-    VERIFIER(pente_min > 0.7 && pente_max < 1.4);
-
-    // Tranchage complet : accepté par le vérificateur, la tête tourne
-    // pendant l'extrusion, et tout monte ensemble (les parties alternent).
     const ResultatTranchage resultat = trancher_strategie(*courbes, r);
     VERIFIER_ACCEPTE(resultat.verification);
     VERIFIER(resultat.verification.extrusions_en_rotation > 1000);
-    std::size_t reprises = 0;
-    double c_min = 0.0, c_max = 0.0;
+    // Bien moins de parois dans le vide qu'en 3 axes (il en reste un peu : la
+    // première couche d'une branche repose sur le remplissage aéré du tronc).
+    const ResultatTranchage classique = trancher(pose, r);
+    VERIFIER(resultat.verification.longueur_dans_le_vide < 15.0);
+    VERIFIER(classique.verification.longueur_dans_le_vide > 30.0);
+    // Le tronc est imprimé d'abord et en entier : chaque partie n'est commencée qu'une fois.
+    std::size_t debuts = 0;
     std::istringstream lignes(resultat.gcode);
     for (std::string ligne; std::getline(lignes, ligne);) {
-        reprises += ligne.starts_with(";PARTIE:");
-        const auto ou = ligne.find(" C");
-        if (ligne.starts_with("G") && ou != std::string::npos) {
-            const double c = std::stod(ligne.substr(ou + 2));
-            c_min = std::min(c_min, c), c_max = std::max(c_max, c);
+        debuts += ligne.starts_with(";PARTIE:");
+    }
+    VERIFIER(debuts == 3);
+    // Le tronc est lisse : aucun de ses cordons ne sort de son rayon (6 mm),
+    // il n'a donc aucune amorce de branche.
+    double rayon = 0.0;
+    std::size_t couches_du_tronc = 0;
+    for (const CoucheApercu& couche : resultat.apercu) {
+        if (couche.partie != 0 || couche.z < 1.0) {
+            continue;  // (la première couche a une jupe, plus large)
+        }
+        ++couches_du_tronc;
+        for (const MouvementApercu& m : couche.mouvements) {
+            if (m.type != type_apercu_vide) {
+                rayon = std::max(rayon, std::hypot(m.x1 - axe.x, m.y1 - axe.y));
+            }
         }
     }
-    VERIFIER(reprises > 20 * courbes->parties.size());
-    // Le plateau va et vient : il ne s'enroule pas sur des dizaines de tours.
-    VERIFIER(c_max - c_min < 1080.0);
-    // Pas plus de parois dans le vide qu'en 3 axes.
-    VERIFIER(resultat.verification.longueur_dans_le_vide <=
-             trancher(pose, r).verification.longueur_dans_le_vide + 1.0);
+    VERIFIER(couches_du_tronc > 250);
+    VERIFIER(rayon > 5.0 && rayon < 6.05);
+    // Là où une branche viendra, le tronc est laissé à nu : à cette hauteur,
+    // aucune de ses parois ne passe dans la zone de la branche, mais son
+    // remplissage, lui, arrive jusque-là.
+    {
+        std::size_t parois_dans_la_zone = 0, parois = 0, couches_vues = 0;
+        for (const CoucheApercu& couche : resultat.apercu) {
+            if (couche.partie != 0 || couche.z < 28.0 || couche.z > 32.0) {
+                continue;
+            }
+            ++couches_vues;
+            const Polygones zone = analyse.zone_a(couche.z - 0.1);
+            for (const MouvementApercu& m : couche.mouvements) {
+                if (m.type != 1 && m.type != 2) {
+                    continue;
+                }
+                ++parois;
+                for (const Contour& contour : zone) {
+                    parois_dans_la_zone += Clipper2Lib::PointInPolygon(en_unites(Point2{m.x1, m.y1}), contour) ==
+                                           Clipper2Lib::PointInPolygonResult::IsInside;
+                }
+            }
+        }
+        VERIFIER(couches_vues > 10 && parois > 100);
+        VERIFIER(parois_dans_la_zone == 0);
+    }
 
-    // Une branche qui redescend (le crochet) ne peut pas être imprimée ainsi :
-    // la stratégie n'est pas proposée.
-    VERIFIER(trouver(proposer_strategies(poser_au_centre(essai::crochet()), r), TypeStrategie::couches_courbes) ==
+    // Un arbre plus riche (une branche qui porte une branche, des formes
+    // arrondies) passe aussi ; un champignon, dont le chapeau fait tout le
+    // tour du pied, n'est pas découpé ainsi.
+    for (const auto& fabriquer : {essai::arbre_organique, essai::arbre_double}) {
+        const std::vector<Strategie> autres = proposer_strategies(poser_au_centre(fabriquer()), r);
+        const Strategie* autre = trouver(autres, TypeStrategie::couches_courbes);
+        VERIFIER(autre != nullptr);
+        if (autre) {
+            const ResultatTranchage tranche = trancher_strategie(*autre, r);
+            VERIFIER_ACCEPTE(tranche.verification);
+            VERIFIER(tranche.verification.longueur_dans_le_vide < 45.0);
+        }
+    }
+    VERIFIER(trouver(proposer_strategies(poser_au_centre(essai::champignon()), r), TypeStrategie::couches_courbes) ==
              nullptr);
 }
 
@@ -573,10 +628,10 @@ void test_peau_courbe() {
     VERIFIER(vertical.gcode.find(";PEAU COURBE") != std::string::npos);
     VERIFIER(vertical.verification.extrusions_en_rotation == 0);
 
-    // Avec les couches courbes aussi, le dessus du tronc reçoit sa peau.
+    // Avec la stratégie par branches aussi, le dessus du tronc reçoit sa peau.
     const std::vector<Strategie> strategies = proposer_strategies(poser_au_centre(essai::arbre_organique()), r);
-    if (const Strategie* courbes = trouver(strategies, TypeStrategie::couches_courbes)) {
-        const ResultatTranchage resultat = trancher_strategie(*courbes, r);
+    if (const Strategie* branches = trouver(strategies, TypeStrategie::par_branches)) {
+        const ResultatTranchage resultat = trancher_strategie(*branches, r);
         VERIFIER_ACCEPTE(resultat.verification);
         VERIFIER(resultat.gcode.find(";PEAU COURBE") != std::string::npos);
     }

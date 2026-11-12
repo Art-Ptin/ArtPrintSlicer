@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <queue>
+#include <unordered_map>
 #include <utility>
 
 #include "squelette.hpp"
@@ -87,10 +88,72 @@ bool ChampCouches::gradient(const Vec3& p, Vec3& direction, double& pente) const
     return true;
 }
 
-ChampCouches calculer_champ_couches(const Maillage& pose, double pas) {
-    ChampCouches champ;
+int AnalyseBranches::tige_en(const Vec3& p) const {
+    const int i = static_cast<int>(std::floor((p.x - champ.origine.x) / champ.pas));
+    const int j = static_cast<int>(std::floor((p.y - champ.origine.y) / champ.pas));
+    const int k = static_cast<int>(std::floor((p.z - champ.origine.z) / champ.pas));
+    // Le cube du point, sinon le cube de tige le plus proche autour.
+    int meilleure = -1;
+    int plus_pres = 1 << 30;
+    for (int dk = -2; dk <= 2; ++dk) {
+        for (int dj = -2; dj <= 2; ++dj) {
+            for (int di = -2; di <= 2; ++di) {
+                const int a = i + di, b = j + dj, c = k + dk;
+                if (a < 0 || b < 0 || c < 0 || a >= champ.nx || b >= champ.ny || c >= champ.nz) {
+                    continue;
+                }
+                const std::int32_t tige = tige_des_cubes[champ.indice(a, b, c)];
+                const int d = di * di + dj * dj + dk * dk;
+                if (tige >= 0 && d < plus_pres) {
+                    plus_pres = d;
+                    meilleure = tige;
+                }
+            }
+        }
+    }
+    return meilleure;
+}
+
+Polygones AnalyseBranches::zone_a(double z) const {
+    Polygones bandes;
+    const int k = static_cast<int>(std::floor((z - champ.origine.z) / champ.pas));
+    if (k < 0 || k >= champ.nz) {
+        return bandes;
+    }
+    const double pas = champ.pas;
+    for (int j = 0; j < champ.ny; ++j) {
+        for (int i = 0; i < champ.nx;) {
+            if (!zone_branches[champ.indice(i, j, k)]) {
+                ++i;
+                continue;
+            }
+            int fin = i;
+            while (fin + 1 < champ.nx && zone_branches[champ.indice(fin + 1, j, k)]) {
+                ++fin;
+            }
+            const double xa = champ.origine.x + i * pas, xb = champ.origine.x + (fin + 1) * pas;
+            const double ya = champ.origine.y + j * pas, yb = ya + pas;
+            bandes.push_back({en_unites(Point2{xa, ya}), en_unites(Point2{xb, ya}), en_unites(Point2{xb, yb}),
+                              en_unites(Point2{xa, yb})});
+            i = fin + 1;
+        }
+    }
+    if (bandes.empty()) {
+        return bandes;
+    }
+    // Les cubes font un bord en escalier : il est arrondi (gonflé puis
+    // dégonflé) pour que la paroi du tronc reste lisse. La zone garde un
+    // quart de cube d'avance sur le tronc : mieux vaut un jeu d'un dixième
+    // de millimètre entre le tronc et la branche qu'un recouvrement.
+    const Polygones zone = Clipper2Lib::Union(bandes, Clipper2Lib::FillRule::NonZero);
+    return decaler_arrondi(decaler_arrondi(zone, pas), -0.75 * pas);
+}
+
+AnalyseBranches analyser_branches(const Maillage& pose, double pas, const std::set<int>& exclus) {
+    AnalyseBranches analyse;
+    ChampCouches& champ = analyse.champ;
     if (pose.triangles.empty()) {
-        return champ;
+        return analyse;
     }
     if (pas <= 0.0) {
         const Point3 taille = calculer_boite(pose).dimensions();
@@ -103,62 +166,12 @@ ChampCouches calculer_champ_couches(const Maillage& pose, double pas) {
     const int nx = champ.nx, ny = champ.ny, nz = champ.nz;
     const std::size_t total = static_cast<std::size_t>(nx) * ny * nz;
     const auto indice = [&](int i, int j, int k) { return champ.indice(i, j, k); };
-
-    // 1. La zone calculée : la matière, élargie de quelques cubes.
-    std::vector<std::uint8_t> matiere(total, 0), zone(total, 0);
-    for (int k = 0; k < g.nz; ++k) {
-        for (int j = 0; j < g.ny; ++j) {
-            for (int i = 0; i < g.nx; ++i) {
-                if (g.plein[g.indice(i, j, k)]) {
-                    matiere[indice(i + marge, j + marge, k + marge)] = 1;
-                }
-            }
-        }
-    }
-    zone = matiere;
-    // Élargissement axe par axe (un cube plein grossit en un pavé).
-    for (int axe = 0; axe < 3; ++axe) {
-        std::vector<std::uint8_t> suite(total, 0);
-        for (int k = 0; k < nz; ++k) {
-            for (int j = 0; j < ny; ++j) {
-                for (int i = 0; i < nx; ++i) {
-                    bool plein = false;
-                    for (int d = -bande; d <= bande && !plein; ++d) {
-                        const int a = i + (axe == 0 ? d : 0), b = j + (axe == 1 ? d : 0), c = k + (axe == 2 ? d : 0);
-                        plein = a >= 0 && b >= 0 && c >= 0 && a < nx && b < ny && c < nz && zone[indice(a, b, c)];
-                    }
-                    suite[indice(i, j, k)] = plein;
-                }
-            }
-        }
-        zone.swap(suite);
-    }
-
-    champ.valeurs.assign(total, hors_zone);
-    const auto hauteur = [&](int k) { return champ.origine.z + (k + 0.5) * pas; };
-
-    // 2. Les colonnes posées sur le plateau : tant que la colonne monte sans
-    // quitter la zone, le chemin le plus court est la verticale.
-    std::vector<std::uint8_t> direct(total, 0);
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            int k = 0;
-            while (k < nz && !zone[indice(i, j, k)]) {
-                ++k;
-            }
-            if (k == nz || hauteur(k) > 1.5 * pas) {
-                continue;  // cette colonne ne part pas du plateau
-            }
-            for (; k < nz && zone[indice(i, j, k)]; ++k) {
-                direct[indice(i, j, k)] = 1;
-                champ.valeurs[indice(i, j, k)] = static_cast<float>(hauteur(k));
-            }
-        }
-    }
-
-    // 3. Le reste (ce qui est en surplomb) : le chemin part d'un cube déjà
-    // connu, en ligne droite tant que la ligne reste dans la zone. Chaque
-    // cube retient sa « source » : le point d'où part sa dernière ligne droite.
+    const auto dedans = [&](int i, int j, int k) { return i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz; };
+    const auto coordonnees = [&](std::size_t n, int& i, int& j, int& k) {
+        i = static_cast<int>(n % nx);
+        j = static_cast<int>((n / nx) % ny);
+        k = static_cast<int>(n / (static_cast<std::size_t>(nx) * ny));
+    };
     struct Voisin {
         int di, dj, dk;
     };
@@ -172,12 +185,171 @@ ChampCouches calculer_champ_couches(const Maillage& pose, double pas) {
             }
         }
     }
-    const auto coordonnees = [&](std::uint32_t n, int& i, int& j, int& k) {
-        i = static_cast<int>(n % nx);
-        j = static_cast<int>((n / nx) % ny);
-        k = static_cast<int>(n / (static_cast<std::size_t>(nx) * ny));
-    };
-    // Vrai si la ligne droite entre deux cubes reste dans la zone.
+
+    std::vector<std::uint8_t> matiere(total, 0);
+    for (int k = 0; k < g.nz; ++k) {
+        for (int j = 0; j < g.ny; ++j) {
+            for (int i = 0; i < g.nx; ++i) {
+                if (g.plein[g.indice(i, j, k)]) {
+                    matiere[indice(i + marge, j + marge, k + marge)] = 1;
+                }
+            }
+        }
+    }
+    const auto hauteur = [&](int k) { return champ.origine.z + (k + 0.5) * pas; };
+
+    // 1. Le tronc : les colonnes de matière qui montent du plateau sans interruption.
+    std::vector<std::uint8_t> tronc(total, 0);
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            int k = 0;
+            while (k < nz && !matiere[indice(i, j, k)]) {
+                ++k;
+            }
+            if (k == nz || hauteur(k) > 1.5 * pas) {
+                continue;
+            }
+            for (; k < nz && matiere[indice(i, j, k)]; ++k) {
+                tronc[indice(i, j, k)] = 1;
+            }
+        }
+    }
+
+    // 2. Les morceaux en surplomb : la matière hors du tronc, groupée par
+    // morceaux d'un seul tenant. Pour chacun : son volume, et sa profondeur
+    // (le nombre de cubes qu'il faut traverser depuis le tronc).
+    std::vector<std::uint8_t> surplomb(total, 0);
+    for (std::size_t n = 0; n < total; ++n) {
+        surplomb[n] = matiere[n] && !tronc[n];
+    }
+    std::vector<std::int32_t> morceau(total, -1);
+    std::vector<std::size_t> taille_morceau;
+    std::vector<int> profondeur_morceau;
+    {
+        std::vector<std::uint32_t> pile, front, suite;
+        for (std::size_t depart = 0; depart < total; ++depart) {
+            if (!surplomb[depart] || morceau[depart] >= 0) {
+                continue;
+            }
+            const auto numero = static_cast<std::int32_t>(taille_morceau.size());
+            std::vector<std::uint32_t> cubes;
+            pile.assign(1, static_cast<std::uint32_t>(depart));
+            morceau[depart] = numero;
+            while (!pile.empty()) {
+                const std::uint32_t n = pile.back();
+                pile.pop_back();
+                cubes.push_back(n);
+                int i, j, k;
+                coordonnees(n, i, j, k);
+                for (const Voisin& v : voisins) {
+                    const int a = i + v.di, b = j + v.dj, c = k + v.dk;
+                    if (!dedans(a, b, c)) {
+                        continue;
+                    }
+                    const std::size_t m = indice(a, b, c);
+                    if (surplomb[m] && morceau[m] < 0) {
+                        morceau[m] = numero;
+                        pile.push_back(static_cast<std::uint32_t>(m));
+                    }
+                }
+            }
+            // Profondeur : on avance par vagues depuis les cubes qui touchent le tronc.
+            std::unordered_map<std::uint32_t, int> vague;
+            front.clear();
+            for (const std::uint32_t n : cubes) {
+                int i, j, k;
+                coordonnees(n, i, j, k);
+                for (const Voisin& v : voisins) {
+                    const int a = i + v.di, b = j + v.dj, c = k + v.dk;
+                    if (dedans(a, b, c) && matiere[indice(a, b, c)] && !surplomb[indice(a, b, c)]) {
+                        vague.emplace(n, 1);
+                        front.push_back(n);
+                        break;
+                    }
+                }
+            }
+            int profondeur = front.empty() ? 0 : 1;
+            while (!front.empty()) {
+                suite.clear();
+                for (const std::uint32_t n : front) {
+                    int i, j, k;
+                    coordonnees(n, i, j, k);
+                    for (const Voisin& v : voisins) {
+                        const int a = i + v.di, b = j + v.dj, c = k + v.dk;
+                        if (!dedans(a, b, c)) {
+                            continue;
+                        }
+                        const auto m = static_cast<std::uint32_t>(indice(a, b, c));
+                        if (morceau[m] == numero && vague.emplace(m, profondeur + 1).second) {
+                            suite.push_back(m);
+                        }
+                    }
+                }
+                if (!suite.empty()) {
+                    ++profondeur;
+                }
+                front.swap(suite);
+            }
+            taille_morceau.push_back(cubes.size());
+            profondeur_morceau.push_back(profondeur);
+        }
+    }
+    // Un morceau tout petit, ou une simple pellicule sur un tronc un peu
+    // bombé, ne mérite pas d'être une branche : il reste avec le tronc.
+    // Un morceau qui ne touche pas le tronc non plus (il flotte).
+    const double volume_cube = pas * pas * pas;
+    std::vector<std::uint8_t> garde(taille_morceau.size(), 0);
+    for (std::size_t n = 0; n < garde.size(); ++n) {
+        garde[n] = taille_morceau[n] * volume_cube >= 20.0 && profondeur_morceau[n] * pas >= 2.0 &&
+                   !exclus.contains(static_cast<int>(n));
+    }
+    std::vector<std::uint8_t> branche(total, 0);
+    bool une_branche = false;
+    for (std::size_t n = 0; n < total; ++n) {
+        if (morceau[n] >= 0 && garde[morceau[n]]) {
+            branche[n] = 1;
+            une_branche = true;
+        }
+    }
+    analyse.tige_des_cubes.assign(total, -1);
+    analyse.zone_branches.assign(total, 0);
+    champ.valeurs.assign(total, hors_zone);
+    if (!une_branche) {
+        return analyse;
+    }
+
+    // 3. La zone des branches : leur matière, élargie de quelques cubes (pour
+    // interpoler jusqu'à leur surface et un peu au-delà), hors du tronc.
+    std::vector<std::uint8_t>& zone = analyse.zone_branches;
+    zone = branche;
+    for (int axe = 0; axe < 3; ++axe) {
+        std::vector<std::uint8_t> suite(total, 0);
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    bool plein = false;
+                    for (int d = -bande; d <= bande && !plein; ++d) {
+                        const int a = i + (axe == 0 ? d : 0), b = j + (axe == 1 ? d : 0), c = k + (axe == 2 ? d : 0);
+                        plein = dedans(a, b, c) && zone[indice(a, b, c)];
+                    }
+                    suite[indice(i, j, k)] = plein;
+                }
+            }
+        }
+        zone.swap(suite);
+    }
+    for (std::size_t n = 0; n < total; ++n) {
+        // Le reste de la matière (le tronc, les morceaux laissés avec lui) n'en fait pas partie.
+        if (matiere[n] && !branche[n]) {
+            zone[n] = 0;
+        }
+    }
+
+    // 4. Longueur du chemin jusqu'au tronc. On part des cubes du tronc qui
+    // touchent la zone ; la longueur y vaut moins un demi-cube, pour valoir
+    // zéro sur la surface du tronc. Chaque cube retient sa « source » : le
+    // point d'où part sa dernière ligne droite. La longueur est ainsi celle
+    // d'un vrai chemin en lignes droites, pas celle d'un escalier de cubes.
     const auto visible = [&](int i0, int j0, int k0, int i1, int j1, int k1) {
         const int di = i1 - i0, dj = j1 - j0, dk = k1 - k0;
         const int pas_ligne = 2 * std::max({std::abs(di), std::abs(dj), std::abs(dk)});
@@ -186,45 +358,39 @@ ChampCouches calculer_champ_couches(const Maillage& pose, double pas) {
             const int i = static_cast<int>(std::lround(i0 + di * t));
             const int j = static_cast<int>(std::lround(j0 + dj * t));
             const int k = static_cast<int>(std::lround(k0 + dk * t));
-            if (!zone[indice(i, j, k)]) {
+            if (!zone[indice(i, j, k)] && !(i == i1 && j == j1 && k == k1)) {
                 return false;
             }
         }
         return true;
     };
-
     std::vector<std::uint32_t> source(total, 0);
-    std::vector<std::uint8_t> fini(total, 0);
+    std::vector<std::uint8_t> fini(total, 0), depart(total, 0);
     using Entree = std::pair<float, std::uint32_t>;
     std::priority_queue<Entree, std::vector<Entree>, std::greater<Entree>> file;
     const float infini = std::numeric_limits<float>::max();
     std::vector<float> longueur(total, infini);
-    for (int k = 0; k < nz; ++k) {
-        for (int j = 0; j < ny; ++j) {
-            for (int i = 0; i < nx; ++i) {
-                const std::size_t n = indice(i, j, k);
-                if (!direct[n]) {
-                    continue;
-                }
-                longueur[n] = champ.valeurs[n];
+    for (std::size_t n = 0; n < total; ++n) {
+        if (!matiere[n] || branche[n]) {
+            continue;
+        }
+        int i, j, k;
+        coordonnees(n, i, j, k);
+        for (const Voisin& v : voisins) {
+            const int a = i + v.di, b = j + v.dj, c = k + v.dk;
+            if (dedans(a, b, c) && zone[indice(a, b, c)]) {
+                longueur[n] = static_cast<float>(-0.5 * pas);
                 source[n] = static_cast<std::uint32_t>(n);
-                fini[n] = 1;
-                // Seuls les cubes au bord d'un surplomb servent de départ.
-                for (const Voisin& v : voisins) {
-                    const int a = i + v.di, b = j + v.dj, c = k + v.dk;
-                    if (a >= 0 && b >= 0 && c >= 0 && a < nx && b < ny && c < nz && zone[indice(a, b, c)] &&
-                        !direct[indice(a, b, c)]) {
-                        file.push({longueur[n], static_cast<std::uint32_t>(n)});
-                        break;
-                    }
-                }
+                depart[n] = 1;
+                file.push({longueur[n], static_cast<std::uint32_t>(n)});
+                break;
             }
         }
     }
     while (!file.empty()) {
         const auto [d, n] = file.top();
         file.pop();
-        if (d > longueur[n]) {
+        if (d > longueur[n] || fini[n]) {
             continue;
         }
         fini[n] = 1;
@@ -235,14 +401,13 @@ ChampCouches calculer_champ_couches(const Maillage& pose, double pas) {
         coordonnees(s, si, sj, sk);
         for (const Voisin& v : voisins) {
             const int a = i + v.di, b = j + v.dj, c = k + v.dk;
-            if (a < 0 || b < 0 || c < 0 || a >= nx || b >= ny || c >= nz) {
+            if (!dedans(a, b, c)) {
                 continue;
             }
             const std::size_t m = indice(a, b, c);
-            if (!zone[m] || direct[m] || fini[m] || longueur[m] <= d) {
+            if (!zone[m] || fini[m] || longueur[m] <= d) {
                 continue;
             }
-            // En ligne droite depuis la source de ce cube, si elle est visible...
             float candidat;
             std::uint32_t origine_candidat;
             if (s != n && visible(a, b, c, si, sj, sk)) {
@@ -250,7 +415,6 @@ ChampCouches calculer_champ_couches(const Maillage& pose, double pas) {
                     (a - si) * (a - si) + (b - sj) * (b - sj) + (c - sk) * (c - sk))));
                 origine_candidat = s;
             } else {
-                // ... sinon le chemin tourne ici : ce cube devient la source.
                 candidat = d + static_cast<float>(pas * std::sqrt(static_cast<double>(
                     v.di * v.di + v.dj * v.dj + v.dk * v.dk)));
                 origine_candidat = n;
@@ -265,12 +429,241 @@ ChampCouches calculer_champ_couches(const Maillage& pose, double pas) {
     for (std::size_t n = 0; n < total; ++n) {
         if (zone[n] && longueur[n] != infini) {
             champ.valeurs[n] = longueur[n];
-            if (matiere[n]) {
+            if (branche[n]) {
                 champ.maximum = std::max(champ.maximum, static_cast<double>(longueur[n]));
             }
         }
     }
-    return champ;
+    // Sous la surface du tronc, sur quelques cubes : l'opposé de la distance
+    // à la zone des branches. Le champ traverse ainsi la surface du tronc
+    // sans cassure, et s'interpole proprement de part et d'autre.
+    const int fond = 3;
+    for (std::size_t n = 0; n < total; ++n) {
+        if (!depart[n]) {
+            continue;
+        }
+        int i, j, k;
+        coordonnees(n, i, j, k);
+        for (int dk = -fond; dk <= fond; ++dk) {
+            for (int dj = -fond; dj <= fond; ++dj) {
+                for (int di = -fond; di <= fond; ++di) {
+                    const int a = i + di, b = j + dj, c = k + dk;
+                    if (!dedans(a, b, c)) {
+                        continue;
+                    }
+                    const std::size_t m = indice(a, b, c);
+                    if (zone[m] || !matiere[m]) {
+                        continue;
+                    }
+                    const auto valeur = static_cast<float>(-0.5 * pas - pas * std::sqrt(static_cast<double>(di * di + dj * dj + dk * dk)));
+                    if (champ.valeurs[m] == hors_zone || valeur > champ.valeurs[m]) {
+                        champ.valeurs[m] = valeur;
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Les tiges. La matière des branches est rangée par bandes d'égale
+    // longueur de chemin ; dans chaque bande, les groupes d'un seul tenant
+    // sont les « nœuds ». Quand un nœud en porte deux, la branche se divise.
+    const double epaisseur_bande = 3.0 * pas;
+    const auto bande_de = [&](std::size_t n) {
+        return static_cast<int>(std::max(0.0f, champ.valeurs[n]) / epaisseur_bande);
+    };
+    struct Noeud {
+        int bande = 0;
+        std::int32_t morceau = 0;
+        std::size_t cubes = 0;
+        std::vector<int> dessus, dessous;  // nœuds de la bande suivante / précédente
+    };
+    std::vector<Noeud> noeuds;
+    std::vector<std::int32_t> noeud_de(total, -1);
+    {
+        std::vector<std::uint32_t> pile;
+        for (std::size_t debut = 0; debut < total; ++debut) {
+            if (!branche[debut] || noeud_de[debut] >= 0 || champ.valeurs[debut] == hors_zone) {
+                continue;
+            }
+            const auto numero = static_cast<std::int32_t>(noeuds.size());
+            Noeud noeud;
+            noeud.bande = bande_de(debut);
+            noeud.morceau = morceau[debut];
+            pile.assign(1, static_cast<std::uint32_t>(debut));
+            noeud_de[debut] = numero;
+            while (!pile.empty()) {
+                const std::uint32_t n = pile.back();
+                pile.pop_back();
+                ++noeud.cubes;
+                int i, j, k;
+                coordonnees(n, i, j, k);
+                for (const Voisin& v : voisins) {
+                    const int a = i + v.di, b = j + v.dj, c = k + v.dk;
+                    if (!dedans(a, b, c)) {
+                        continue;
+                    }
+                    const std::size_t m = indice(a, b, c);
+                    if (branche[m] && noeud_de[m] < 0 && champ.valeurs[m] != hors_zone && bande_de(m) == noeud.bande) {
+                        noeud_de[m] = numero;
+                        pile.push_back(static_cast<std::uint32_t>(m));
+                    }
+                }
+            }
+            noeuds.push_back(std::move(noeud));
+        }
+        for (std::size_t n = 0; n < total; ++n) {
+            if (noeud_de[n] < 0) {
+                continue;
+            }
+            int i, j, k;
+            coordonnees(n, i, j, k);
+            for (const Voisin& v : voisins) {
+                const int a = i + v.di, b = j + v.dj, c = k + v.dk;
+                if (!dedans(a, b, c)) {
+                    continue;
+                }
+                const std::int32_t autre = noeud_de[indice(a, b, c)];
+                if (autre >= 0 && noeuds[autre].bande == noeuds[noeud_de[n]].bande + 1) {
+                    std::vector<int>& dessus = noeuds[noeud_de[n]].dessus;
+                    if (std::find(dessus.begin(), dessus.end(), autre) == dessus.end()) {
+                        dessus.push_back(autre);
+                        noeuds[autre].dessous.push_back(noeud_de[n]);
+                    }
+                }
+            }
+        }
+    }
+    // Une pousse minuscule (une aspérité) ne fait pas une fourche.
+    const std::size_t cubes_min = static_cast<std::size_t>(std::max(8.0, 1.5 / volume_cube));
+    const auto volume_au_dessus = [&](int depart_noeud) {
+        std::size_t somme = 0;
+        std::vector<int> a_voir{depart_noeud};
+        std::vector<std::uint8_t> vu(noeuds.size(), 0);
+        while (!a_voir.empty() && somme < 4 * cubes_min) {
+            const int n = a_voir.back();
+            a_voir.pop_back();
+            if (vu[n]) {
+                continue;
+            }
+            vu[n] = 1;
+            somme += noeuds[n].cubes;
+            a_voir.insert(a_voir.end(), noeuds[n].dessus.begin(), noeuds[n].dessus.end());
+        }
+        return somme;
+    };
+    // Tiges : une tige est une suite de nœuds qui se suivent un par un. Une
+    // fourche ne compte que si chacune de ses pousses a un vrai volume.
+    std::vector<std::int32_t> tige_du_noeud(noeuds.size(), -1);
+    std::vector<int> mere_brute, morceau_brut;
+    std::vector<std::size_t> cubes_bruts;
+    const auto vraies_pousses = [&](int n) {
+        std::vector<int> pousses;
+        for (const int d : noeuds[n].dessus) {
+            if (volume_au_dessus(d) >= cubes_min) {
+                pousses.push_back(d);
+            }
+        }
+        return pousses;
+    };
+    // Parcours des nœuds par bandes croissantes.
+    std::vector<int> ordre(noeuds.size());
+    for (std::size_t n = 0; n < ordre.size(); ++n) {
+        ordre[n] = static_cast<int>(n);
+    }
+    std::stable_sort(ordre.begin(), ordre.end(), [&](int a, int b) { return noeuds[a].bande < noeuds[b].bande; });
+    for (const int n : ordre) {
+        if (tige_du_noeud[n] >= 0) {
+            continue;
+        }
+        // Un nœud sans vraie tige en dessous commence une tige (posée sur le tronc).
+        int mere = -1;
+        for (const int d : noeuds[n].dessous) {
+            if (tige_du_noeud[d] >= 0) {
+                mere = tige_du_noeud[d];
+            }
+        }
+        int tige = -1;
+        if (mere >= 0) {
+            // Suite de la tige du dessous, sauf si celle-ci se divise ici.
+            int porteur = noeuds[n].dessous.front();
+            for (const int d : noeuds[n].dessous) {
+                if (tige_du_noeud[d] == mere) {
+                    porteur = d;
+                }
+            }
+            const std::vector<int> pousses = vraies_pousses(porteur);
+            const bool vraie = std::find(pousses.begin(), pousses.end(), n) != pousses.end();
+            if (pousses.size() <= 1 || !vraie || noeuds[n].dessous.size() > 1) {
+                tige = mere;  // même tige (ou aspérité rattachée, ou deux pousses qui se rejoignent)
+            }
+        }
+        if (tige < 0) {
+            tige = static_cast<int>(mere_brute.size());
+            mere_brute.push_back(mere);
+            morceau_brut.push_back(noeuds[n].morceau);
+            cubes_bruts.push_back(0);
+        }
+        tige_du_noeud[n] = tige;
+        cubes_bruts[tige] += noeuds[n].cubes;
+    }
+    // Les miettes : au pied d'une branche, de tout petits groupes de cubes
+    // forment des « tiges » de quelques millimètres cubes. Chacune est
+    // rattachée à sa tige mère, ou, si elle part du tronc, à la plus grosse
+    // tige de son morceau.
+    const std::size_t nombre_brut = mere_brute.size();
+    std::vector<int> vers(nombre_brut);
+    for (std::size_t t = 0; t < nombre_brut; ++t) {
+        vers[t] = static_cast<int>(t);
+    }
+    const auto miette = [&](std::size_t t) { return cubes_bruts[t] * volume_cube < 15.0; };
+    for (std::size_t t = 0; t < nombre_brut; ++t) {
+        if (!miette(t)) {
+            continue;
+        }
+        int cible = mere_brute[t];
+        if (cible < 0) {
+            std::size_t plus_grosse = 0;
+            for (std::size_t autre = 0; autre < nombre_brut; ++autre) {
+                if (morceau_brut[autre] == morceau_brut[t] && mere_brute[autre] < 0 && !miette(autre) &&
+                    cubes_bruts[autre] > plus_grosse) {
+                    plus_grosse = cubes_bruts[autre];
+                    cible = static_cast<int>(autre);
+                }
+            }
+        }
+        vers[t] = cible;  // -1 : aucune tige où la rattacher, elle disparaît
+    }
+    const auto finale = [&](int t) {
+        for (int tours = 0; t >= 0 && vers[t] != t && tours < 64; ++tours) {
+            t = vers[t];
+        }
+        return t;
+    };
+    // Renumérotation : les tiges gardées, dans le même ordre (une tige vient
+    // toujours après celle qui la porte).
+    std::vector<int> nouveau(nombre_brut, -1);
+    for (std::size_t t = 0; t < nombre_brut; ++t) {
+        if (vers[t] == static_cast<int>(t)) {
+            nouveau[t] = static_cast<int>(analyse.meres.size());
+            const int mere = finale(mere_brute[t]);
+            analyse.meres.push_back(mere >= 0 ? nouveau[mere] : -1);
+            analyse.morceaux.push_back(morceau_brut[t]);
+            analyse.volumes.push_back(0.0);
+        }
+    }
+    for (std::size_t t = 0; t < nombre_brut; ++t) {
+        const int cible = finale(static_cast<int>(t));
+        if (cible >= 0 && nouveau[cible] >= 0) {
+            analyse.volumes[nouveau[cible]] += cubes_bruts[t] * volume_cube;
+        }
+    }
+    for (std::size_t n = 0; n < total; ++n) {
+        if (noeud_de[n] >= 0) {
+            const int cible = finale(tige_du_noeud[noeud_de[n]]);
+            analyse.tige_des_cubes[n] = cible >= 0 ? nouveau[cible] : -1;
+        }
+    }
+    return analyse;
 }
 
 }  // namespace artprint

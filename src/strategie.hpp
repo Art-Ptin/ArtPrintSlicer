@@ -44,10 +44,14 @@ struct PartieImpression {
     int cote = 0;
     double volume = 0.0;       // mm³
     double surplomb = 0.0;     // mm² à soutenir quand on l'imprime dans sa direction
-    // Vrai : la partie est imprimée en couches courbes, qui suivent le chemin
-    // de la matière depuis le plateau (voir champ_couches.hpp). Sa direction
-    // et sa courbe ne servent alors pas.
+    // Vrai : la partie est une branche imprimée en couches courbes, contre la
+    // partie qui la porte (voir champ_couches.hpp). Son maillage est vide :
+    // ses couches sont recalculées à partir du modèle entier.
     bool couches_courbes = false;
+    // Vrai pour le tronc de la stratégie en couches courbes : le maillage est
+    // le modèle entier, mais seul ce qui tient debout tout seul est imprimé
+    // ici ; les branches sont retirées de ses couches (voir champ_couches.hpp).
+    bool tronc_lisse = false;
     // En couches courbes : plus grande inclinaison donnée à la tête, en
     // degrés (celle qui a été trouvée sans collision pour cette partie).
     double inclinaison_outil_max = 90.0;

@@ -119,74 +119,77 @@ sur la machine, le réglage `pivot_continu` (onglet Machine) peut être
 décoché (0 dans le fichier de réglages) : la tête pivote alors entre deux
 couches, pendant un déplacement à vide.
 
-## Les couches courbes
+## Les couches courbes : le tronc d'abord, puis les branches contre lui
 
-La stratégie « Couches courbes (5 axes continu) » reprend les mêmes parties
-que « Par branches », mais les branches ne sont plus imprimées en plans :
-leurs couches partent à plat du tronc et s'arrondissent pour entrer dans la
-branche.
+La stratégie « Couches courbes (5 axes continu) » ne coupe plus le modèle
+par des plans. Elle sépare d'elle-même le tronc des branches
+(`src/champ_couches.*`, `src/couches_courbes.*`).
 
-### L'idée : la longueur du chemin jusqu'au plateau
+### Le tronc : lisse, et à nu là où une branche viendra
 
-Pour chaque point du modèle, on calcule la longueur du chemin le plus court
-jusqu'au plateau **en restant dans la matière** (`src/champ_couches.*`).
+Le **tronc** est tout ce qui tient debout tout seul : chaque point du tronc
+a de la matière sous lui, sans interruption, jusqu'au plateau. Il est
+imprimé le premier, en entier, en couches horizontales. Il ne porte aucune
+amorce de branche : sur un tronc rond, chaque couche est un simple rond.
 
-- Dans le tronc, ce chemin est une verticale : la longueur vaut la hauteur.
-- Dans une branche, le chemin doit contourner le coin où la branche quitte
-  le tronc : la longueur vaut la hauteur de ce coin, plus la distance
-  jusqu'au point.
+Là où une branche viendra se coller, le tronc est laissé **à nu** : ses
+parois s'arrêtent au bord de cette zone et son remplissage arrive jusqu'à
+la surface, où il reste apparent. La branche se soude ainsi sur le
+remplissage, pas sur une paroi lisse.
 
-Une **couche** est l'ensemble des points qui ont la même longueur de chemin.
-Dans le tronc, c'est un plan horizontal, exactement comme en 3 axes. Dans
-une branche, c'est une surface arrondie, centrée sur le coin, qui se
-raccorde au plan du tronc sans marche. Comme la longueur augmente partout
-de 1 mm par mm parcouru, deux couches voisines sont partout à la même
-distance : l'épaisseur est régulière (mesurée : 1,000 en moyenne, 1 %
-d'écart).
+### Les branches : des couches qui épousent le tronc
 
-Le calcul se fait sur une grille de petits cubes (0,3 à 1,2 mm). Chaque cube
-retient le point d'où part sa dernière ligne droite : la longueur est ainsi
-celle d'un vrai chemin en lignes droites, pas celle d'un escalier de cubes.
+Une **branche** est un morceau en surplomb accroché au tronc. Pour chaque
+point de la branche, on calcule la longueur du chemin le plus court, dans
+la branche, jusqu'à la surface du tronc. Une couche est l'ensemble des
+points qui ont la même longueur de chemin :
+
+- la première couche épouse la surface du tronc, quelle que soit sa forme
+  (plate, ronde, bombée) ;
+- les suivantes s'en écartent d'une épaisseur de couche à chaque fois, et
+  se redressent peu à peu en travers de la branche ;
+- l'épaisseur est régulière partout, car la longueur augmente de 1 mm par
+  mm parcouru.
+
+Une branche qui se divise est partagée en « tiges », d'une fourche à la
+suivante ; une tige est imprimée après celle qui la porte. Un morceau trop
+petit, ou trop bombé pour être dessiné sur une carte (un chapeau qui fait
+tout le tour d'un pied), reste avec le tronc.
 
 ### Tracer sur une surface courbe
 
 Les parois et le remplissage sont calculés par les outils habituels, qui
-travaillent à plat (`src/couches_courbes.*`) :
+travaillent à plat :
 
-1. le contour de la couche est relevé sur la surface de la partie, là où la
+1. le bord de la couche est relevé sur la peau de la branche, là où la
    longueur de chemin a la bonne valeur ;
 2. la couche est regardée le long de sa direction moyenne, et son contour
    est dessiné sur un plan : sa **carte** ;
 3. les trajectoires sont calculées sur la carte ;
-4. chaque point est reposé sur la surface, en quittant la carte le long de
-   la direction de vue ; un segment est recoupé tant que la surface s'écarte
-   de la ligne droite de plus de 0,02 mm.
+4. chaque point est reposé sur la surface ; un segment est recoupé tant que
+   la surface s'écarte de la ligne droite de plus de 0,02 mm.
 
-Là où la surface est vue de biais, les cordons sont un peu plus écartés que
-sur la carte : le débit est augmenté d'autant (dans la limite de + 50 %).
-Une couche trop bombée pour sa carte (plus de 72° d'un bord à l'autre) est
-refusée, et la stratégie n'est alors pas proposée.
+Là où la surface est vue de biais, le débit est augmenté d'autant (dans la
+limite de + 50 %).
 
-### La tête suit la surface
+### La tête, et ce que la machine permet
 
-En chaque point, la buse prend l'inclinaison de la surface à cet endroit :
-B change tout le long du cordon, C reste fixe pendant la couche (la tête
-penche toujours dans le même sens, plus ou moins). L'inclinaison respecte
-les limites de la machine, et ne dépasse pas celle qui a été trouvée sans
-collision pour la branche. Si le vérificateur trouve malgré tout un contact,
-le tranchage est refait en penchant moins la tête (jusqu'à quatre essais) :
-les couches gardent leur forme, seule l'orientation de la buse change.
+En chaque point, la buse prend l'inclinaison de la surface. Contre un tronc
+vertical, cela veut dire une buse presque à l'horizontale : c'est exigeant
+pour la machine. Si le vérificateur trouve un contact pendant une branche,
+cette branche est refaite autrement : la tête penchée de l'autre côté (le
+plateau retourné), puis de moins en moins penchée, de 10° en 10°. Le
+meilleur essai est gardé. S'il reste un contact, le tranchage est refusé.
 
-### Tout monte ensemble
+Avec la forme réelle d'une tête, trois choses limitent cette stratégie :
 
-Une couche courbe de branche se raccorde à la couche du tronc de même
-numéro : il faut donc imprimer la couche k du tronc, puis la couche k de
-chaque branche, avant de passer à la couche k + 1. La tête change
-d'orientation en passant d'une partie à l'autre, à chaque couche. Pour que
-le plateau ne s'enroule pas, les parties sont visitées dans un sens, puis
-dans l'autre à la couche suivante. La hauteur sûre pour changer
-d'orientation suit ce qui est déjà imprimé (20 mm au-dessus), au lieu de
-passer au-dessus du modèle entier.
+- le **bloc chauffant** est tout près de la pointe : la buse doit rester
+  bien en face de la surface, sinon il touche la matière ;
+- près du plateau, l'inclinaison de la tête est limitée, et une tête à
+  l'horizontale descend sous la pointe : une branche qui part trop bas ne
+  peut pas être imprimée ainsi ;
+- le **bras** qui porte la tête doit pouvoir passer à côté du tronc déjà
+  imprimé.
 
 ## La peau courbe (option)
 
@@ -289,10 +292,11 @@ limites de B et de C, courses des axes, jamais de cordon dans ou sous la
 matière déjà imprimée, et collisions avec la machine quand son modèle est
 renseigné.
 
-Pour les couches courbes, ils contrôlent que la longueur de chemin vaut la
-hauteur dans le tronc, que les couches d'une branche ne sont pas planes et
-gardent une épaisseur régulière, que le G-code est accepté, que les parties
-alternent et que le plateau ne s'enroule pas.
+Pour les couches courbes, ils contrôlent que le tronc et les branches sont
+bien séparés, que le tronc imprimé est lisse (aucun cordon hors de son
+rayon), qu'il est à nu là où une branche viendra (aucune paroi dans cette
+zone), que la première couche d'une branche épouse le tronc, que le tronc
+est imprimé en entier avant les branches et que le G-code est accepté.
 
 Les tests (`tests/test_strategie.cpp`) fabriquent deux arbres, les tranchent
 par branches, exigent zéro erreur du vérificateur, puis provoquent des
@@ -303,18 +307,17 @@ tranchable, et contrôlent le pivot continu (jamais plus de 0,25° par ligne).
 
 ## Limites connues
 
-- **Couches courbes : des cas ne sont pas encore traités.** La stratégie
-  n'est pas proposée pour une branche creuse (un tuyau), une branche qui
-  redescend, ou une branche trop bombée près du tronc (un bras qui part à
-  l'horizontale puis remonte). Dans ces cas, « Par branches » reste
-  disponible.
-- **Couches courbes : l'impression est plus longue.** La tête change
-  d'orientation à chaque couche pour passer du tronc aux branches.
-- **Couches courbes : le tronc et chaque branche restent des parties
-  séparées.** Leurs couches se raccordent, mais chaque partie garde ses
-  propres parois : il y a une paroi intérieure à la jonction.
+- **Couches courbes : exigeantes pour la machine.** Avec la forme réelle
+  d'une tête, une branche basse ou serrée contre un tronc haut est souvent
+  refusée (voir plus haut). « Par branches », qui laisse une amorce sur le
+  tronc, reste alors disponible.
+- **Couches courbes : des formes ne sont pas traitées** : un chapeau qui
+  fait tout le tour d'un pied, un bras qui s'élargit brusquement.
+- **Couches courbes : la branche se soude sur un remplissage aéré.** Il n'y
+  a pas encore de zone pleine sous le pied de la branche.
+- **Couches courbes : pas de peau courbe** sur le tronc avec cette stratégie.
 - **Couches courbes : les collisions ne sont contrôlées qu'au tranchage**,
-  pas au moment de proposer la stratégie.
+  et chaque nouvel essai refait tout le tranchage : c'est lent.
 - **La vitesse d'avance n'est pas corrigée pour les axes de rotation.** Le
   « F » d'une ligne est la vitesse voulue pour la pointe ; la façon dont le
   firmware la partage entre les cinq axes reste à vérifier sur la machine
@@ -345,9 +348,9 @@ tranchable, et contrôlent le pivot continu (jamais plus de 0,25° par ligne).
 2. Supports, limités à ce que le 5 axes ne résout pas.
 3. Trajets de changement d'orientation plus courts (reculer le bras au lieu
    de monter).
-4. Couches courbes : traiter les branches creuses et les jonctions très
-   bombées, supprimer la paroi intérieure à la jonction, et grouper
-   plusieurs couches d'une même partie pour changer moins souvent
-   d'orientation.
+4. Couches courbes : choisir l'orientation de la tête d'après la forme de
+   la machine avant de trancher (au lieu d'essayer puis de recommencer),
+   mettre du remplissage plein sous le pied des branches, et traiter les
+   formes qui s'élargissent.
 5. Choix de la stratégie dans le logiciel installé (aujourd'hui : ligne de
    commande, interface de programmation et maquette).

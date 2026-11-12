@@ -34,6 +34,10 @@ struct OptionsMultiaxe {
     double pas_pivot_continu = 0.25;
     // Peau courbe : rotation maximale du plateau par millimètre de cordon, en degrés.
     double rotation_plateau_par_mm = 4.0;
+    // Couches courbes : nombre de fois où le tranchage est refait autrement
+    // (tête penchée de l'autre côté, puis moins penchée) quand le
+    // vérificateur trouve un contact.
+    int redressements = 9;
 };
 
 // Tranche une stratégie. Une stratégie à une seule partie verticale passe par

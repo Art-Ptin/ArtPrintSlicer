@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <set>
 #include <unordered_map>
 
 #include "decoupe.hpp"
@@ -229,79 +230,21 @@ bool poser_sur_la_surface(const ChampCouches& champ, const CoucheCourbe& couche,
     return poser_sur_la_surface(champ, couche, p, niveau, hauteur, point);
 }
 
-std::vector<CoucheCourbe> trancher_selon_champ(const Maillage& partie, const ChampCouches& champ,
-                                               const std::vector<double>& dessus,
-                                               const std::vector<double>& epaisseurs,
-                                               std::size_t numero) {
-    std::vector<Vec3> sommets;
-    sommets.reserve(partie.sommets.size());
-    for (const Point3& p : partie.sommets) {
-        sommets.push_back({p.x, p.y, p.z});
-    }
-    std::vector<Face> faces;
-    faces.reserve(partie.triangles.size());
-    for (const Triangle& t : partie.triangles) {
-        faces.push_back(t.sommets);
-    }
-    raffiner(sommets, faces, std::max(0.8, 2.0 * champ.pas));
+namespace {
 
-    // Valeur du champ en chaque sommet. Un sommet juste hors de la zone
-    // calculée prend la valeur du point connu le plus proche.
-    std::vector<double> valeurs(sommets.size(), 0.0);
-    for (std::size_t n = 0; n < sommets.size(); ++n) {
-        if (champ.valeur(sommets[n], valeurs[n])) {
-            continue;
-        }
-        bool trouve = false;
-        for (double rayon = 0.5 * champ.pas; rayon <= 3.0 * champ.pas && !trouve; rayon += 0.5 * champ.pas) {
-            for (const Vec3& d : {Vec3{1, 0, 0}, Vec3{-1, 0, 0}, Vec3{0, 1, 0}, Vec3{0, -1, 0}, Vec3{0, 0, 1},
-                                  Vec3{0, 0, -1}}) {
-                if (champ.valeur(sommets[n] + d * rayon, valeurs[n])) {
-                    trouve = true;
-                    break;
-                }
-            }
-        }
-        if (!trouve) {
-            throw ErreurTranchage(std::format(
-                "La partie {} sort de la zone où les couches courbes sont calculées.", numero));
-        }
-    }
-    std::vector<std::array<float, 2>> bornes(faces.size());
-    for (std::size_t n = 0; n < faces.size(); ++n) {
-        const Face& f = faces[n];
-        bornes[n] = {static_cast<float>(std::min({valeurs[f[0]], valeurs[f[1]], valeurs[f[2]]}) - 1e-4),
-                     static_cast<float>(std::max({valeurs[f[0]], valeurs[f[1]], valeurs[f[2]]}) + 1e-4)};
-    }
+// Les boucles d'une tige à un niveau, leur centre et leur direction moyenne.
+struct Brut {
+    std::size_t niveau = 0;
+    std::vector<std::vector<Vec3>> boucles;
+    Vec3 centre, direction;
+    double longueur = 0.0;
+};
 
-    // Pour chaque niveau : les boucles, leur centre et la direction moyenne.
-    struct Brut {
-        std::size_t niveau;
-        std::vector<std::vector<Vec3>> boucles;
-        Vec3 centre, direction;
-    };
-    std::vector<Brut> bruts;
-    for (std::size_t k = 0; k < dessus.size(); ++k) {
-        Brut brut;
-        brut.niveau = k;
-        brut.boucles = boucles_de_niveau(sommets, faces, valeurs, bornes, dessus[k] - epaisseurs[k] / 2.0);
-        if (brut.boucles.empty()) {
-            if (!bruts.empty() && k + 1 < dessus.size()) {
-                // Un trou au milieu de la partie est permis s'il n'y a plus rien au-dessus.
-                bool suite = false;
-                for (std::size_t j = k + 1; j < dessus.size() && !suite; ++j) {
-                    suite = !boucles_de_niveau(sommets, faces, valeurs, bornes, dessus[j] - epaisseurs[j] / 2.0).empty();
-                }
-                if (suite) {
-                    throw ErreurTranchage(std::format(
-                        "La couche {} de la partie {} est vide : un morceau flotte en l'air et ne "
-                        "peut pas être imprimé.", k + 1, numero));
-                }
-                break;
-            }
-            continue;
-        }
-        double longueur = 0.0;
+// Construit les cartes d'une tige à partir de ses boucles. Rend « faux » si
+// une couche est trop bombée pour sa carte.
+bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, double pointe,
+                       std::vector<CoucheCourbe>& couches) {
+    for (Brut& brut : bruts) {
         Vec3 somme, direction;
         for (const std::vector<Vec3>& boucle : brut.boucles) {
             for (std::size_t i = 0; i < boucle.size(); ++i) {
@@ -310,7 +253,7 @@ std::vector<CoucheCourbe> trancher_selon_champ(const Maillage& partie, const Cha
                 const double l = norme(b - a);
                 const Vec3 milieu = (a + b) * 0.5;
                 somme = somme + milieu * l;
-                longueur += l;
+                brut.longueur += l;
                 Vec3 d;
                 double pente;
                 if (champ.gradient(milieu, d, pente)) {
@@ -318,14 +261,10 @@ std::vector<CoucheCourbe> trancher_selon_champ(const Maillage& partie, const Cha
                 }
             }
         }
-        if (longueur < 1e-6 || norme(direction) < 1e-6) {
-            continue;
-        }
-        brut.centre = somme * (1.0 / longueur);
-        brut.direction = normaliser(direction);
-        bruts.push_back(std::move(brut));
+        brut.centre = brut.longueur > 1e-9 ? somme * (1.0 / brut.longueur) : Vec3{};
+        brut.direction = norme(direction) > 1e-9 ? normaliser(direction) : Vec3{0, 0, 1};
     }
-
+    std::erase_if(bruts, [](const Brut& brut) { return brut.longueur < 1e-6; });
     // La direction des cartes est adoucie d'une couche à l'autre.
     for (int passe = 0; passe < 4; ++passe) {
         std::vector<Vec3> adoucies(bruts.size());
@@ -338,8 +277,6 @@ std::vector<CoucheCourbe> trancher_selon_champ(const Maillage& partie, const Cha
             bruts[n].direction = adoucies[n];
         }
     }
-
-    std::vector<CoucheCourbe> couches;
     Vec3 u_avant{1, 0, 0};
     bool premiere = true;
     for (Brut& brut : bruts) {
@@ -377,21 +314,140 @@ std::vector<CoucheCourbe> trancher_selon_champ(const Maillage& partie, const Cha
             dessin.push_back(std::move(contour));
         }
         couche.bombement = en_degres(std::acos(std::clamp(cosinus, -1.0, 1.0)));
-        if (couche.bombement > 72.0) {
-            throw ErreurTranchage(std::format(
-                "La partie {} est trop bombée pour être imprimée en couches courbes : une couche "
-                "tourne de {:.0f}° d'un bord à l'autre.", numero, couche.bombement));
+        // Les toutes premières couches épousent la surface du tronc : sur un
+        // tronc arrondi, elles s'enroulent autour de lui et sont très
+        // bombées. C'est permis pour elles ; plus loin, une couche trop
+        // bombée ne peut plus être dessinée sur une carte plane.
+        if (couche.bombement > (couches.size() < 12 ? 86.0 : 72.0)) {
+            return false;
         }
         couche.contour = Clipper2Lib::SimplifyPaths(
             Clipper2Lib::Union(dessin, Clipper2Lib::FillRule::EvenOdd), 0.005 * unites_par_mm);
+        // Là où la peau de la branche rejoint le tronc en biseau, la couche
+        // finit en pointe très fine : les parois s'y chevaucheraient. Ce qui
+        // est plus étroit qu'un cordon environ est retiré (la couche est
+        // rétrécie puis regonflée).
+        couche.contour = decaler_arrondi(decaler(couche.contour, -pointe), pointe);
         if (!couche.contour.empty()) {
             couches.push_back(std::move(couche));
         }
     }
-    if (couches.empty()) {
-        throw ErreurTranchage(std::format("La partie {} est plus fine qu'une couche : rien à imprimer.", numero));
+    return true;
+}
+
+// Découpe toutes les tiges. « impossibles » reçoit les numéros des morceaux
+// en surplomb dont une tige n'a pas pu être découpée.
+std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele, const AnalyseBranches& analyse,
+                                                          const std::vector<double>& dessus,
+                                                          const std::vector<double>& epaisseurs,
+                                                          double pointe, std::set<int>& impossibles) {
+    const ChampCouches& champ = analyse.champ;
+    // Loin des branches, le champ n'est pas calculé : c'est le tronc.
+    const double loin = -1.0e3;
+    const auto valeur_en = [&](const Vec3& p) {
+        double v = 0.0;
+        return champ.valeur(p, v) ? v : loin;
+    };
+    // Seuls les triangles proches d'une branche servent.
+    std::vector<Vec3> sommets;
+    std::vector<Face> faces;
+    {
+        std::vector<std::int64_t> nouveau(modele.sommets.size(), -1);
+        std::vector<double> valeurs(modele.sommets.size());
+        for (std::size_t n = 0; n < modele.sommets.size(); ++n) {
+            const Point3& p = modele.sommets[n];
+            valeurs[n] = valeur_en({p.x, p.y, p.z});
+        }
+        for (const Triangle& t : modele.triangles) {
+            if (valeurs[t.sommets[0]] == loin && valeurs[t.sommets[1]] == loin && valeurs[t.sommets[2]] == loin) {
+                continue;
+            }
+            Face face;
+            for (int c = 0; c < 3; ++c) {
+                const std::uint32_t s = t.sommets[c];
+                if (nouveau[s] < 0) {
+                    nouveau[s] = static_cast<std::int64_t>(sommets.size());
+                    const Point3& p = modele.sommets[s];
+                    sommets.push_back({p.x, p.y, p.z});
+                }
+                face[c] = static_cast<std::uint32_t>(nouveau[s]);
+            }
+            faces.push_back(face);
+        }
     }
-    return couches;
+    raffiner(sommets, faces, std::max(0.8, 2.0 * champ.pas));
+    std::vector<double> valeurs(sommets.size());
+    for (std::size_t n = 0; n < sommets.size(); ++n) {
+        valeurs[n] = valeur_en(sommets[n]);
+    }
+    std::vector<std::array<float, 2>> bornes(faces.size());
+    for (std::size_t n = 0; n < faces.size(); ++n) {
+        const Face& f = faces[n];
+        bornes[n] = {static_cast<float>(std::min({valeurs[f[0]], valeurs[f[1]], valeurs[f[2]]}) - 1e-4),
+                     static_cast<float>(std::max({valeurs[f[0]], valeurs[f[1]], valeurs[f[2]]}) + 1e-4)};
+    }
+    // Une couche de branche ne touche jamais le tronc (elle en est à une
+    // distance fixe) : son bord est tout entier sur la peau de la branche.
+    const std::size_t nombre = analyse.nombre_tiges();
+    std::vector<std::vector<Brut>> bruts(nombre);
+    for (std::size_t k = 0; k < dessus.size(); ++k) {
+        for (std::vector<Vec3>& boucle : boucles_de_niveau(sommets, faces, valeurs, bornes, dessus[k] - epaisseurs[k] / 2.0)) {
+            std::vector<int> voix(nombre, 0);
+            const std::size_t saut = std::max<std::size_t>(1, boucle.size() / 24);
+            for (std::size_t i = 0; i < boucle.size(); i += saut) {
+                const int tige = analyse.tige_en(boucle[i]);
+                if (tige >= 0) {
+                    ++voix[tige];
+                }
+            }
+            const auto gagnante = std::max_element(voix.begin(), voix.end());
+            if (gagnante == voix.end() || *gagnante == 0) {
+                continue;
+            }
+            std::vector<Brut>& tige = bruts[gagnante - voix.begin()];
+            if (tige.empty() || tige.back().niveau != k) {
+                tige.emplace_back();
+                tige.back().niveau = k;
+            }
+            tige.back().boucles.push_back(std::move(boucle));
+        }
+    }
+    std::vector<std::vector<CoucheCourbe>> tiges(nombre);
+    for (std::size_t n = 0; n < nombre; ++n) {
+        if (!cartes_de_la_tige(bruts[n], champ, pointe, tiges[n])) {
+            impossibles.insert(analyse.morceaux[n]);
+        }
+    }
+    return tiges;
+}
+
+}  // namespace
+
+PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe) {
+    PlanBranches plan;
+    std::set<int> exclus;
+    for (int essai = 0; essai < 6; ++essai) {
+        plan = PlanBranches{};
+        plan.analyse = analyser_branches(pose, 0.0, exclus);
+        if (plan.analyse.nombre_tiges() == 0) {
+            plan.morceaux_laisses = exclus.size();
+            return plan;
+        }
+        for (double haut = epaisseur; haut < plan.analyse.champ.maximum + epaisseur; haut += epaisseur) {
+            plan.epaisseurs.push_back(epaisseur);
+            plan.dessus.push_back(haut);
+        }
+        std::set<int> impossibles;
+        plan.tiges = trancher_les_tiges(pose, plan.analyse, plan.dessus, plan.epaisseurs, pointe, impossibles);
+        plan.morceaux_laisses = exclus.size();
+        if (impossibles.empty()) {
+            return plan;
+        }
+        // Les morceaux qu'on n'a pas su découper restent avec le tronc, et on recommence.
+        exclus.insert(impossibles.begin(), impossibles.end());
+    }
+    plan.tiges.clear();
+    return plan;
 }
 
 }  // namespace artprint

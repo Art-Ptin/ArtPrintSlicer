@@ -29,15 +29,34 @@ struct CoucheCourbe {
     double bombement = 0.0;
 };
 
-// Découpe une partie (volume fermé) en couches courbes. « dessus[k] » est la
-// longueur de chemin du dessus de la couche k, « epaisseurs[k] » son
-// épaisseur ; les couches où la partie n'a pas de matière sont absentes du
-// résultat. « numero » sert aux messages d'erreur.
-// Lève ErreurTranchage si la partie ne peut pas être découpée ainsi.
-std::vector<CoucheCourbe> trancher_selon_champ(const Maillage& partie, const ChampCouches& champ,
-                                               const std::vector<double>& dessus,
-                                               const std::vector<double>& epaisseurs,
-                                               std::size_t numero);
+// Tout ce qu'il faut pour imprimer les branches d'un modèle en couches courbes.
+struct PlanBranches {
+    AnalyseBranches analyse;
+    // Pour chaque couche courbe : la longueur de chemin de son dessus, et son épaisseur.
+    std::vector<double> dessus, epaisseurs;
+    // Les couches de chaque tige, dans l'ordre des tiges de l'analyse. Une
+    // tige sans couche (trop petite) a une liste vide.
+    std::vector<std::vector<CoucheCourbe>> tiges;
+    // Nombre de morceaux en surplomb qu'on n'a pas su découper en couches
+    // courbes (trop bombés) : ils restent avec le tronc.
+    std::size_t morceaux_laisses = 0;
+
+    bool vide() const {
+        for (const std::vector<CoucheCourbe>& tige : tiges) {
+            if (!tige.empty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+// Analyse le modèle posé sur le plateau et découpe ses branches en couches
+// courbes d'épaisseur « epaisseur ». Un morceau en surplomb qui ne peut pas
+// être découpé ainsi (trop bombé, par exemple un chapeau tout autour d'un
+// pied) est laissé avec le tronc. « pointe » : les pointes de couche plus
+// étroites que deux fois cette valeur sont arrondies.
+PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe);
 
 // Point de la surface de niveau « niveau » qui se trouve à l'aplomb du point
 // (x, y) de la carte : la carte est quittée le long de w jusqu'à la surface.
