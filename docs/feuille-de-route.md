@@ -93,9 +93,10 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Découpe par plans, une direction par partie | ✅ | découpe automatique |
 | Tranchage multi-directions (tête inclinée, plateau tourné) | ✅ | B et C fixes pendant une partie |
 | Inclinaisons choisies avec la forme réelle de la machine | ✅ | les deux façons de pencher la tête sont essayées |
+| Inclinaisons choisies selon la course des axes X, Y, Z | ✅ | contrôlée sur toute la surface de la branche |
 | Changement d'orientation sûr (reculer, monter, tourner, approcher) | 🟡 | passe toujours par le haut |
 | Mesure des parois imprimées dans le vide | ✅ | une mesure, pas encore un refus |
 | Couches qui pivotent le long d'une branche courbe | ✅ | B et C changent à chaque couche |
 | Banc d'essai sur quatorze objets (dont châssis de drone organique) | ✅ | `tests/banc_strategies.cpp` |
-| B et C qui tournent pendant l'extrusion | ⬜ | prochaine étape vers le continu |
+| B et C qui tournent pendant l'extrusion (pivot continu) | ✅ | sur les branches courbes, par pas de 0,25° au plus |
 | Tranchage 5 axes continu (couches courbes) | ⬜ | recherche |

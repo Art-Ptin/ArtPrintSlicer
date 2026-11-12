@@ -236,6 +236,9 @@ private:
             }
             a_extrude_ = true;
             ++rapport_.extrusions;
+            if (std::abs(cible.b - position_.b) > epsilon || std::abs(cible.c - position_.c) > epsilon) {
+                ++rapport_.extrusions_en_rotation;
+            }
         } else {
             // Avant la toute première extrusion, la buse est encore vide :
             // la rétraction n'est pas exigée.

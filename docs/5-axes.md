@@ -54,7 +54,10 @@ ceci :
    tête est essayée en plusieurs points de la branche, des deux côtés
    possibles (une même orientation s'obtient en penchant d'un côté, ou de
    l'autre avec le plateau retourné), et l'inclinaison est réduite tant
-   qu'il y a un contact.
+   qu'il y a un contact. Si la course des axes X, Y, Z est renseignée, elle
+   est contrôlée de la même façon, sur toute la surface de la branche : une
+   tête inclinée déporte les axes, et une grande pièce peut les envoyer en
+   butée.
 5. **Couper le modèle par un plan** au pied de chaque branche
    (`src/decoupe.*`). Les deux morceaux sont refermés : ce sont de nouveau
    des volumes que le slicer sait trancher. La coupe n'est gardée que si le
@@ -84,8 +87,36 @@ deux façons, et la meilleure est gardée :
   le débit suit l'épaisseur locale. Si la courbe est trop serrée pour
   l'épaisseur de la branche, cette façon est écartée.
 
-C'est la première brique du 5 axes continu : B et C changent à chaque
-couche, par petits pas, pendant le court trajet entre deux couches.
+### Le pivot continu : B et C tournent pendant l'extrusion
+
+Dans les couches qui pivotent, la tête ne s'arrête pas pour changer
+d'orientation : pendant qu'elle imprime une couche, elle glisse peu à peu
+vers l'orientation de la couche suivante. Chaque ligne de G-code de la
+couche porte alors les cinq axes et l'extrudeur :
+
+```
+G1 X… Y… Z… B… C… E… F…
+```
+
+- B et C avancent au fil de la longueur de cordon déjà déposée dans la
+  couche ; à la fin de la couche, la tête est exactement dans l'orientation
+  de la suivante.
+- Un segment est recoupé pour que B et C ne tournent jamais de plus de
+  0,25° d'une ligne à l'autre : la pointe de la buse reste sur sa ligne
+  droite (l'écart est inférieur au millième de millimètre).
+- La pointe suit exactement le même chemin qu'avant : seule l'orientation
+  de la buse change, de quelques dixièmes de degré par couche.
+- Une grande rotation (plus de 4°, par exemple quand la branche quitte la
+  verticale et que le plateau doit se placer) se fait toujours à vide,
+  au-dessus de la pièce.
+- Près du plateau, la tête ne prend pas d'avance sur une inclinaison qui
+  n'est permise que plus haut.
+
+Le vérificateur rejoue ces mouvements par petits pas, collisions comprises,
+et compte les « extrusions en rotation ». C'est le premier vrai mouvement
+5 axes continu du slicer. Pour comparer, l'option `pivot_continu` de
+`OptionsMultiaxe` peut être mise à faux : la tête pivote alors entre deux
+couches, pendant un déplacement à vide.
 
 ## L'essayer
 
@@ -129,12 +160,17 @@ Deux mesures permettent de comparer les stratégies :
 Le banc d'essai (`tests/banc_strategies.cpp`) fabrique quatorze objets
 (arbres, châssis de drone, chandelier, crochet, tuyau en Y creux, champignon,
 tasse, main, équerre, arbre à deux niveaux, buisson à six branches, potence),
-propose et tranche toutes leurs stratégies, et donne ces mesures. Avec un fichier de réglages, il utilise la forme réelle de la
-machine :
+propose et tranche toutes leurs stratégies, et donne ces mesures. Avec un
+fichier de réglages, il utilise la forme réelle de la machine :
 
 ```
 banc_strategies reglages.txt
 ```
+
+Les mêmes objets ont aussi été essayés agrandis deux et trois fois (jusqu'à
+22 cm de haut), avec la forme réelle de la machine : c'est cet essai qui a
+montré qu'il fallait contrôler la course des axes avant de proposer une
+inclinaison.
 
 ## Ce qui est vérifié
 
@@ -147,13 +183,21 @@ renseigné.
 Les tests (`tests/test_strategie.cpp`) fabriquent deux arbres, les tranchent
 par branches, exigent zéro erreur du vérificateur, puis provoquent des
 fautes (une branche imprimée deux fois, une inclinaison trop forte) pour
-s'assurer qu'elles sont bien refusées.
+s'assurer qu'elles sont bien refusées. Ils raccourcissent aussi la course
+d'un axe pour s'assurer que la stratégie proposée s'adapte et reste
+tranchable, et contrôlent le pivot continu (jamais plus de 0,25° par ligne).
 
 ## Limites connues
 
-- **Ce n'est pas encore du 5 axes continu.** B et C ne bougent pas pendant
-  l'extrusion : ils bougent entre deux parties, ou entre deux couches d'une
-  partie courbe.
+- **Le 5 axes continu ne concerne encore que les branches courbes.** B et C
+  tournent pendant l'extrusion dans les couches qui pivotent ; partout
+  ailleurs, ils ne bougent qu'entre deux parties. Les couches restent
+  planes : il n'y a pas encore de couches courbes.
+- **La vitesse d'avance n'est pas corrigée pour les axes de rotation.** Le
+  « F » d'une ligne est la vitesse voulue pour la pointe ; la façon dont le
+  firmware la partage entre les cinq axes reste à vérifier sur la machine
+  (les rotations sont très lentes ici : quelques dixièmes de degré par
+  couche).
 - **Pas de supports.** Ce qui reste en surplomb (surtout le pied des
   branches) est annoncé en mm², mais rien n'est généré pour le soutenir.
 - **Le vérificateur ne contrôle pas qu'un cordon est posé sur quelque
@@ -175,8 +219,7 @@ s'assurer qu'elles sont bien refusées.
 2. Supports, limités à ce que le 5 axes ne résout pas.
 3. Trajets de changement d'orientation plus courts (reculer le bras au lieu
    de monter).
-4. B et C qui tournent **pendant** l'extrusion sur une branche courbe, puis
-   des **couches courbes** : c'est le vrai 5 axes continu ; les couches qui
-   pivotent en sont la base.
+4. Des **couches courbes**, où B et C tournent pendant toute l'extrusion :
+   le pivot continu des branches courbes en est la base.
 5. Choix de la stratégie dans le logiciel installé (aujourd'hui : ligne de
    commande, interface de programmation et maquette).

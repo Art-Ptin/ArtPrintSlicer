@@ -105,6 +105,20 @@ public:
     }
     void epaisseur_fixe() { variable_ = false; }
 
+    // Partie courbe : pendant la couche qui commence, la tête glisse peu à
+    // peu vers l'orientation de la couche suivante (de normale « w_suivante »),
+    // tout en imprimant. « longueur » : longueur de cordon de la couche ;
+    // « z_min » : son point le plus bas au-dessus du plateau.
+    void pivoter_en_imprimant(double longueur, const Vec3& w_suivante, double z_min) {
+        continu_ = false;
+        a_preparer_ = options_.pivot_continu && longueur > 1e-6;
+        longueur_couche_ = longueur;
+        parcouru_ = 0.0;
+        outil_suivant_ = direction_outil(w_suivante);
+        z_min_couche_ = z_min;
+    }
+    void pivoter_entre_les_couches() { continu_ = a_preparer_ = false; }
+
     void couche(double z, double hauteur) {
         z_ = z;
         apercu_.push_back({(origine_ + w_ * z).z, partie_, {}});
@@ -147,22 +161,51 @@ public:
             duree_ += r_.retraction_longueur / r_.retraction_vitesse;
         }
         const Vec3 cible = point(p, z_);
-        const PositionMachine m = position_avec_angles(machine_, cible, b_, c_);
-        double e_par_mm = e_par_mm_;
-        if (variable_) {
-            // Épaisseur locale de la couche, au milieu du segment.
-            const Vec3 milieu = (pointe_ + cible) * 0.5;
-            const double t = std::clamp(produit_scalaire(milieu - o_dessous_, n_dessous_),
-                                        0.3 * h_nominale_, 1.6 * h_nominale_);
-            const double section = (r_.largeur_extrusion - t) * t + std::numbers::pi * t * t / 4.0;
-            e_par_mm = section / (std::numbers::pi * r_.diametre_filament * r_.diametre_filament / 4.0) * r_.debit;
+        if (a_preparer_) {
+            preparer_pivot_continu();
         }
-        const double e = longueur * e_par_mm;
-        ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z, e, vitesse * 60.0));
-        noter(pointe_, cible, type_);
-        filament_ += e;
+        // Le segment est découpé pour que B et C ne tournent que très peu
+        // d'une ligne à l'autre : la pointe reste ainsi sur sa ligne droite.
+        int morceaux = 1;
+        double avant = 0.0, apres = 0.0;
+        if (continu_) {
+            avant = std::min(1.0, parcouru_ / longueur_couche_);
+            apres = std::min(1.0, (parcouru_ + longueur) / longueur_couche_);
+            const double ecart = std::max(std::abs(b_fin_ - b_debut_), std::abs(c_fin_ - c_debut_)) * (apres - avant);
+            morceaux = std::max(1, static_cast<int>(std::ceil(ecart / options_.pas_pivot_continu)));
+        }
+        const Vec3 depart = pointe_;
+        for (int k = 1; k <= morceaux; ++k) {
+            const double t = static_cast<double>(k) / morceaux;
+            const Vec3 etape = k == morceaux ? cible : depart + (cible - depart) * t;
+            double e_par_mm = e_par_mm_;
+            if (variable_) {
+                // Épaisseur locale de la couche, au milieu du morceau.
+                const Vec3 milieu = (pointe_ + etape) * 0.5;
+                const double epaisseur = std::clamp(produit_scalaire(milieu - o_dessous_, n_dessous_),
+                                                    0.3 * h_nominale_, 1.6 * h_nominale_);
+                const double section = (r_.largeur_extrusion - epaisseur) * epaisseur +
+                                       std::numbers::pi * epaisseur * epaisseur / 4.0;
+                e_par_mm = section / (std::numbers::pi * r_.diametre_filament * r_.diametre_filament / 4.0) * r_.debit;
+            }
+            const double e = longueur / morceaux * e_par_mm;
+            if (continu_) {
+                const double f = avant + (apres - avant) * t;
+                b_ = b_debut_ + (b_fin_ - b_debut_) * f;
+                c_ = c_debut_ + (c_fin_ - c_debut_) * f;
+                const PositionMachine m = position_avec_angles(machine_, etape, b_, c_);
+                ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z,
+                                  m.b + machine_.b_vertical, m.c, e, vitesse * 60.0));
+            } else {
+                const PositionMachine m = position_avec_angles(machine_, etape, b_, c_);
+                ligne(std::format("G1 X{:.3f} Y{:.3f} Z{:.3f} E{:.5f} F{:.0f}", m.x, m.y, m.z, e, vitesse * 60.0));
+            }
+            filament_ += e;
+            pointe_ = etape;
+        }
+        noter(depart, cible, type_);
+        parcouru_ += longueur;
         duree_ += longueur / vitesse;
-        pointe_ = cible;
         position_ = p;
     }
 
@@ -298,6 +341,30 @@ private:
         return z_ + r_.levee_z;
     }
 
+    // Au premier cordon d'une couche courbe : décide si la tête peut glisser
+    // vers l'orientation de la couche suivante pendant l'impression.
+    void preparer_pivot_continu() {
+        a_preparer_ = false;
+        const auto fin = position_machine(machine_, {pointe_, outil_suivant_}, c_, cote_);
+        if (!fin) {
+            return;  // hors des butées : le changement d'orientation suivant le dira
+        }
+        const double ecart_b = std::abs(fin->b - b_), ecart_c = std::abs(fin->c - c_);
+        // Une grande rotation se fait à vide, au-dessus de la pièce.
+        if (ecart_b > 4.0 || ecart_c > 4.0 || (ecart_b < 1e-9 && ecart_c < 1e-9)) {
+            return;
+        }
+        // Près du plateau, l'inclinaison est limitée : la tête ne prend pas
+        // d'avance sur une inclinaison qui n'est permise que plus haut.
+        const bool haut = machine_.hauteur_bascule_b && z_min_couche_ >= *machine_.hauteur_bascule_b;
+        if (!haut && std::abs(fin->b) > machine_.b_limite_pres_plateau) {
+            return;
+        }
+        b_debut_ = b_, c_debut_ = c_;
+        b_fin_ = fin->b, c_fin_ = fin->c;
+        continu_ = true;
+    }
+
     void noter(const Vec3& a, const Vec3& b, std::uint8_t type) {
         if (apercu_.empty() || norme(b - a) < 1e-6) {
             return;
@@ -324,6 +391,13 @@ private:
     bool oriente_ = false;    // faux tant que la tête n'est pas dans l'orientation de la partie
     bool pivot_ = false;      // vrai quand le repère vient de pivoter un peu (partie courbe)
     bool variable_ = false;   // vrai quand l'épaisseur de la couche varie d'un point à l'autre
+    // Pivot continu (partie courbe) : pendant la couche, B et C vont de
+    // (b_debut_, c_debut_) à (b_fin_, c_fin_) au fil de la longueur imprimée.
+    bool a_preparer_ = false;
+    bool continu_ = false;
+    double longueur_couche_ = 0.0, parcouru_ = 0.0, z_min_couche_ = 0.0;
+    double b_debut_ = 0.0, c_debut_ = 0.0, b_fin_ = 0.0, c_fin_ = 0.0;
+    Vec3 outil_suivant_{0, 0, 1};
     Vec3 o_dessous_, n_dessous_{0, 0, 1};  // plan de la couche du dessous
     double h_nominale_ = 0.2;
     double e_par_mm_ = 0.0;
@@ -605,6 +679,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
         ecrivain.ligne(std::format(";PARTIE:{} direction {:.4f} {:.4f} {:.4f}", p + 1, t.w.x, t.w.y, t.w.z));
         ecrivain.partie(t.origine, t.u, t.v, t.w, t.cote);
         ecrivain.epaisseur_fixe();
+        ecrivain.pivoter_entre_les_couches();
         for (std::size_t c = 0; c < t.couches.size(); ++c) {
             CoucheTrajectoires& couche = t.couches[c];
             ecrivain.ligne(std::format(";COUCHE:{}", ++numero));
@@ -620,6 +695,25 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
                 }
                 ecrivain.epaisseur_depuis(repere.origine_dessous, repere.normale_dessous, couche.hauteur);
                 ecrivain.couche(0.0, couche.hauteur);
+                if (c + 1 < t.reperes.size()) {
+                    // Longueur de cordon de la couche, et son point le plus bas.
+                    double longueur = 0.0, z_min = std::numeric_limits<double>::max();
+                    for (const Trait& trait : couche.traits) {
+                        for (std::size_t i = 0; i < trait.points.size(); ++i) {
+                            const Point2& q = trait.points[i];
+                            z_min = std::min(z_min, (repere.origine + repere.u * q.x + repere.v * q.y).z);
+                            if (i > 0) {
+                                longueur += distance(trait.points[i - 1], q);
+                            }
+                        }
+                        if (trait.ferme && trait.points.size() > 1) {
+                            longueur += distance(trait.points.back(), trait.points.front());
+                        }
+                    }
+                    ecrivain.pivoter_en_imprimant(longueur, t.reperes[c + 1].w, z_min);
+                } else {
+                    ecrivain.pivoter_entre_les_couches();
+                }
             } else {
                 ecrivain.couche(couche.z, couche.hauteur);
             }

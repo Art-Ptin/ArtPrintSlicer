@@ -117,11 +117,14 @@ int main(int argc, char** argv) {
             debut = std::chrono::steady_clock::now();
             try {
                 const ResultatTranchage r = trancher_strategie(strategie, reglages);
-                std::cout << std::format(" -> {} couches, {} erreur(s), dans le vide {:.0f} mm ({:.1f} %), {:.1f} s\n",
+                std::cout << std::format(" -> {} couches, {} erreur(s), dans le vide {:.0f} mm ({:.1f} %), "
+                                         "en continu {:.0f} %, {:.1f} s\n",
                                          r.couches, r.verification.nombre_erreurs,
                                          r.verification.longueur_dans_le_vide,
                                          100.0 * r.verification.longueur_dans_le_vide /
                                              std::max(1.0, r.verification.longueur_extrusions),
+                                         100.0 * static_cast<double>(r.verification.extrusions_en_rotation) /
+                                             std::max<double>(1.0, static_cast<double>(r.verification.extrusions)),
                                          secondes_depuis(debut));
                 if (!r.verification.valide()) {
                     ++refus;

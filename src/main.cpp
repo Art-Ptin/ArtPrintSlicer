@@ -157,6 +157,10 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
         std::cout << std::format("Extrusions : {}   Déplacements à vide : {}\n",
                                  resultat.verification.extrusions,
                                  resultat.verification.deplacements_a_vide);
+        if (resultat.verification.extrusions_en_rotation > 0) {
+            std::cout << std::format("5 axes continu : {} extrusions pendant lesquelles la tête ou le plateau tourne\n",
+                                     resultat.verification.extrusions_en_rotation);
+        }
         std::cout << std::format("Parois imprimées dans le vide (à soutenir) : {:.0f} mm sur {:.0f} mm de cordon\n\n",
                                  resultat.verification.longueur_dans_le_vide,
                                  resultat.verification.longueur_extrusions);

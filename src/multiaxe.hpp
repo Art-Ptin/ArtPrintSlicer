@@ -7,6 +7,10 @@
 // Entre deux parties, la buse se rétracte, monte au-dessus de tout ce qui
 // est déjà imprimé, puis la tête et le plateau tournent par petits pas avant
 // de redescendre : c'est le « changement d'orientation ».
+//
+// Le long d'une partie courbe, les couches pivotent. La tête passe de
+// l'orientation d'une couche à celle de la suivante pendant qu'elle imprime :
+// B et C tournent en même temps que X, Y, Z et l'extrudeur (5 axes continu).
 #pragma once
 
 #include "reglages.hpp"
@@ -22,6 +26,11 @@ struct OptionsMultiaxe {
     double approche = 8.0;
     // Angle maximal de B ou de C entre deux lignes de G-code d'une rotation, en degrés.
     double pas_rotation = 5.0;
+    // Partie courbe : la tête pivote pendant l'extrusion (5 axes continu).
+    // Faux : elle pivote entre deux couches, pendant un déplacement à vide.
+    bool pivot_continu = true;
+    // Angle maximal de B ou de C entre deux lignes de G-code pendant l'extrusion, en degrés.
+    double pas_pivot_continu = 0.25;
 };
 
 // Tranche une stratégie. Une stratégie à une seule partie verticale passe par

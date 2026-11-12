@@ -23,7 +23,9 @@ Ce qui fonctionne aujourd'hui :
 
 - **Stratégies d'impression et tranchage multi-directions** : le slicer propose plusieurs façons d'imprimer un modèle et, pour une forme en arbre, découpe le tronc et les branches pour imprimer chaque partie dans sa direction, la tête inclinée et le plateau tourné. Voir [docs/5-axes.md](docs/5-axes.md).
 
-Ce qui n'existe pas encore : le 5 axes continu (tête et plateau qui bougent pendant l'extrusion) et les supports.
+Sur une branche courbe, la tête et le plateau tournent pendant l'extrusion : c'est le premier mouvement 5 axes continu du slicer.
+
+Ce qui n'existe pas encore : les couches courbes (5 axes continu sur toute la pièce) et les supports.
 
 ## Installation (Windows 64 bits)
 

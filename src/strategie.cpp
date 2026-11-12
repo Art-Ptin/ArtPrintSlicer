@@ -2,6 +2,7 @@
 #include "strategie.hpp"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -133,7 +134,12 @@ public:
     ControleMachine(const Reglages& reglages, const GrilleVoxels& matiere,
                     std::vector<std::string>& remarques)
         : machine_(reglages.machine), pas_(matiere.pas) {
-        if (machine_.modele_machine.empty() || !machine_.distance_pivot_buse) {
+        if (!machine_.distance_pivot_buse) {
+            return;
+        }
+        courses_ = machine_.course_x_min || machine_.course_x_max || machine_.course_y_min ||
+                   machine_.course_y_max || machine_.course_z_min || machine_.course_z_max;
+        if (machine_.modele_machine.empty()) {
             return;
         }
         // Ce contrôle ne regarde que quelques positions : il garde 1 mm de
@@ -173,7 +179,9 @@ public:
         }
     }
 
-    bool actif() const { return modele_ != nullptr; }
+    // Vrai s'il y a quelque chose à contrôler : la forme de la machine
+    // (collisions) ou la course de ses axes.
+    bool actif() const { return modele_ != nullptr || courses_; }
 
     // Plus grande inclinaison, au plus celle de « voulue » et du même côté,
     // qui laisse la tête libre le long de la branche. « tranches » : la
@@ -187,6 +195,9 @@ public:
     // Détecteur chargé de la matière déjà imprimée quand on attaque une
     // branche : tout le modèle sauf la branche elle-même.
     std::unique_ptr<DetecteurCollisions> detecteur_pour(const std::vector<TrancheSquelette>& tranches) const {
+        if (!modele_) {
+            return nullptr;  // pas de forme de machine : seules les courses sont contrôlées
+        }
         auto detecteur = std::make_unique<DetecteurCollisions>(*modele_, machine_);
         for (const Vec3& point : peau_) {
             bool dans_la_branche = false;
@@ -205,19 +216,22 @@ public:
 
     // Pour une partie courbe : le côté (+1 ou -1) qui laisse la tête libre
     // tout le long de la courbe, ou 0 si aucun des deux ne convient.
-    int cote_libre(DetecteurCollisions& detecteur, const std::vector<TrancheSquelette>& tranches,
-                   const std::vector<Vec3>& directions, double hauteur_sure) const {
+    // « surface » : des points de la surface de la partie (voir courses_respectees).
+    int cote_libre(DetecteurCollisions* detecteur, const std::vector<TrancheSquelette>& tranches,
+                   const std::vector<Vec3>& directions, double hauteur_sure,
+                   const std::vector<Vec3>& surface) const {
         for (const int cote : {1, -1}) {
             bool libre = true;
             double c = 0.0;
             const auto essayer = [&](const Vec3& pointe, const Vec3& direction) {
                 const auto position = position_machine(machine_, {pointe, direction}, c, cote);
-                if (!position) {
+                if (!position || !dans_les_courses(*position)) {
                     return false;
                 }
                 c = position->c;
-                return !detecteur.controler(*position).has_value();
+                return !detecteur || !detecteur->controler(*position).has_value();
             };
+            libre = courses_respectees(surface, tranches, directions, cote);
             const Vec3 approche = tranches.front().centre + directions.front() * 8.0;
             for (int etape = 0; etape <= 6 && libre; ++etape) {
                 const double z = hauteur_sure + (approche.z - hauteur_sure) * etape / 6.0;
@@ -242,9 +256,10 @@ public:
         return 0;
     }
     std::optional<Choix> direction_libre(const std::vector<TrancheSquelette>& tranches,
-                                         const Vec3& voulue, double hauteur_sure) const {
+                                         const Vec3& voulue, double hauteur_sure,
+                                         const std::vector<Vec3>& surface) const {
         const std::unique_ptr<DetecteurCollisions> charge = detecteur_pour(tranches);
-        DetecteurCollisions& detecteur = *charge;
+        DetecteurCollisions* detecteur = charge.get();
         const double azimut = std::atan2(voulue.y, voulue.x);
         const double depart = angle_entre(voulue, {0.0, 0.0, 1.0});
         for (double inclinaison = depart; inclinaison >= 15.0; inclinaison -= 5.0) {
@@ -252,7 +267,7 @@ public:
             const Vec3 direction{std::sin(i) * std::cos(azimut), std::sin(i) * std::sin(azimut), std::cos(i)};
             // Les deux façons de pencher la tête sont essayées.
             for (const int cote : {1, -1}) {
-                if (libre(detecteur, tranches, direction, hauteur_sure, cote)) {
+                if (libre(detecteur, tranches, direction, hauteur_sure, cote, surface)) {
                     return Choix{direction, cote};
                 }
             }
@@ -262,19 +277,25 @@ public:
 
 private:
     // Essaie la tête en plusieurs points de la branche, et pendant sa descente d'approche.
-    bool libre(DetecteurCollisions& detecteur, const std::vector<TrancheSquelette>& tranches,
-               const Vec3& direction, double hauteur_sure, int cote) const {
+    bool libre(DetecteurCollisions* detecteur, const std::vector<TrancheSquelette>& tranches,
+               const Vec3& direction, double hauteur_sure, int cote,
+               const std::vector<Vec3>& surface) const {
         Vec3 u, v;
         repere_autour(direction, u, v);
         double c = 0.0;
         const auto essayer = [&](const Vec3& pointe) {
             const auto position = position_machine(machine_, {pointe, direction}, c, cote);
-            if (!position) {
+            if (!position || !dans_les_courses(*position)) {
                 return false;
             }
             c = position->c;
-            return !detecteur.controler(*position).has_value();
+            return !detecteur || !detecteur->controler(*position).has_value();
         };
+        // La course des axes est vite calculée : elle est contrôlée sur
+        // toute la surface de la branche, avant les collisions.
+        if (!courses_respectees(surface, direction, cote)) {
+            return false;
+        }
         // Approche : descente à la verticale jusqu'au-dessus du départ de la branche.
         const Vec3 approche = tranches.front().centre + direction * 8.0;
         for (int etape = 0; etape <= 6; ++etape) {
@@ -297,8 +318,75 @@ private:
         return true;
     }
 
+    // Vrai si les axes X, Y et Z restent dans leur course à cette position,
+    // avec 1 mm de réserve (le contrôle ne regarde que quelques points).
+    bool dans_les_courses(const PositionMachine& p) const {
+        const auto dedans = [](double valeur, const std::optional<double>& min, const std::optional<double>& max) {
+            return (!min || valeur >= *min + 1.0) && (!max || valeur <= *max - 1.0);
+        };
+        return dedans(p.x, machine_.course_x_min, machine_.course_x_max) &&
+               dedans(p.y, machine_.course_y_min, machine_.course_y_max) &&
+               dedans(p.z, machine_.course_z_min, machine_.course_z_max);
+    }
+
+    // Vrai si la machine atteint tous ces points de la pièce, la tête dans
+    // cette direction, sans sortir de ses courses. Pour une orientation
+    // donnée, la position des axes suit celle de la pointe en ligne droite :
+    // il suffit de contrôler les sommets de la surface de la partie.
+    bool courses_respectees(const std::vector<Vec3>& points, const Vec3& direction, int cote) const {
+        if (!courses_ || points.empty()) {
+            return true;
+        }
+        const auto orientation = position_machine(machine_, {points.front(), direction}, 0.0, cote);
+        if (!orientation) {
+            return false;
+        }
+        for (const Vec3& point : points) {
+            if (!dans_les_courses(position_avec_angles(machine_, point, orientation->b, orientation->c))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // La même chose pour une partie courbe : chaque point est atteint dans
+    // la direction de la tranche la plus proche de lui.
+    bool courses_respectees(const std::vector<Vec3>& points, const std::vector<TrancheSquelette>& tranches,
+                            const std::vector<Vec3>& directions, int cote) const {
+        if (!courses_ || points.empty()) {
+            return true;
+        }
+        std::vector<PositionMachine> orientations;
+        double c = 0.0;
+        for (std::size_t t = 0; t < directions.size(); ++t) {
+            const auto orientation = position_machine(machine_, {tranches[t].centre, directions[t]}, c, cote);
+            if (!orientation) {
+                return false;
+            }
+            c = orientation->c;
+            orientations.push_back(*orientation);
+        }
+        for (const Vec3& point : points) {
+            std::size_t proche = 0;
+            double meilleure = std::numeric_limits<double>::max();
+            for (std::size_t t = 0; t < orientations.size(); ++t) {
+                const double d = norme(point - tranches[t].centre);
+                if (d < meilleure) {
+                    meilleure = d;
+                    proche = t;
+                }
+            }
+            if (!dans_les_courses(position_avec_angles(machine_, point, orientations[proche].b,
+                                                       orientations[proche].c))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     ReglagesMachine machine_;
     const double pas_;
+    bool courses_ = false;  // vrai si au moins une course d'axe est renseignée
     std::unique_ptr<ModeleMachine> modele_;
     std::vector<Vec3> peau_;
 };
@@ -344,7 +432,7 @@ public:
                     }
                 }
             }
-            faces_.push_back({normale, centre, 0.5 * double_aire, proche});
+            faces_.push_back({normale, centre, 0.5 * double_aire, proche, {a, b, c}});
         }
         PartieImpression tronc;
         tronc.maillage = pose;
@@ -493,8 +581,14 @@ private:
         const BrancheSquelette& premiere = squelette_.branches[tige.front()];
 
         std::unique_ptr<DetecteurCollisions> detecteur;
+        std::vector<Vec3> surface;
         if (controle_.actif()) {
             detecteur = controle_.detecteur_pour(tout);
+            std::vector<int> numeros(tige.begin(), tige.end());
+            for (const int enfant : squelette_.branches[tige.back()].enfants) {
+                branches_de(enfant, numeros);
+            }
+            surface = surface_de(numeros);
         }
         // Directions d'impression : celles de la courbe, limitées à ce que la
         // machine peut faire à chaque hauteur. Avec la forme de la machine,
@@ -520,10 +614,10 @@ private:
                     }
                 }
             }
-            if (!detecteur) {
+            if (!controle_.actif()) {
                 break;
             }
-            cote = controle_.cote_libre(*detecteur, axe, directions, hauteur_sure_);
+            cote = controle_.cote_libre(detecteur.get(), axe, directions, hauteur_sure_, surface);
             if (cote != 0) {
                 break;
             }
@@ -661,6 +755,26 @@ private:
         return std::max(6.0, 0.04 * surface);
     }
 
+    // Numéros de la branche et de toutes celles qu'elle porte.
+    void branches_de(int branche, std::vector<int>& numeros) const {
+        numeros.push_back(branche);
+        for (const int enfant : squelette_.branches[branche].enfants) {
+            branches_de(enfant, numeros);
+        }
+    }
+
+    // Sommets des faces du modèle rattachées à ces branches : la surface
+    // que la buse devra atteindre pour les imprimer.
+    std::vector<Vec3> surface_de(const std::vector<int>& numeros) const {
+        std::vector<Vec3> points;
+        for (const Face& face : faces_) {
+            if (std::find(numeros.begin(), numeros.end(), face.branche) != numeros.end()) {
+                points.insert(points.end(), face.sommets.begin(), face.sommets.end());
+            }
+        }
+        return points;
+    }
+
     // Tranches de la branche et de toutes celles qu'elle porte.
     void tranches_de(int branche, std::vector<TrancheSquelette>& tranches) const {
         const BrancheSquelette& b = squelette_.branches[branche];
@@ -684,16 +798,20 @@ private:
         for (const TrancheSquelette& tranche : tranches) {
             toutes.push_back(tranche.centre);
         }
-        // Avec la vraie forme de la machine : l'inclinaison est réduite tant
-        // que la tête ou le bras toucherait ce qui est déjà imprimé.
+        // Avec la vraie forme de la machine et la course de ses axes :
+        // l'inclinaison est réduite tant que la tête ou le bras toucherait ce
+        // qui est déjà imprimé, ou qu'un axe arriverait en butée.
         bool reduite_pour_collision = false;
         int cote = 0;
         if (controle_.actif()) {
-            const auto libre = controle_.direction_libre(tranches, direction, hauteur_sure_);
+            std::vector<int> numeros;
+            branches_de(branche, numeros);
+            const auto libre = controle_.direction_libre(tranches, direction, hauteur_sure_, surface_de(numeros));
             if (!libre) {
                 remarques_.push_back(std::format(
                     "Une branche (vers {:.0f} mm de haut) ne peut pas être imprimée inclinée sans "
-                    "que la machine touche la pièce : elle reste imprimée avec la partie qui la porte.",
+                    "que la machine touche la pièce ou arrive en butée : elle reste imprimée avec "
+                    "la partie qui la porte.",
                     depart.centre.z));
                 return -1;
             }
@@ -753,7 +871,8 @@ private:
             if (reduite_pour_collision) {
                 remarques_.push_back(std::format(
                     "Une branche penche de {:.0f}° : à cette inclinaison, la machine toucherait la "
-                    "pièce déjà imprimée. Elle sera imprimée à {:.0f}°, avec un peu de surplomb.",
+                    "pièce déjà imprimée ou arriverait en butée. Elle sera imprimée à {:.0f}°, avec "
+                    "un peu de surplomb.",
                     angle_entre(b.direction, {0.0, 0.0, 1.0}), imprimee));
             } else if (redressement > 1.0) {
                 remarques_.push_back(std::format(
@@ -775,6 +894,7 @@ private:
         Vec3 centre;
         double aire;
         int branche;  // branche du squelette la plus proche
+        std::array<Vec3, 3> sommets;
     };
     std::vector<Face> faces_;
     const Squelette& squelette_;
@@ -988,7 +1108,8 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
             if (std::any_of(parties.begin(), parties.end(),
                             [](const PartieImpression& p) { return !p.guide.empty(); })) {
                 branches.description += " Une branche courbe est imprimée en couches qui pivotent : "
-                                        "elles suivent sa courbe, et la tête s'incline un peu plus à chaque couche.";
+                                        "elles suivent sa courbe, et la tête s'incline peu à peu pendant "
+                                        "qu'elle imprime (5 axes continu).";
             }
             if (squelette.boucles) {
                 branches.remarques.push_back("Le modèle contient une anse (deux branches qui se rejoignent) : la découpe automatique peut y être imparfaite.");

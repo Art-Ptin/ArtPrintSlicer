@@ -788,7 +788,8 @@ async function trancher() {
   $('trajectoires-note').textContent = `Couches de ${ecrire(etat.valeurs.hauteur_couche)} mm · ` +
     (parties > 1 ? `${parties} parties, chacune dans sa direction · ` : '') +
     `${entier(verification.deplacements_a_vide)} déplacements à vide · ${entier(verification.retractions)} rétractions` +
-    (verification.dans_le_vide_mm === undefined ? '' : ` · parois imprimées dans le vide : ${entier(verification.dans_le_vide_mm)} mm`);
+    (verification.dans_le_vide_mm === undefined ? '' : ` · parois imprimées dans le vide : ${entier(verification.dans_le_vide_mm)} mm`) +
+    (verification.extrusions_en_rotation ? ` · 5 axes continu : la tête pivote pendant ${entier(verification.extrusions_en_rotation)} extrusions` : '');
 
   if (verification.valide) definirEtat('bon', 'G-code vérifié', 'Aucune règle physique violée. Prêt à exporter.');
   else definirEtat('mauvais', 'Tranchage refusé', `${entier(verification.nombre_erreurs)} erreur(s) : le G-code ne peut pas être exporté.`);

@@ -61,6 +61,8 @@ struct RapportVerification {
     std::size_t lignes = 0;
     std::size_t extrusions = 0;           // mouvements qui déposent de la matière
     std::size_t deplacements_a_vide = 0;  // mouvements sans dépôt
+    // Extrusions pendant lesquelles B ou C tourne (5 axes continu).
+    std::size_t extrusions_en_rotation = 0;
     std::size_t retractions = 0;
     double longueur_extrusions = 0.0;     // en mm, mesurée sur la pièce
     // Longueur de paroi déposée sans rien dessous (ni plateau, ni matière),

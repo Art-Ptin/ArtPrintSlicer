@@ -146,6 +146,7 @@ Json decrire_resultat(const ResultatTranchage& resultat) {
     verification["nombre_erreurs"] = v.nombre_erreurs;
     verification["extrusions"] = v.extrusions;
     verification["deplacements_a_vide"] = v.deplacements_a_vide;
+    verification["extrusions_en_rotation"] = v.extrusions_en_rotation;
     verification["retractions"] = v.retractions;
     verification["dans_le_vide_mm"] = std::round(v.longueur_dans_le_vide);
     verification["erreurs"] = Json::array();

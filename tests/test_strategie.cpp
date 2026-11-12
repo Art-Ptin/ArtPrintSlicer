@@ -288,6 +288,36 @@ void test_couches_pivotantes() {
     }
     VERIFIER(valeurs_b.size() > 150);
     VERIFIER(valeurs_b.count("0.000") == 1 && valeurs_b.count("70.000") == 1);
+
+    // 5 axes continu : la tête pivote pendant l'extrusion, très peu à chaque
+    // ligne (0,25° au plus), et chaque couche finit dans l'orientation de la
+    // suivante.
+    VERIFIER(resultat.verification.extrusions_en_rotation > 1000);
+    {
+        double b = 0.0, plus_grand_pas = 0.0;
+        std::istringstream relecture(resultat.gcode);
+        for (std::string ligne; std::getline(relecture, ligne);) {
+            const auto ou = ligne.find(" B");
+            if (ou == std::string::npos) {
+                continue;
+            }
+            const double valeur = std::stod(ligne.substr(ou + 2));
+            if (ligne.starts_with("G1") && ligne.find(" E") != std::string::npos) {
+                plus_grand_pas = std::max(plus_grand_pas, std::abs(valeur - b));
+            }
+            b = valeur;
+        }
+        VERIFIER(plus_grand_pas > 0.0 && plus_grand_pas < 0.2515);
+    }
+    // Sans le pivot continu, la tête pivote entre les couches : même pièce,
+    // aucune extrusion pendant une rotation.
+    OptionsMultiaxe entre_les_couches;
+    entre_les_couches.pivot_continu = false;
+    const ResultatTranchage a_l_arret = trancher_strategie(courbe, r, entre_les_couches);
+    VERIFIER_ACCEPTE(a_l_arret.verification);
+    VERIFIER(a_l_arret.verification.extrusions_en_rotation == 0);
+    VERIFIER(a_l_arret.couches == resultat.couches);
+    VERIFIER(std::abs(a_l_arret.longueur_filament - resultat.longueur_filament) < 0.01 * resultat.longueur_filament);
     // Aucune paroi n'est imprimée dans le vide ; en 3 axes, il y en a.
     VERIFIER(resultat.verification.longueur_dans_le_vide < 1.0);
     VERIFIER(trancher(courbe.parties.front().maillage, r).verification.longueur_dans_le_vide > 3.0);
@@ -345,6 +375,52 @@ void test_objets_organiques() {
     VERIFIER(trouver(champignon, TypeStrategie::autre_pose) != nullptr);
 }
 
+// Course des axes : si un axe n'a pas assez de course pour l'inclinaison
+// voulue, la stratégie proposée s'adapte (inclinaison réduite, ou branche
+// gardée avec le tronc) et son G-code reste accepté.
+void test_courses() {
+    Reglages r = reglages_essai();
+    const Maillage pose = poser_au_centre(essai::arbre_plat());
+    const std::vector<Strategie> libres = proposer_strategies(pose, r);
+    const Strategie* libre = trouver(libres, TypeStrategie::par_branches);
+    VERIFIER(libre != nullptr);
+    if (!libre) {
+        return;
+    }
+    const ResultatTranchage sans_limite = trancher_strategie(*libre, r);
+    VERIFIER_ACCEPTE(sans_limite.verification);
+    // Plus grande valeur de X demandée à la machine, d'un côté ou de l'autre.
+    double x_max = 0.0;
+    std::istringstream lignes(sans_limite.gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        const auto ou = ligne.find(" X");
+        if (ligne.starts_with("G") && ou != std::string::npos) {
+            x_max = std::max(x_max, std::abs(std::stod(ligne.substr(ou + 2))));
+        }
+    }
+    VERIFIER(x_max > 10.0);
+    // La course en X est raccourcie de 3 mm de chaque côté.
+    r.machine.course_x_min = -(x_max - 3.0);
+    r.machine.course_x_max = x_max - 3.0;
+    // La stratégie d'avant enverrait la machine en butée : le vérificateur la refuse.
+    VERIFIER(!trancher_strategie(*libre, r).verification.valide());
+    // Celle qui est proposée maintenant tient compte de la course.
+    const std::vector<Strategie> serrees = proposer_strategies(pose, r);
+    const auto plus_forte = [](const Strategie& strategie) {
+        double inclinaison = 0.0;
+        for (const PartieImpression& partie : strategie.parties) {
+            inclinaison = std::max(inclinaison, partie.inclinaison);
+        }
+        return inclinaison;
+    };
+    const Strategie* adaptee = trouver(serrees, TypeStrategie::par_branches);
+    VERIFIER(adaptee != nullptr);
+    if (adaptee) {
+        VERIFIER_ACCEPTE(trancher_strategie(*adaptee, r).verification);
+        VERIFIER(plus_forte(*adaptee) < plus_forte(*libre) - 1.0);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -356,6 +432,7 @@ int main() {
     test_b_vertical();
     test_couches_pivotantes();
     test_objets_organiques();
+    test_courses();
     if (echecs == 0) {
         std::cout << "Tests du 5 axes : tout est correct.\n";
         return 0;
