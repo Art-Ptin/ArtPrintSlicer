@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 #include "champ_couches.hpp"
@@ -40,6 +41,8 @@ struct PlanBranches {
     // Nombre de morceaux en surplomb qu'on n'a pas su découper en couches
     // courbes (trop bombés) : ils restent avec le tronc.
     std::size_t morceaux_laisses = 0;
+    // Pour chaque branche rendue au tronc : une phrase qui dit pourquoi.
+    std::vector<std::string> journal;
 
     bool vide() const {
         for (const std::vector<CoucheCourbe>& tige : tiges) {

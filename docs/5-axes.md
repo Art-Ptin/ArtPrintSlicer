@@ -210,7 +210,7 @@ première position qui ne touche rien est gardée ; seule la branche en cause
 est recalculée, pas tout le tranchage. S'il ne reste aucune position sans
 contact, le tranchage est refusé.
 
-**Petits chevauchements.** S'il ne reste que quelques endroits où un cordon
+**Petits chevauchements.** S'il ne reste que quelques endroits (une trentaine au plus) où un cordon
 de branche chevauche de la matière déjà posée (au ras du pied, le plus
 souvent), ces bouts de cordon de 3 mm environ ne sont pas imprimés, et une
 remarque le dit.

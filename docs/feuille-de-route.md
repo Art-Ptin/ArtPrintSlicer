@@ -103,9 +103,9 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Tronc laissé à nu là où une branche se soude | ✅ | pas encore de remplissage plein à cet endroit |
 | Pied de branche au plus juste (le tronc garde sa peau autour, cordons visibles en paroi extérieure) | ✅ | |
 | Deux stratégies proposées : classique et couches courbes | ✅ | les anciennes couches orientées ne servent plus qu'aux essais |
-| Branche impossible en couches courbes rendue au tronc, les autres gardées | ✅ | chandelier : deux bras sur trois en couches courbes |
+| Branche impossible en couches courbes rendue au tronc, les autres gardées | ✅ | une remarque dit laquelle et pourquoi ; chandelier : ses trois bras en couches courbes |
 | Déplacements stratégiques : chaque branche essayée à blanc dans plusieurs positions | 🟡 | côté et inclinaison de la tête ; pas encore l'ordre ni les trajets |
-| Petits chevauchements réparés (le bout de cordon n'est pas imprimé) | ✅ | six au plus, avec une remarque |
+| Petits chevauchements réparés (le bout de cordon n'est pas imprimé) | ✅ | une trentaine au plus, avec une remarque |
 | Couches en plusieurs morceaux (drone, crochet, champignon, tuyau en Y, anse) | ⬜ | la première couche s'enroule sur plusieurs faces |
 | Peau courbe : une dernière passe suit la forme du dessus (option) | 🟡 | tête d'aplomb sur la surface ; abandonnée si elle provoquerait un contact |
 | Vérificateur : croisement de cordons sur une couche inclinée | ✅ | toléré sur une courte longueur, comme à plat |

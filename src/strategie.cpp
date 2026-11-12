@@ -1207,6 +1207,9 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                     "ensuite, chacune contre la partie qui la porte : ses premières couches épousent cette "
                     "surface, puis se redressent en travers de la branche.",
                     courbes.parties.size() - 1);
+                for (const std::string& ligne : plan.journal) {
+                    courbes.remarques.push_back(ligne);
+                }
                 courbes.remarques.push_back("Les collisions de cette stratégie sont contrôlées au moment du tranchage.");
                 if (!reglages.machine.distance_pivot_buse) {
                     courbes.remarques.push_back("Pour trancher cette stratégie, le réglage « distance_pivot_buse » doit être mesuré sur la machine.");

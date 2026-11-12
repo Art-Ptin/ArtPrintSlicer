@@ -2004,12 +2004,13 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     // (au ras du pied d'une branche, le plus souvent), ces petits bouts de
     // cordon ne sont pas imprimés : la matière y est déjà.
     OptionsMultiaxe options_reparees = options;
-    for (int tour = 0; tour < 3 && courbes && !resultat.verification.valide(); ++tour) {
+    for (int tour = 0; tour < 6 && courbes && !resultat.verification.valide(); ++tour) {
         const RapportVerification& v = resultat.verification;
         const bool chevauchements = std::all_of(v.erreurs.begin(), v.erreurs.end(), [](const ErreurVerification& e) {
             return e.type == TypeErreur::dans_matiere || e.type == TypeErreur::sous_matiere;
         });
-        if (!chevauchements || v.nombre_erreurs > 6 || v.erreurs.size() != v.nombre_erreurs) {
+        // (Au-delà d'une trentaine, ce n'est plus une retouche : le tranchage est refusé.)
+        if (!chevauchements || v.nombre_erreurs > 30) {
             break;
         }
         // Le numéro de couche de chaque ligne du G-code.
