@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "api.hpp"
+#include "multiaxe.hpp"
+#include "strategie.hpp"
 #include "maillage.hpp"
 #include "reglages.hpp"
 #include "slicer.hpp"
@@ -114,9 +116,11 @@ int verifier(const std::filesystem::path& chemin_gcode,
 
 // Tranche un modèle STL et écrit le G-code. Le fichier n'est écrit que si
 // le vérificateur accepte le G-code. Renvoie le code de sortie.
+// « strategie » : 0 pour le tranchage classique, sinon le numéro donné par
+// la commande « strategies ».
 int trancher_fichier(const std::filesystem::path& chemin_modele,
                      const std::filesystem::path& chemin_gcode,
-                     const std::filesystem::path& chemin_reglages) {
+                     const std::filesystem::path& chemin_reglages, int strategie = 0) {
     using namespace artprint;
     try {
         const Reglages reglages =
@@ -128,7 +132,23 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
                                  chemin_en_texte(chemin_modele), modele.triangles_lus, taille.x,
                                  taille.y, taille.z);
 
-        const ResultatTranchage resultat = trancher(modele.maillage, reglages);
+        ResultatTranchage resultat;
+        if (strategie <= 0) {
+            resultat = trancher(modele.maillage, reglages);
+        } else {
+            const std::vector<Strategie> strategies =
+                proposer_strategies(poser_au_centre(modele.maillage), reglages);
+            if (static_cast<std::size_t>(strategie) > strategies.size()) {
+                std::cerr << std::format(
+                    "Erreur : la stratégie {} n'existe pas pour ce modèle ({} proposée(s)).\n",
+                    strategie, strategies.size());
+                return 1;
+            }
+            const Strategie& choisie = strategies[static_cast<std::size_t>(strategie) - 1];
+            std::cout << std::format("Stratégie : {} ({} partie(s))\n", choisie.nom,
+                                     choisie.parties.size());
+            resultat = trancher_strategie(choisie, reglages);
+        }
         const int minutes = static_cast<int>(resultat.duree_estimee / 60.0);
         std::cout << std::format("Couches : {}\n", resultat.couches);
         std::cout << std::format("Filament : {:.2f} m\n", resultat.longueur_filament / 1000.0);
@@ -163,6 +183,45 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
     }
 }
 
+// Affiche les stratégies d'impression possibles pour un modèle.
+int lister_strategies(const std::filesystem::path& chemin_modele,
+                      const std::filesystem::path& chemin_reglages) {
+    using namespace artprint;
+    try {
+        const Reglages reglages =
+            chemin_reglages.empty() ? Reglages{} : lire_reglages(chemin_reglages);
+        const ModeleStl modele = lire_stl(chemin_modele);
+        const std::vector<Strategie> strategies =
+            proposer_strategies(poser_au_centre(modele.maillage), reglages);
+        std::cout << std::format("Modèle : {}\n\n", chemin_en_texte(chemin_modele));
+        for (std::size_t s = 0; s < strategies.size(); ++s) {
+            const Strategie& strategie = strategies[s];
+            std::cout << std::format("{}. {}\n   {}\n   Surface à soutenir : {:.0f} mm²\n", s + 1,
+                                     strategie.nom, strategie.description, strategie.surplomb);
+            if (strategie.parties.size() > 1) {
+                for (std::size_t p = 0; p < strategie.parties.size(); ++p) {
+                    const PartieImpression& partie = strategie.parties[p];
+                    std::cout << std::format(
+                        "   - partie {} : inclinée de {:.0f}°, volume {:.1f} cm³, à soutenir {:.0f} mm²{}\n",
+                        p + 1, partie.inclinaison, partie.volume / 1000.0, partie.surplomb,
+                        partie.parent < 0 ? ", posée sur le plateau"
+                                          : std::format(", posée sur la partie {}", partie.parent + 1));
+                }
+            }
+            for (const std::string& remarque : strategie.remarques) {
+                std::cout << "   Remarque : " << remarque << '\n';
+            }
+            std::cout << '\n';
+        }
+        std::cout << "Pour trancher avec l'une d'elles :\n"
+                     "  artprint-slicer trancher <modele.stl> <sortie.gcode> [reglages.txt] --strategie=<numéro>\n";
+        return 0;
+    } catch (const std::exception& erreur) {
+        std::cerr << "Erreur : " << erreur.what() << '\n';
+        return 1;
+    }
+}
+
 // Mode « api » : lit une demande JSON par ligne, écrit une réponse JSON par
 // ligne. Sert aux essais de l'interface graphique.
 int servir_api() {
@@ -176,9 +235,27 @@ int servir_api() {
     return 0;
 }
 
-int lancer(const std::vector<std::filesystem::path>& arguments) {
+int lancer(std::vector<std::filesystem::path> arguments) {
     if (arguments.size() == 1 && arguments[0] == "api") {
         return servir_api();
+    }
+    // Option « --strategie=N », à la fin de la commande « trancher ».
+    int strategie = 0;
+    if (!arguments.empty()) {
+        const std::string dernier = arguments.back().string();
+        const std::string option = "--strategie=";
+        if (dernier.rfind(option, 0) == 0) {
+            try {
+                strategie = std::stoi(dernier.substr(option.size()));
+            } catch (const std::exception&) {
+                strategie = -1;
+            }
+            if (strategie < 1) {
+                std::cerr << "Erreur : « --strategie= » doit être suivi d'un numéro (1, 2, 3...).\n";
+                return 2;
+            }
+            arguments.pop_back();
+        }
     }
     std::cout << artprint::presentation() << '\n';
     std::cout << "Version " << artprint::version() << "\n\n";
@@ -192,10 +269,17 @@ int lancer(const std::vector<std::filesystem::path>& arguments) {
         }
     } else if (!arguments.empty() && arguments[0] == "trancher") {
         if (arguments.size() == 3) {
-            return trancher_fichier(arguments[1], arguments[2], {});
+            return trancher_fichier(arguments[1], arguments[2], {}, strategie);
         }
         if (arguments.size() == 4) {
-            return trancher_fichier(arguments[1], arguments[2], arguments[3]);
+            return trancher_fichier(arguments[1], arguments[2], arguments[3], strategie);
+        }
+    } else if (!arguments.empty() && arguments[0] == "strategies") {
+        if (arguments.size() == 2) {
+            return lister_strategies(arguments[1], {});
+        }
+        if (arguments.size() == 3) {
+            return lister_strategies(arguments[1], arguments[2]);
         }
     } else if (arguments.size() == 1) {
         return analyser(arguments[0]);
@@ -203,8 +287,10 @@ int lancer(const std::vector<std::filesystem::path>& arguments) {
     std::cerr << "Utilisation :\n"
                  "  artprint-slicer <fichier.stl>\n"
                  "      affiche le résumé d'un modèle 3D\n"
-                 "  artprint-slicer trancher <modele.stl> <sortie.gcode> [reglages.txt]\n"
-                 "      tranche un modèle en 3 axes et écrit le G-code vérifié\n"
+                 "  artprint-slicer trancher <modele.stl> <sortie.gcode> [reglages.txt] [--strategie=N]\n"
+                 "      tranche un modèle et écrit le G-code vérifié (3 axes, ou la stratégie N)\n"
+                 "  artprint-slicer strategies <modele.stl> [reglages.txt]\n"
+                 "      propose plusieurs façons d'imprimer le modèle (3 axes, 5 axes par branches)\n"
                  "  artprint-slicer verifier <fichier.gcode> [reglages.txt]\n"
                  "      vérifie qu'un G-code respecte les règles physiques\n";
     return 2;

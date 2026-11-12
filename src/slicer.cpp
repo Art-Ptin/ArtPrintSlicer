@@ -33,7 +33,7 @@ public:
     // déplacement.
     void couche(double z, double hauteur) {
         z_ = z;
-        apercu_.push_back({z, {}});
+        apercu_.push_back({z, 0, {}});
         // Section du cordon : un rectangle aux bouts arrondis.
         const double section = (r_.largeur_extrusion - hauteur) * hauteur +
                                std::numbers::pi * hauteur * hauteur / 4.0;

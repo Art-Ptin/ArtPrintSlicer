@@ -36,11 +36,12 @@ public:
     void partie(const Vec3& origine, const Vec3& u, const Vec3& v, const Vec3& w) {
         origine_ = origine, u_ = u, v_ = v, w_ = w;
         oriente_ = false;
+        ++partie_;
     }
 
     void couche(double z, double hauteur) {
         z_ = z;
-        apercu_.push_back({(origine_ + w_ * z).z, {}});
+        apercu_.push_back({(origine_ + w_ * z).z, partie_, {}});
         const double section = (r_.largeur_extrusion - hauteur) * hauteur +
                                std::numbers::pi * hauteur * hauteur / 4.0;
         const double section_filament =
@@ -219,6 +220,7 @@ private:
     double filament_ = 0.0;
     double duree_ = 0.0;
     std::size_t changements_ = 0;
+    int partie_ = -1;  // numéro de la partie en cours
     std::uint8_t type_ = 0;
     std::vector<CoucheApercu> apercu_;
 };

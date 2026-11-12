@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 
 #include "maillage.hpp"
+#include "multiaxe.hpp"
+#include "strategie.hpp"
 #include "reglages.hpp"
 #include "slicer.hpp"
 #include "stl.hpp"
@@ -98,6 +100,37 @@ Json decrire_modele(const Maillage& modele) {
     return reponse;
 }
 
+std::string_view nom_type_strategie(TypeStrategie type) {
+    switch (type) {
+        case TypeStrategie::classique:
+            return "classique";
+        case TypeStrategie::autre_pose:
+            return "autre_pose";
+        case TypeStrategie::par_branches:
+            return "par_branches";
+    }
+    return "classique";
+}
+
+Json decrire_strategie(const Strategie& strategie) {
+    Json reponse;
+    reponse["type"] = nom_type_strategie(strategie.type);
+    reponse["nom"] = strategie.nom;
+    reponse["description"] = strategie.description;
+    reponse["surplomb_mm2"] = std::round(strategie.surplomb);
+    reponse["remarques"] = strategie.remarques;
+    reponse["parties"] = Json::array();
+    for (const PartieImpression& partie : strategie.parties) {
+        reponse["parties"].push_back(
+            {{"direction", {partie.direction.x, partie.direction.y, partie.direction.z}},
+             {"inclinaison", std::round(partie.inclinaison * 10.0) / 10.0},
+             {"volume_cm3", std::round(partie.volume) / 1000.0},
+             {"surplomb_mm2", std::round(partie.surplomb)},
+             {"parent", partie.parent}});
+    }
+    return reponse;
+}
+
 Json decrire_resultat(const ResultatTranchage& resultat) {
     Json reponse;
     reponse["couches"] = resultat.couches;
@@ -134,7 +167,7 @@ Json decrire_resultat(const ResultatTranchage& resultat) {
             }
             mouvements.push_back(m.type);
         }
-        apercu.push_back({{"z", arrondi(couche.z)}, {"m", std::move(mouvements)}});
+        apercu.push_back({{"z", arrondi(couche.z)}, {"partie", couche.partie}, {"m", std::move(mouvements)}});
     }
     reponse["apercu"] = std::move(apercu);
     reponse["types"] = {nom_type(TypeTrait::jupe),
@@ -205,8 +238,35 @@ std::string Session::executer(std::string_view demande_json) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");
             }
             verifier_coherence(etat.reglages);
-            etat.resultat = trancher(*etat.modele, etat.reglages);
+            // « strategie » (facultatif) : "classique", "autre_pose" ou "par_branches".
+            const std::string voulue = demande.value("strategie", std::string("classique"));
+            if (voulue == "classique") {
+                etat.resultat = trancher(*etat.modele, etat.reglages);
+            } else {
+                const Strategie* choisie = nullptr;
+                const std::vector<Strategie> strategies =
+                    proposer_strategies(*etat.modele, etat.reglages);
+                for (const Strategie& strategie : strategies) {
+                    if (nom_type_strategie(strategie.type) == voulue) {
+                        choisie = &strategie;
+                    }
+                }
+                if (!choisie) {
+                    throw std::runtime_error(std::format(
+                        "La stratégie « {} » n'est pas proposée pour ce modèle.", voulue));
+                }
+                etat.resultat = trancher_strategie(*choisie, etat.reglages);
+            }
             reponse["resultat"] = decrire_resultat(*etat.resultat);
+            reponse["strategie"] = voulue;
+        } else if (commande == "strategies") {
+            if (!etat.modele) {
+                throw std::runtime_error("Aucun modèle n'est ouvert.");
+            }
+            reponse["strategies"] = Json::array();
+            for (const Strategie& strategie : proposer_strategies(*etat.modele, etat.reglages)) {
+                reponse["strategies"].push_back(decrire_strategie(strategie));
+            }
         } else if (commande == "enregistrer_gcode") {
             if (!etat.resultat) {
                 throw std::runtime_error("Il faut d'abord trancher le modèle.");

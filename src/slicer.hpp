@@ -33,6 +33,7 @@ constexpr std::uint8_t type_apercu_vide = 5;
 
 struct CoucheApercu {
     double z = 0.0;
+    int partie = 0;  // numéro de la partie imprimée (0 : la première, ou la seule)
     std::vector<MouvementApercu> mouvements;
 };
 

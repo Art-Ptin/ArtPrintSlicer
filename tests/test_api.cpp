@@ -119,6 +119,7 @@ void test_parcours_complet() {
     Session session;
     // Rien n'est ouvert : trancher et enregistrer sont refusés proprement.
     VERIFIER(appeler(session, {{"commande", "trancher"}})["ok"] == false);
+    VERIFIER(appeler(session, {{"commande", "strategies"}})["ok"] == false);
     VERIFIER(appeler(session, {{"commande", "enregistrer_gcode"}, {"chemin", "x.gcode"}})["ok"] == false);
 
     const std::filesystem::path stl = ecrire_cube();
@@ -129,6 +130,17 @@ void test_parcours_complet() {
     VERIFIER(modele["modele"]["dimensions"] == Json::array({10.0, 10.0, 10.0}));
     // Le modèle est posé au centre du plateau.
     VERIFIER(modele["modele"]["positions"][0] == -5.0);
+
+    // Stratégies : pour un simple cube, seule la stratégie classique est proposée.
+    const Json strategies = appeler(session, {{"commande", "strategies"}});
+    VERIFIER(strategies["ok"] == true);
+    VERIFIER(strategies["strategies"].size() == 1);
+    VERIFIER(strategies["strategies"][0]["type"] == "classique");
+    VERIFIER(strategies["strategies"][0]["surplomb_mm2"] == 0.0);
+    VERIFIER(strategies["strategies"][0]["parties"].size() == 1);
+    // Demander une stratégie qui n'est pas proposée est refusé proprement.
+    const Json refus = appeler(session, {{"commande", "trancher"}, {"strategie", "par_branches"}});
+    VERIFIER(refus["ok"] == false && refus["erreur"].get<std::string>().find("par_branches") != std::string::npos);
 
     const Json tranche = appeler(session, {{"commande", "trancher"}});
     VERIFIER(tranche["ok"] == true);
