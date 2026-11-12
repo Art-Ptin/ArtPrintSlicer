@@ -50,3 +50,9 @@ add_test(NAME strategie COMMAND test_strategie)
 add_executable(banc_strategies
     banc_strategies.cpp)
 target_link_libraries(banc_strategies PRIVATE artprint_core)
+
+# Fabrique de modèles d'essai (des milliers de pièces différentes, par famille
+# et par graine), pour les essais en grand nombre : voir outils/essais_de_masse.
+add_executable(generateur_modeles
+    generateur_modeles.cpp)
+target_link_libraries(generateur_modeles PRIVATE artprint_core)
