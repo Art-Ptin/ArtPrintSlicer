@@ -245,7 +245,7 @@ std::string Session::executer(std::string_view demande_json) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");
             }
             verifier_coherence(etat.reglages);
-            // « strategie » (facultatif) : "classique", "autre_pose", "par_branches" ou "couches_courbes".
+            // « strategie » (facultatif) : "classique" ou "couches_courbes".
             const std::string voulue = demande.value("strategie", std::string("classique"));
             if (voulue == "classique") {
                 etat.resultat = trancher_classique(*etat.modele, etat.reglages);

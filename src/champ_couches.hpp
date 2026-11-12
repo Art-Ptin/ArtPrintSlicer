@@ -82,6 +82,11 @@ struct AnalyseBranches {
 // « pas » : côté d'un cube en mm ; 0 = choisi d'après la taille du modèle.
 // « exclus » : numéros des morceaux en surplomb à laisser avec le tronc
 // (ceux qu'on n'a pas su imprimer en couches courbes).
-AnalyseBranches analyser_branches(const Maillage& pose, double pas = 0.0, const std::set<int>& exclus = {});
+// « avec_le_tronc » (facultatif) : pour chaque cube de la grille, 1 si sa
+// matière doit être imprimée avec le tronc, en couches horizontales, même si
+// elle est en surplomb (une tige qu'on n'a pas su découper en couches
+// courbes). Les branches qui en partent sont alors imprimées contre elle.
+AnalyseBranches analyser_branches(const Maillage& pose, double pas = 0.0, const std::set<int>& exclus = {},
+                                  const std::vector<std::uint8_t>* avec_le_tronc = nullptr);
 
 }  // namespace artprint

@@ -1216,9 +1216,20 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                         "Le réglage « hauteur_bascule_b » n'est pas renseigné : l'inclinaison de la tête est limitée à {:.0f}° partout.",
                         reglages.machine.b_limite_pres_plateau));
                 }
-                strategies.push_back(std::move(courbes));
+                // Les couches courbes ne sont proposées que si elles servent :
+                // il faut qu'elles laissent nettement moins de surface dans
+                // le vide que l'impression classique. (Les bosses d'un vase,
+                // par exemple, s'impriment très bien à plat.)
+                if (surplomb_classique > 1.0 && courbes.surplomb < 0.8 * surplomb_classique) {
+                    strategies.push_back(std::move(courbes));
+                }
             }
         }
+    }
+    if (!options.couches_orientees) {
+        std::erase_if(strategies, [](const Strategie& s) {
+            return s.type == TypeStrategie::autre_pose || s.type == TypeStrategie::par_branches;
+        });
     }
     return strategies;
 }

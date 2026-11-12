@@ -41,6 +41,9 @@ public:
     // (« marge_securite », « zone_buse », « marge_buse »).
     DetecteurCollisions(const ModeleMachine& modele, const ReglagesMachine& machine);
     ~DetecteurCollisions();
+    // Copie complète, matière déposée comprise : pour essayer une suite de
+    // mouvements sans toucher à l'original.
+    DetecteurCollisions(const DetecteurCollisions& autre);
 
     // Ajoute de la matière imprimée à cet endroit (repère de la pièce).
     void deposer(const Vec3& point);

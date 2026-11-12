@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <queue>
@@ -121,35 +122,70 @@ Polygones AnalyseBranches::zone_a(double z) const {
         return bandes;
     }
     const double pas = champ.pas;
-    for (int j = 0; j < champ.ny; ++j) {
-        for (int i = 0; i < champ.nx;) {
-            if (!zone_branches[champ.indice(i, j, k)]) {
-                ++i;
+    // Les cubes concernés à cette hauteur : ceux de la zone, et leurs voisins.
+    int i_min = champ.nx, i_max = -1, j_min = champ.ny, j_max = -1;
+    for (int dk = -1; dk <= 1; ++dk) {
+        if (k + dk < 0 || k + dk >= champ.nz) {
+            continue;
+        }
+        for (int j = 0; j < champ.ny; ++j) {
+            for (int i = 0; i < champ.nx; ++i) {
+                if (zone_branches[champ.indice(i, j, k + dk)]) {
+                    i_min = std::min(i_min, i), i_max = std::max(i_max, i);
+                    j_min = std::min(j_min, j), j_max = std::max(j_max, j);
+                }
+            }
+        }
+    }
+    if (i_max < 0) {
+        return bandes;
+    }
+    i_min = std::max(0, i_min - 1), j_min = std::max(0, j_min - 1);
+    i_max = std::min(champ.nx - 1, i_max + 1), j_max = std::min(champ.ny - 1, j_max + 1);
+    // La limite entre le tronc et une branche est la surface où la longueur
+    // de chemin vaut zéro : c'est sur elle que se pose la première couche de
+    // la branche. Elle est cherchée plus finement que les cubes, pour que le
+    // tronc et la branche s'emboîtent exactement.
+    const int n = std::clamp(static_cast<int>(std::ceil(pas / 0.12)), 1, 8);
+    const double fin = pas / n;
+    const auto dans_la_zone = [&](int a, int b) {
+        const Vec3 p{champ.origine.x + (a + 0.5) * fin, champ.origine.y + (b + 0.5) * fin, z};
+        double v = 0.0;
+        if (champ.valeur(p, v)) {
+            return v > 0.0;
+        }
+        return zone_branches[champ.indice(a / n, b / n, k)] != 0;
+    };
+    for (int b = j_min * n; b < (j_max + 1) * n; ++b) {
+        for (int a = i_min * n; a < (i_max + 1) * n;) {
+            if (!dans_la_zone(a, b)) {
+                ++a;
                 continue;
             }
-            int fin = i;
-            while (fin + 1 < champ.nx && zone_branches[champ.indice(fin + 1, j, k)]) {
-                ++fin;
+            int dernier = a;
+            while (dernier + 1 < (i_max + 1) * n && dans_la_zone(dernier + 1, b)) {
+                ++dernier;
             }
-            const double xa = champ.origine.x + i * pas, xb = champ.origine.x + (fin + 1) * pas;
-            const double ya = champ.origine.y + j * pas, yb = ya + pas;
+            const double xa = champ.origine.x + a * fin, xb = champ.origine.x + (dernier + 1) * fin;
+            const double ya = champ.origine.y + b * fin, yb = ya + fin;
             bandes.push_back({en_unites(Point2{xa, ya}), en_unites(Point2{xb, ya}), en_unites(Point2{xb, yb}),
                               en_unites(Point2{xa, yb})});
-            i = fin + 1;
+            a = dernier + 1;
         }
     }
     if (bandes.empty()) {
         return bandes;
     }
-    // Les cubes font un bord en escalier : il est arrondi (gonflé puis
-    // dégonflé) pour que la paroi du tronc reste lisse. La zone garde un
-    // quart de cube d'avance sur le tronc : mieux vaut un jeu d'un dixième
-    // de millimètre entre le tronc et la branche qu'un recouvrement.
+    // Le petit escalier qui reste est arrondi (gonflé puis dégonflé). La
+    // zone garde un peu plus d'un dixième de millimètre d'avance sur le tronc : mieux vaut
+    // ce petit jeu entre le tronc et la branche qu'un recouvrement.
+    const double jeu = 0.15;
     const Polygones zone = Clipper2Lib::Union(bandes, Clipper2Lib::FillRule::NonZero);
-    return decaler_arrondi(decaler_arrondi(zone, pas), -0.75 * pas);
+    return decaler_arrondi(decaler_arrondi(zone, fin + jeu), -fin);
 }
 
-AnalyseBranches analyser_branches(const Maillage& pose, double pas, const std::set<int>& exclus) {
+AnalyseBranches analyser_branches(const Maillage& pose, double pas, const std::set<int>& exclus,
+                                  const std::vector<std::uint8_t>* avec_le_tronc) {
     AnalyseBranches analyse;
     ChampCouches& champ = analyse.champ;
     if (pose.triangles.empty()) {
@@ -211,6 +247,15 @@ AnalyseBranches analyser_branches(const Maillage& pose, double pas, const std::s
             }
             for (; k < nz && matiere[indice(i, j, k)]; ++k) {
                 tronc[indice(i, j, k)] = 1;
+            }
+        }
+    }
+
+    // Et la matière qu'on a demandé d'imprimer avec lui.
+    if (avec_le_tronc && avec_le_tronc->size() == total) {
+        for (std::size_t n = 0; n < total; ++n) {
+            if ((*avec_le_tronc)[n] && matiere[n]) {
+                tronc[n] = 1;
             }
         }
     }

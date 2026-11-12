@@ -6,7 +6,7 @@ Utilisation :
 
 Écrit maquette/donnees/base.json (version et réglages), un fichier par pièce
 (modèle, résultat du tranchage classique, stratégies proposées) et un fichier
-par autre stratégie (« piece-par_branches.json »...). Ces fichiers ne sont
+par autre stratégie (« piece-couches_courbes.json »...). Ces fichiers ne sont
 pas versionnés.
 Le nom des pièces attendues par la maquette est dans maquette/pont.js.
 

@@ -38,6 +38,18 @@ struct OptionsMultiaxe {
     // (tête penchée de l'autre côté, puis moins penchée) quand le
     // vérificateur trouve un contact.
     int redressements = 9;
+    // Couches courbes : petits bouts de cordon à ne pas imprimer, parce
+    // qu'ils chevaucheraient de la matière déjà posée (au ras du pied d'une
+    // branche, par exemple). Chacun : le numéro de sa couche (celui du
+    // commentaire « ;COUCHE: » du G-code) et le centre d'une petite boule,
+    // dans le repère de la pièce. C'est le slicer qui remplit cette liste,
+    // d'après ce que trouve le vérificateur.
+    struct Retrait {
+        std::size_t couche = 0;
+        Vec3 centre;
+    };
+    std::vector<Retrait> retraits;
+    double rayon_retrait = 1.3;  // rayon de la boule, en mm
 };
 
 // Tranche une stratégie. Une stratégie à une seule partie verticale passe par

@@ -505,6 +505,9 @@ DetecteurCollisions::DetecteurCollisions(const ModeleMachine& modele,
 
 DetecteurCollisions::~DetecteurCollisions() = default;
 
+DetecteurCollisions::DetecteurCollisions(const DetecteurCollisions& autre)
+    : interne_(std::make_unique<Interne>(*autre.interne_)) {}
+
 void DetecteurCollisions::deposer(const Vec3& point) {
     Interne& d = *interne_;
     // Un point par cube de 1 mm suffit.

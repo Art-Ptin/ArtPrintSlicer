@@ -23,15 +23,18 @@ calcule tout, à partir de réglages mesurés sur la machine (aucune cote n'est
 
 ## L'idée : une stratégie d'impression
 
-Un modèle peut s'imprimer de plusieurs façons. Le slicer en propose jusqu'à
-trois et mesure, pour chacune, la **surface en surplomb** : celle qui serait
-imprimée dans le vide et demanderait des supports.
+Un modèle peut s'imprimer de deux façons. Le slicer les propose et mesure,
+pour chacune, la **surface en surplomb** : celle qui serait imprimée dans le
+vide et demanderait des supports.
 
 1. **Classique (3 axes)** : couches horizontales, tête verticale.
-2. **Autre pose (3 axes)** : le modèle entier est couché ou retourné dans la
-   position qui demande le moins de supports, puis imprimé en 3 axes.
-3. **Par branches (5 axes)** : le modèle est découpé en parties, et chaque
-   partie est imprimée dans sa propre direction.
+2. **Couches courbes (5 axes continu)** : le tronc d'abord, en couches
+   horizontales ; puis chaque branche, imprimée contre lui en couches qui
+   épousent sa surface (voir plus bas).
+
+Deux anciennes stratégies à couches orientées existent encore dans le code
+(« autre pose » et « par branches », décrite ci-dessous) : elles ne sont plus
+proposées et ne servent plus qu'aux essais (`OptionsStrategie::couches_orientees`).
 
 ### L'exemple de l'arbre
 
@@ -137,6 +140,24 @@ parois s'arrêtent au bord de cette zone et son remplissage arrive jusqu'à
 la surface, où il reste apparent. La branche se soude ainsi sur le
 remplissage, pas sur une paroi lisse.
 
+Cette zone à nu est calculée **au plus juste** :
+
+- la limite entre le tronc et la branche est la surface sur laquelle se pose
+  la première couche de la branche ; elle est cherchée plus finement que les
+  petits cubes de l'analyse (au dixième de millimètre) ;
+- une paroi du tronc n'est retirée que là où une couche de la branche
+  viendra **vraiment** la recouvrir (le point tombe dans le contour d'une
+  couche courbe assez large pour recevoir un cordon). Partout ailleurs, le
+  tronc garde sa peau jusqu'au ras de la branche ;
+- les premières couches d'une branche arrivent souvent en biais sur la
+  surface : chacune dépasse de la suivante sur une bande. Sur cette bande,
+  ses cordons intérieurs restent visibles : ils sont imprimés comme des
+  **parois extérieures** (même soin, même vitesse).
+
+Une branche que le slicer ne sait pas découper en couches courbes (voir les
+limites) est **rendue au tronc** : elle est imprimée avec lui, en couches
+horizontales, et les branches qu'elle porte sont imprimées contre elle.
+
 ### Les branches : des couches qui épousent le tronc
 
 Une **branche** est un morceau en surplomb accroché au tronc. Pour chaque
@@ -176,10 +197,23 @@ limite de + 50 %).
 
 En chaque point, la buse prend l'inclinaison de la surface. Contre un tronc
 vertical, cela veut dire une buse presque à l'horizontale : c'est exigeant
-pour la machine. Si le vérificateur trouve un contact pendant une branche,
-cette branche est refaite autrement : la tête penchée de l'autre côté (le
-plateau retourné), puis de moins en moins penchée, de 10° en 10°. Le
-meilleur essai est gardé. S'il reste un contact, le tranchage est refusé.
+pour la machine.
+
+**Déplacements stratégiques.** Quand la vraie forme de la machine est connue
+(réglage « modele_machine »), chaque branche est essayée « à blanc » avant
+d'être écrite, dans plusieurs positions : la tête penchée du côté le plus
+proche, puis de l'autre côté (le plateau fait demi-tour), puis de moins en
+moins penchée, de 10° en 10°. Chaque essai est contrôlé aussitôt contre la
+machine et la matière déjà imprimée (`VerificationSuivie`, une vérification
+« au fur et à mesure » qu'on peut copier pour repartir du même point). La
+première position qui ne touche rien est gardée ; seule la branche en cause
+est recalculée, pas tout le tranchage. S'il ne reste aucune position sans
+contact, le tranchage est refusé.
+
+**Petits chevauchements.** S'il ne reste que quelques endroits où un cordon
+de branche chevauche de la matière déjà posée (au ras du pied, le plus
+souvent), ces bouts de cordon de 3 mm environ ne sont pas imprimés, et une
+remarque le dit.
 
 Avec la forme réelle d'une tête, trois choses limitent cette stratégie :
 
@@ -242,8 +276,7 @@ artprint-slicer trancher arbre.stl arbre.gcode reglages.txt --strategie=2
 ```
 
 Dans l'interface, la commande `strategies` rend la même liste, et
-`trancher` accepte un champ `strategie` (`classique`, `autre_pose` ou
-`par_branches`).
+`trancher` accepte un champ `strategie` (`classique` ou `couches_courbes`).
 
 ## Réglages de la machine utilisés
 
@@ -309,15 +342,21 @@ tranchable, et contrôlent le pivot continu (jamais plus de 0,25° par ligne).
 
 - **Couches courbes : exigeantes pour la machine.** Avec la forme réelle
   d'une tête, une branche basse ou serrée contre un tronc haut est souvent
-  refusée (voir plus haut). « Par branches », qui laisse une amorce sur le
-  tronc, reste alors disponible.
-- **Couches courbes : des formes ne sont pas traitées** : un chapeau qui
-  fait tout le tour d'un pied, un bras qui s'élargit brusquement.
+  refusée (voir plus haut).
+- **Couches courbes : des formes ne sont pas encore traitées** : une
+  branche dont la première couche s'enroule sur deux faces du tronc à la
+  fois (bras de drone, crochet, sorties d'un tuyau en Y), un chapeau qui
+  fait tout le tour d'un pied, une anse (attaquée par ses deux bouts). Ces
+  morceaux sont imprimés avec le tronc, en couches horizontales ; si rien
+  d'autre ne reste, seule la stratégie classique est proposée.
+- **Couches courbes : proposées seulement si elles servent** (au moins 20 %
+  de surface en surplomb en moins que l'impression classique).
 - **Couches courbes : la branche se soude sur un remplissage aéré.** Il n'y
   a pas encore de zone pleine sous le pied de la branche.
 - **Couches courbes : pas de peau courbe** sur le tronc avec cette stratégie.
-- **Couches courbes : les collisions ne sont contrôlées qu'au tranchage**,
-  et chaque nouvel essai refait tout le tranchage : c'est lent.
+- **Déplacements stratégiques : l'orientation seulement.** Le slicer choisit
+  le côté et l'inclinaison de la tête pour chaque branche ; il ne change pas
+  encore l'ordre des branches ni le trajet des déplacements à vide.
 - **La vitesse d'avance n'est pas corrigée pour les axes de rotation.** Le
   « F » d'une ligne est la vitesse voulue pour la pointe ; la façon dont le
   firmware la partage entre les cinq axes reste à vérifier sur la machine

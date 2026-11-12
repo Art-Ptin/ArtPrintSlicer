@@ -21,11 +21,11 @@ Ce qui fonctionne aujourd'hui :
 - **Cinématique 5 axes** (tête inclinable B, plateau rotatif C), déjà utilisée par le vérificateur.
 - **Collisions avec la vraie forme de l'imprimante** : la tête, le bras et le module Z sont contrôlés à chaque mouvement contre la matière déjà imprimée, le plateau et le bâti. La forme vient du fichier STEP de la machine, converti par `outils/convertir_machine.py` (le STEP et le modèle converti restent privés, dans le dossier `machine/`).
 
-- **Stratégies d'impression et tranchage multi-directions** : le slicer propose plusieurs façons d'imprimer un modèle et, pour une forme en arbre, découpe le tronc et les branches pour imprimer chaque partie dans sa direction, la tête inclinée et le plateau tourné. Voir [docs/5-axes.md](docs/5-axes.md).
+- **Deux stratégies d'impression** : classique (3 axes) ou couches courbes (5 axes continu), proposée dès que la forme du modèle s'y prête. Voir [docs/5-axes.md](docs/5-axes.md).
 
 Sur une branche courbe, la tête et le plateau tournent pendant l'extrusion : c'est le premier mouvement 5 axes continu du slicer.
 
-- **Couches courbes (5 axes continu)** : pour une forme en arbre, le tronc est imprimé d'abord, lisse et sans amorce de branche, laissé à nu là où une branche viendra ; chaque branche est ensuite imprimée contre lui, en couches qui épousent sa surface.
+- **Couches courbes (5 axes continu)** : pour une forme en arbre, le tronc est imprimé d'abord, lisse et sans amorce de branche, laissé à nu là où une branche viendra ; chaque branche est ensuite imprimée contre lui, en couches qui épousent sa surface. Avec la vraie forme de la machine, le slicer essaie chaque branche dans plusieurs positions (plateau retourné, tête moins inclinée) et garde celle qui ne touche rien.
 
 - **Peau courbe (option)** : une dernière passe suit la forme du dessus de la pièce pour effacer les marches d'escalier.
 

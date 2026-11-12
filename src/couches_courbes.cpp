@@ -316,9 +316,17 @@ bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, doub
         couche.bombement = en_degres(std::acos(std::clamp(cosinus, -1.0, 1.0)));
         // Les toutes premières couches épousent la surface du tronc : sur un
         // tronc arrondi, elles s'enroulent autour de lui et sont très
-        // bombées. C'est permis pour elles ; plus loin, une couche trop
-        // bombée ne peut plus être dessinée sur une carte plane.
-        if (couche.bombement > (couches.size() < 12 ? 86.0 : 72.0)) {
+        // bombées. C'est permis pour elles, et pour les toutes dernières
+        // (le bout arrondi de la tige, tout petit) ; entre les deux, une
+        // couche trop bombée ne peut plus être dessinée sur une carte plane.
+        const std::size_t restantes = bruts.size() - static_cast<std::size_t>(&brut - bruts.data());
+        if (couche.bombement > (couches.size() < 12 || restantes <= 12 ? 86.0 : 80.0)) {
+            return false;
+        }
+        // Une couche qui regarde vers le bas (plus de 100° depuis la
+        // verticale) demanderait d'imprimer la tête en bas : impossible.
+        // C'est le cas de la moitié haute d'une anse, attaquée par le haut.
+        if (couche.w.z < -0.17) {
             return false;
         }
         couche.contour = Clipper2Lib::SimplifyPaths(
@@ -335,8 +343,8 @@ bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, doub
     return true;
 }
 
-// Découpe toutes les tiges. « impossibles » reçoit les numéros des morceaux
-// en surplomb dont une tige n'a pas pu être découpée.
+// Découpe toutes les tiges. « impossibles » reçoit les numéros des tiges
+// qui n'ont pas pu être découpées.
 std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele, const AnalyseBranches& analyse,
                                                           const std::vector<double>& dessus,
                                                           const std::vector<double>& epaisseurs,
@@ -415,7 +423,7 @@ std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele
     std::vector<std::vector<CoucheCourbe>> tiges(nombre);
     for (std::size_t n = 0; n < nombre; ++n) {
         if (!cartes_de_la_tige(bruts[n], champ, pointe, tiges[n])) {
-            impossibles.insert(analyse.morceaux[n]);
+            impossibles.insert(static_cast<int>(n));
         }
     }
     return tiges;
@@ -425,12 +433,13 @@ std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele
 
 PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe) {
     PlanBranches plan;
-    std::set<int> exclus;
-    for (int essai = 0; essai < 6; ++essai) {
+    // La matière des tiges qu'on n'a pas su découper : elle est imprimée avec le tronc.
+    std::vector<std::uint8_t> avec_le_tronc;
+    for (int essai = 0; essai < 8; ++essai) {
         plan = PlanBranches{};
-        plan.analyse = analyser_branches(pose, 0.0, exclus);
+        plan.analyse = analyser_branches(pose, 0.0, {}, avec_le_tronc.empty() ? nullptr : &avec_le_tronc);
+        plan.morceaux_laisses = static_cast<std::size_t>(essai);
         if (plan.analyse.nombre_tiges() == 0) {
-            plan.morceaux_laisses = exclus.size();
             return plan;
         }
         for (double haut = epaisseur; haut < plan.analyse.champ.maximum + epaisseur; haut += epaisseur) {
@@ -439,12 +448,25 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
         }
         std::set<int> impossibles;
         plan.tiges = trancher_les_tiges(pose, plan.analyse, plan.dessus, plan.epaisseurs, pointe, impossibles);
-        plan.morceaux_laisses = exclus.size();
         if (impossibles.empty()) {
             return plan;
         }
-        // Les morceaux qu'on n'a pas su découper restent avec le tronc, et on recommence.
-        exclus.insert(impossibles.begin(), impossibles.end());
+        // Une tige trop bombée pour être découpée en couches courbes est
+        // rendue au tronc : elle sera imprimée avec lui, en couches
+        // horizontales. Les tiges qui la portent aussi (elle ne peut pas être
+        // imprimée avant elles). Celles qu'elle porte restent des branches :
+        // elles seront imprimées contre elle. Puis on recommence.
+        std::set<int> rendues;
+        for (int tige : impossibles) {
+            for (int t = tige; t >= 0 && rendues.insert(t).second; t = plan.analyse.meres[static_cast<std::size_t>(t)]) {
+            }
+        }
+        avec_le_tronc.resize(plan.analyse.tige_des_cubes.size(), 0);
+        for (std::size_t n = 0; n < avec_le_tronc.size(); ++n) {
+            if (rendues.contains(plan.analyse.tige_des_cubes[n])) {
+                avec_le_tronc[n] = 1;
+            }
+        }
     }
     plan.tiges.clear();
     return plan;

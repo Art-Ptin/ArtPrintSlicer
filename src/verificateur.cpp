@@ -45,6 +45,22 @@ PositionMachine interpoler(const PositionMachine& a, const PositionMachine& b, d
             a.b + (b.b - a.b) * t, a.c + (b.c - a.c) * t};
 }
 
+// Le détecteur de collisions, copié avec le vérificateur qui le porte.
+struct DetecteurCopiable {
+    std::unique_ptr<DetecteurCollisions> detecteur;
+    DetecteurCopiable() = default;
+    DetecteurCopiable(const DetecteurCopiable& autre)
+        : detecteur(autre.detecteur ? std::make_unique<DetecteurCollisions>(*autre.detecteur) : nullptr) {}
+    DetecteurCopiable(DetecteurCopiable&&) noexcept = default;
+    DetecteurCopiable& operator=(std::unique_ptr<DetecteurCollisions> nouveau) {
+        detecteur = std::move(nouveau);
+        return *this;
+    }
+    DetecteurCollisions* operator->() const { return detecteur.get(); }
+    DetecteurCollisions& operator*() const { return *detecteur; }
+    explicit operator bool() const { return detecteur != nullptr; }
+};
+
 class Verificateur {
 public:
     explicit Verificateur(const Reglages& reglages)
@@ -111,6 +127,9 @@ public:
         vider_attente();
         return std::move(rapport_);
     }
+
+    // Nombre d'erreurs trouvées jusqu'ici.
+    std::size_t erreurs() const { return rapport_.nombre_erreurs; }
 
 private:
     // Un morceau de cordon qui attend d'être ajouté à la grille.
@@ -374,7 +393,7 @@ private:
         // Après trop de collisions, le contrôle s'arrête : le G-code est
         // déjà refusé, inutile de ralentir la suite.
         if (++collisions_ >= verif_.erreurs_max_par_type) {
-            detecteur_.reset();
+            detecteur_.detecteur.reset();
         }
         return true;
     }
@@ -622,7 +641,7 @@ private:
     bool a_extrude_ = false;
 
     std::shared_ptr<const ModeleMachine> modele_;
-    std::unique_ptr<DetecteurCollisions> detecteur_;
+    DetecteurCopiable detecteur_;
     // Vrai tant que les traits lus sont des parois (ou que le fichier ne dit
     // pas le genre des traits).
     bool paroi_en_cours_ = true;
@@ -655,6 +674,43 @@ RapportVerification verifier_gcode(std::istream& gcode, const Reglages& reglages
 RapportVerification verifier_gcode_texte(std::string_view gcode, const Reglages& reglages) {
     std::istringstream flux{std::string(gcode)};
     return verifier_gcode(flux, reglages);
+}
+
+struct VerificationSuivie::Interne {
+    explicit Interne(const Reglages& reglages) : verificateur(reglages) {}
+    Verificateur verificateur;
+    int numero = 0;
+};
+
+VerificationSuivie::VerificationSuivie(const Reglages& reglages) : interne_(std::make_unique<Interne>(reglages)) {}
+VerificationSuivie::VerificationSuivie(const VerificationSuivie& autre)
+    : interne_(std::make_unique<Interne>(*autre.interne_)) {}
+VerificationSuivie::VerificationSuivie(VerificationSuivie&&) noexcept = default;
+VerificationSuivie& VerificationSuivie::operator=(VerificationSuivie&&) noexcept = default;
+VerificationSuivie::~VerificationSuivie() = default;
+
+std::size_t VerificationSuivie::lire(std::string_view texte, std::size_t erreurs_max) {
+    std::size_t debut = 0, lues = 0;
+    while (debut < texte.size()) {
+        std::size_t fin = texte.find('\n', debut);
+        if (fin == std::string_view::npos) {
+            fin = texte.size();
+        }
+        interne_->verificateur.traiter_ligne(++interne_->numero, texte.substr(debut, fin - debut));
+        ++lues;
+        debut = fin + 1;
+        if (interne_->verificateur.erreurs() > erreurs_max) {
+            break;
+        }
+    }
+    return lues;
+}
+
+std::size_t VerificationSuivie::erreurs() const { return interne_->verificateur.erreurs(); }
+
+RapportVerification VerificationSuivie::terminer() {
+    RapportVerification rapport = interne_->verificateur.terminer();
+    return rapport;
 }
 
 std::string decrire(const ErreurVerification& erreur) {

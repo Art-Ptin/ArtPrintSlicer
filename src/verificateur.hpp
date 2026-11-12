@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <iosfwd>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,6 +80,31 @@ RapportVerification verifier_gcode(std::istream& gcode, const Reglages& reglages
 
 // Même chose pour un G-code déjà chargé en mémoire (utile pour les tests).
 RapportVerification verifier_gcode_texte(std::string_view gcode, const Reglages& reglages);
+
+// Vérification « au fur et à mesure » : le G-code est donné morceau par
+// morceau, dans l'ordre. Une copie de l'objet garde tout ce qui a été lu
+// (la matière déposée, la position de la machine) : elle permet d'essayer
+// plusieurs suites possibles depuis le même point et de garder la meilleure.
+class VerificationSuivie {
+public:
+    explicit VerificationSuivie(const Reglages& reglages);
+    VerificationSuivie(const VerificationSuivie& autre);
+    VerificationSuivie(VerificationSuivie&&) noexcept;
+    VerificationSuivie& operator=(VerificationSuivie&&) noexcept;
+    ~VerificationSuivie();
+
+    // Lit des lignes entières de G-code. S'arrête dès que le nombre total
+    // d'erreurs dépasse « erreurs_max ». Rend le nombre de lignes lues.
+    std::size_t lire(std::string_view texte, std::size_t erreurs_max = static_cast<std::size_t>(-1));
+    // Nombre d'erreurs trouvées jusqu'ici.
+    std::size_t erreurs() const;
+    // Le rapport complet. À n'appeler qu'une fois, à la fin.
+    RapportVerification terminer();
+
+private:
+    struct Interne;
+    std::unique_ptr<Interne> interne_;
+};
 
 // Texte complet d'une erreur, prêt à afficher : ligne, problème, position
 // de la machine et solution possible.

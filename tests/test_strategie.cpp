@@ -18,6 +18,16 @@
 #include "slicer.hpp"
 #include "squelette.hpp"
 #include "strategie.hpp"
+#include "verificateur.hpp"
+
+// Les essais portent aussi sur les anciennes stratégies à couches orientées,
+// que le slicer ne propose plus d'ordinaire.
+static std::vector<artprint::Strategie> toutes_les_strategies(const artprint::Maillage& pose,
+                                                              const artprint::Reglages& reglages) {
+    artprint::OptionsStrategie options;
+    options.couches_orientees = true;
+    return artprint::proposer_strategies(pose, reglages, options);
+}
 
 using namespace artprint;
 
@@ -128,7 +138,7 @@ void test_squelette() {
 void test_strategies(const Maillage& modele, const char* nom) {
     const Reglages r = reglages_essai();
     const Maillage pose = poser_au_centre(modele);
-    const std::vector<Strategie> strategies = proposer_strategies(pose, r);
+    const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
     VERIFIER(!strategies.empty() && strategies.front().type == TypeStrategie::classique);
     const Strategie& classique = strategies.front();
     const Strategie* branches = trouver(strategies, TypeStrategie::par_branches);
@@ -182,7 +192,7 @@ void test_strategies(const Maillage& modele, const char* nom) {
     Reglages sans_bascule = r;
     sans_bascule.machine.hauteur_bascule_b.reset();
     VERIFIER(trancher_strategie(*branches, sans_bascule).verification.contient(TypeErreur::limite_b));
-    const std::vector<Strategie> prudentes = proposer_strategies(pose, sans_bascule);
+    const std::vector<Strategie> prudentes = toutes_les_strategies(pose, sans_bascule);
     const Strategie* prudente = trouver(prudentes, TypeStrategie::par_branches);
     VERIFIER(prudente != nullptr);
     if (prudente) {
@@ -209,7 +219,7 @@ void test_b_vertical() {
     Reglages r = reglages_essai();
     r.machine.b_vertical = -90.0;
     const Maillage pose = poser_au_centre(essai::arbre());
-    const std::vector<Strategie> strategies = proposer_strategies(pose, r);
+    const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
     const Strategie* branches = trouver(strategies, TypeStrategie::par_branches);
     VERIFIER(branches != nullptr);
     if (branches) {
@@ -342,7 +352,7 @@ void test_objets_organiques() {
                                   essai::arbre_double, essai::buisson}) {
         const Maillage pose = poser_au_centre(fabriquer());
         VERIFIER(ferme(pose));
-        const std::vector<Strategie> strategies = proposer_strategies(pose, r);
+        const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
         const Strategie* branches = trouver(strategies, TypeStrategie::par_branches);
         VERIFIER(branches != nullptr);
         if (!branches) {
@@ -359,7 +369,7 @@ void test_objets_organiques() {
     }
     // Une branche qui porte elle-même une branche : la petite est rattachée à la
     // grosse (pas au tronc) et elle est imprimée après elle.
-    const std::vector<Strategie> double_niveau = proposer_strategies(poser_au_centre(essai::arbre_double()), r);
+    const std::vector<Strategie> double_niveau = toutes_les_strategies(poser_au_centre(essai::arbre_double()), r);
     if (const Strategie* branches = trouver(double_niveau, TypeStrategie::par_branches)) {
         bool portee_par_une_branche = false;
         for (std::size_t i = 0; i < branches->parties.size(); ++i) {
@@ -370,13 +380,13 @@ void test_objets_organiques() {
         VERIFIER(portee_par_une_branche);
     }
     // Un buisson : six branches autour du tronc, chacune a sa propre partie.
-    const std::vector<Strategie> buisson = proposer_strategies(poser_au_centre(essai::buisson()), r);
+    const std::vector<Strategie> buisson = toutes_les_strategies(poser_au_centre(essai::buisson()), r);
     if (const Strategie* branches = trouver(buisson, TypeStrategie::par_branches)) {
         VERIFIER(branches->parties.size() == 7);
     }
     // Un champignon n'a pas de branche : pas de stratégie par branches, mais
     // une autre pose (retourné) qui demande moins de supports.
-    const std::vector<Strategie> champignon = proposer_strategies(poser_au_centre(essai::champignon()), r);
+    const std::vector<Strategie> champignon = toutes_les_strategies(poser_au_centre(essai::champignon()), r);
     VERIFIER(trouver(champignon, TypeStrategie::par_branches) == nullptr);
     VERIFIER(trouver(champignon, TypeStrategie::autre_pose) != nullptr);
 }
@@ -387,7 +397,7 @@ void test_objets_organiques() {
 void test_courses() {
     Reglages r = reglages_essai();
     const Maillage pose = poser_au_centre(essai::arbre_plat());
-    const std::vector<Strategie> libres = proposer_strategies(pose, r);
+    const std::vector<Strategie> libres = toutes_les_strategies(pose, r);
     const Strategie* libre = trouver(libres, TypeStrategie::par_branches);
     VERIFIER(libre != nullptr);
     if (!libre) {
@@ -411,7 +421,7 @@ void test_courses() {
     // La stratégie d'avant enverrait la machine en butée : le vérificateur la refuse.
     VERIFIER(!trancher_strategie(*libre, r).verification.valide());
     // Celle qui est proposée maintenant tient compte de la course.
-    const std::vector<Strategie> serrees = proposer_strategies(pose, r);
+    const std::vector<Strategie> serrees = toutes_les_strategies(pose, r);
     const auto plus_forte = [](const Strategie& strategie) {
         double inclinaison = 0.0;
         for (const PartieImpression& partie : strategie.parties) {
@@ -486,7 +496,7 @@ void test_couches_courbes() {
     }
 
     // La stratégie : le tronc, puis une partie par branche.
-    const std::vector<Strategie> strategies = proposer_strategies(pose, r);
+    const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
     VERIFIER(strategies.front().type == TypeStrategie::classique);
     const Strategie* courbes = trouver(strategies, TypeStrategie::couches_courbes);
     VERIFIER(courbes != nullptr);
@@ -497,9 +507,42 @@ void test_couches_courbes() {
     VERIFIER(courbes->parties[1].couches_courbes && courbes->parties[1].parent == 0);
     VERIFIER(courbes->surplomb < 5.0);
 
+    // D'ordinaire, le slicer ne propose que deux stratégies : la classique
+    // et les couches courbes. Les anciennes couches orientées n'y sont plus.
+    {
+        const std::vector<Strategie> proposees = proposer_strategies(pose, r);
+        VERIFIER(proposees.size() == 2);
+        VERIFIER(proposees.front().type == TypeStrategie::classique);
+        VERIFIER(proposees.back().type == TypeStrategie::couches_courbes);
+    }
+    // Un champignon (un chapeau tout autour d'un pied) n'a que la stratégie
+    // classique : le slicer ne sait pas encore découper son chapeau.
+    VERIFIER(proposer_strategies(poser_au_centre(essai::champignon()), r).size() == 1);
+
     const ResultatTranchage resultat = trancher_strategie(*courbes, r);
     VERIFIER_ACCEPTE(resultat.verification);
     VERIFIER(resultat.verification.extrusions_en_rotation > 1000);
+    // La vérification « au fur et à mesure » trouve la même chose que la
+    // vérification d'un seul trait, même si le G-code est donné en deux
+    // morceaux ; et une copie prise en route repart bien du même point.
+    {
+        const std::string& g = resultat.gcode;
+        const std::size_t coupe = g.find('\n', g.size() / 2) + 1;
+        VerificationSuivie suivie(r);
+        suivie.lire(std::string_view(g).substr(0, coupe));
+        VerificationSuivie copie(suivie);
+        suivie.lire(std::string_view(g).substr(coupe));
+        copie.lire(std::string_view(g).substr(coupe));
+        const RapportVerification a = suivie.terminer(), b = copie.terminer();
+        VERIFIER(a.nombre_erreurs == 0 && b.nombre_erreurs == 0);
+        VERIFIER(a.extrusions == resultat.verification.extrusions && b.extrusions == a.extrusions);
+        VERIFIER(a.lignes == resultat.verification.lignes && b.lignes == a.lignes);
+        // Un mouvement fautif (une extrusion sans reprise du filament) est
+        // compté par la copie qui le lit, pas par l'autre.
+        VerificationSuivie fautive(r);
+        fautive.lire("G1 X10 Y10 Z0.2 F3000\nG1 E-1 F1800\nG1 X20 Y10 E0.5 F1500\n");
+        VERIFIER(fautive.erreurs() > 0);
+    }
     // Bien moins de parois dans le vide qu'en 3 axes (il en reste un peu : la
     // première couche d'une branche repose sur le remplissage aéré du tronc).
     const ResultatTranchage classique = trancher(pose, r);
@@ -530,8 +573,10 @@ void test_couches_courbes() {
     VERIFIER(couches_du_tronc > 250);
     VERIFIER(rayon > 5.0 && rayon < 6.05);
     // Là où une branche viendra, le tronc est laissé à nu : à cette hauteur,
-    // aucune de ses parois ne passe dans la zone de la branche, mais son
-    // remplissage, lui, arrive jusque-là.
+    // aucune de ses parois ne passe au cœur du pied de la branche (à plus
+    // d'un millimètre de son bord), mais son remplissage, lui, arrive
+    // jusque-là. Au bord du pied, le tronc garde sa peau partout où la
+    // branche ne le recouvre pas.
     {
         std::size_t parois_dans_la_zone = 0, parois = 0, couches_vues = 0;
         for (const CoucheApercu& couche : resultat.apercu) {
@@ -539,7 +584,7 @@ void test_couches_courbes() {
                 continue;
             }
             ++couches_vues;
-            const Polygones zone = analyse.zone_a(couche.z - 0.1);
+            const Polygones zone = decaler(analyse.zone_a(couche.z - 0.1), -1.0);
             for (const MouvementApercu& m : couche.mouvements) {
                 if (m.type != 1 && m.type != 2) {
                     continue;
@@ -559,7 +604,7 @@ void test_couches_courbes() {
     // arrondies) passe aussi ; un champignon, dont le chapeau fait tout le
     // tour du pied, n'est pas découpé ainsi.
     for (const auto& fabriquer : {essai::arbre_organique, essai::arbre_double}) {
-        const std::vector<Strategie> autres = proposer_strategies(poser_au_centre(fabriquer()), r);
+        const std::vector<Strategie> autres = toutes_les_strategies(poser_au_centre(fabriquer()), r);
         const Strategie* autre = trouver(autres, TypeStrategie::couches_courbes);
         VERIFIER(autre != nullptr);
         if (autre) {
@@ -568,7 +613,7 @@ void test_couches_courbes() {
             VERIFIER(tranche.verification.longueur_dans_le_vide < 45.0);
         }
     }
-    VERIFIER(trouver(proposer_strategies(poser_au_centre(essai::champignon()), r), TypeStrategie::couches_courbes) ==
+    VERIFIER(trouver(toutes_les_strategies(poser_au_centre(essai::champignon()), r), TypeStrategie::couches_courbes) ==
              nullptr);
 }
 
@@ -629,7 +674,7 @@ void test_peau_courbe() {
     VERIFIER(vertical.verification.extrusions_en_rotation == 0);
 
     // Avec la stratégie par branches aussi, le dessus du tronc reçoit sa peau.
-    const std::vector<Strategie> strategies = proposer_strategies(poser_au_centre(essai::arbre_organique()), r);
+    const std::vector<Strategie> strategies = toutes_les_strategies(poser_au_centre(essai::arbre_organique()), r);
     if (const Strategie* branches = trouver(strategies, TypeStrategie::par_branches)) {
         const ResultatTranchage resultat = trancher_strategie(*branches, r);
         VERIFIER_ACCEPTE(resultat.verification);

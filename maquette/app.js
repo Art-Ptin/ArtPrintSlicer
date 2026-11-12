@@ -623,7 +623,7 @@ function afficherProcede() {
 // --- Stratégies d'impression ------------------------------------------------------
 
 // Les stratégies qui inclinent la tête et font tourner le plateau.
-const STRATEGIES_5_AXES = ['par_branches', 'couches_courbes'];
+const STRATEGIES_5_AXES = ['couches_courbes'];
 
 // Liste des façons d'imprimer le modèle ouvert, avec ce qu'il resterait à soutenir.
 function afficherStrategies() {
@@ -1063,11 +1063,11 @@ $('strategie').addEventListener('change', (e) => { etat.strategie = e.target.val
 // La pastille « 3 axes | 5 axes » choisit la stratégie correspondante.
 function choisirMode(cinqAxes) {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle : le 5 axes dépend de sa forme.', { info: true }); return; }
-  if (cinqAxes && !etat.strategies.some((s) => s.type === 'par_branches')) {
-    dire('Ce modèle n\'a pas de branche à imprimer dans une autre direction : il reste en 3 axes.', { info: true });
+  if (cinqAxes && !etat.strategies.some((s) => s.type === 'couches_courbes')) {
+    dire('Ce modèle n\'a pas de branche à imprimer en couches courbes : il reste en 3 axes.', { info: true });
     return;
   }
-  const voulue = cinqAxes ? 'par_branches' : 'classique';
+  const voulue = cinqAxes ? 'couches_courbes' : 'classique';
   if (cinqAxes === STRATEGIES_5_AXES.includes(etat.strategie)) return;
   etat.strategie = voulue;
   afficherStrategies();

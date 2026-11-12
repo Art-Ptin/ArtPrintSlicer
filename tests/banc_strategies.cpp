@@ -24,6 +24,15 @@
 #include "slicer.hpp"
 #include "strategie.hpp"
 
+// Les essais portent aussi sur les anciennes stratégies à couches orientées,
+// que le slicer ne propose plus d'ordinaire.
+static std::vector<artprint::Strategie> toutes_les_strategies(const artprint::Maillage& pose,
+                                                              const artprint::Reglages& reglages) {
+    artprint::OptionsStrategie options;
+    options.couches_orientees = true;
+    return artprint::proposer_strategies(pose, reglages, options);
+}
+
 using namespace artprint;
 
 namespace {
@@ -98,7 +107,7 @@ int main(int argc, char** argv) {
         auto debut = std::chrono::steady_clock::now();
         std::vector<Strategie> strategies;
         try {
-            strategies = proposer_strategies(modele, reglages);
+            strategies = toutes_les_strategies(modele, reglages);
         } catch (const std::exception& erreur) {
             std::cout << "   !! stratégies impossibles : " << erreur.what() << '\n';
             ++refus;

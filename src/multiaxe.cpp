@@ -8,6 +8,8 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <unordered_map>
+#include <optional>
 #include <vector>
 
 #include "champ_couches.hpp"
@@ -321,6 +323,7 @@ public:
     double duree() const { return duree_; }
     std::size_t changements() const { return changements_; }
     std::string prendre_gcode() { return std::move(gcode_); }
+    const std::string& gcode() const { return gcode_; }
 
 private:
     // Direction donnée à la buse pour des couches de normale « w ». Pour une
@@ -945,6 +948,129 @@ std::vector<Polygones> sections_pivotantes(const PartieImpression& partie, const
 
 }  // namespace
 
+// Vrai si le point est dans les polygones (règle pair-impair).
+static bool point_dans(const Polygones& polygones, const Point2& q) {
+    int dedans = 0;
+    for (const Contour& contour : polygones) {
+        dedans += Clipper2Lib::PointInPolygon(en_unites(q), contour) != Clipper2Lib::PointInPolygonResult::IsOutside;
+    }
+    return dedans % 2 == 1;
+}
+
+// Couches courbes : les cordons qui resteront visibles sont imprimés comme
+// des parois extérieures. Quand une couche courbe arrive en biais sur la
+// surface de la pièce (au pied d'une branche, par exemple), elle dépasse de
+// la couche suivante sur une bande parfois large : ses parois intérieures et
+// son remplissage plein y sont à l'air libre. Sur cette bande, ils prennent
+// le type « paroi externe » (même soin, même vitesse, même couleur).
+static void peau_des_couches_courbes(const std::vector<CoucheCourbe>& cartes, std::vector<CoucheTrajectoires>& couches,
+                              double largeur) {
+    // Contour d'une couche voisine, redessiné sur la carte de la couche « c ».
+    const auto reporte = [&](std::size_t autre, std::size_t c) {
+        Polygones resultat;
+        for (const Contour& contour : cartes[autre].contour) {
+            Contour copie;
+            for (const PointEntier& sommet : contour) {
+                const Point2 q = en_mm(sommet);
+                const Vec3 p = cartes[autre].origine + cartes[autre].u * q.x + cartes[autre].v * q.y - cartes[c].origine;
+                copie.push_back(en_unites(Point2{produit_scalaire(p, cartes[c].u), produit_scalaire(p, cartes[c].v)}));
+            }
+            resultat.push_back(std::move(copie));
+        }
+        return decaler(resultat, -0.5 * largeur);
+    };
+    for (std::size_t c = 0; c < couches.size() && c < cartes.size(); ++c) {
+        // Ce qui recouvre la couche (la suivante) et ce qui la porte (la précédente).
+        std::vector<Polygones> voisines;
+        if (c + 1 < cartes.size()) {
+            voisines.push_back(reporte(c + 1, c));
+        }
+        if (c > 0) {
+            voisines.push_back(reporte(c - 1, c));
+        }
+        if (voisines.empty()) {
+            continue;
+        }
+        const auto visible = [&](const Point2& q) {
+            for (const Polygones& voisine : voisines) {
+                if (!point_dans(voisine, q)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        std::vector<Trait> traits;
+        for (Trait& trait : couches[c].traits) {
+            if (trait.type != TypeTrait::paroi_interne && trait.type != TypeTrait::remplissage_plein) {
+                traits.push_back(std::move(trait));
+                continue;
+            }
+            // Le trait est recoupé finement, puis partagé en suites visibles et cachées.
+            std::vector<Point2> points;
+            const std::size_t nombre = trait.points.size() + (trait.ferme ? 1 : 0);
+            for (std::size_t i = 0; i < nombre; ++i) {
+                const Point2& q = trait.points[i % trait.points.size()];
+                if (!points.empty()) {
+                    const Point2 avant = points.back();
+                    const int morceaux = std::max(1, static_cast<int>(std::ceil(distance(avant, q) / 0.4)));
+                    for (int k = 1; k < morceaux; ++k) {
+                        const double f = static_cast<double>(k) / morceaux;
+                        points.push_back({avant.x + (q.x - avant.x) * f, avant.y + (q.y - avant.y) * f});
+                    }
+                }
+                points.push_back(q);
+            }
+            std::vector<std::uint8_t> vu(points.size());
+            std::size_t nombre_vus = 0;
+            for (std::size_t i = 0; i < points.size(); ++i) {
+                vu[i] = visible(points[i]);
+                nombre_vus += vu[i];
+            }
+            if (nombre_vus == 0) {
+                traits.push_back(std::move(trait));
+                continue;
+            }
+            if (nombre_vus == points.size()) {
+                trait.type = TypeTrait::paroi_externe;
+                traits.push_back(std::move(trait));
+                continue;
+            }
+            // Une boucle est ouverte à un changement : aucune suite n'est coupée en deux.
+            std::size_t debut = 0;
+            if (trait.ferme) {
+                points.pop_back();
+                vu.pop_back();
+                for (std::size_t i = 0; i < points.size(); ++i) {
+                    if (vu[i] != vu[(i + points.size() - 1) % points.size()]) {
+                        debut = i;
+                        break;
+                    }
+                }
+            }
+            Trait morceau;
+            for (std::size_t n = 0; n < points.size(); ++n) {
+                const std::size_t i = (debut + n) % points.size();
+                if (!morceau.points.empty() && (vu[i] != 0) != (morceau.type == TypeTrait::paroi_externe)) {
+                    // Les deux morceaux se touchent : le cordon ne s'interrompt pas.
+                    morceau.points.push_back(points[i]);
+                    traits.push_back(morceau);
+                    morceau.points.clear();
+                }
+                morceau.type = vu[i] ? TypeTrait::paroi_externe : trait.type;
+                morceau.points.push_back(points[i]);
+            }
+            if (trait.ferme && !morceau.points.empty()) {
+                morceau.points.push_back(points[debut]);
+            }
+            if (morceau.points.size() > 1) {
+                traits.push_back(morceau);
+            }
+        }
+        // L'ordre d'impression ne change pas : seul le type des morceaux visibles change.
+        couches[c].traits = std::move(traits);
+    }
+}
+
 bool couches_pivotantes_possibles(const PartieImpression& partie, const ReglagesImpression& reglages) {
     if (partie.guide.empty()) {
         return false;
@@ -963,9 +1089,72 @@ namespace {
 // « reduction » : degrés retirés à l'inclinaison maximale de la tête des
 // parties en couches courbes (voir trancher_strategie).
 // « avec_peau » : faux pour ne pas faire la passe de peau courbe.
+// Recoupe un trait finement et rend ses morceaux, sans les points pour
+// lesquels « retire » est vrai. Les morceaux plus courts que « longueur_min »
+// sont abandonnés. Rend le trait tel quel si rien n'est retiré.
+std::vector<Trait> sans_les_points(const Trait& trait, const std::function<bool(const Point2&)>& retire,
+                                   double longueur_min) {
+    std::vector<Point2> points;
+    const std::size_t nombre = trait.points.size() + (trait.ferme ? 1 : 0);
+    for (std::size_t i = 0; i < nombre; ++i) {
+        const Point2& q = trait.points[i % trait.points.size()];
+        if (!points.empty()) {
+            const Point2 avant = points.back();
+            const int morceaux = std::max(1, static_cast<int>(std::ceil(distance(avant, q) / 0.4)));
+            for (int k = 1; k < morceaux; ++k) {
+                const double f = static_cast<double>(k) / morceaux;
+                points.push_back({avant.x + (q.x - avant.x) * f, avant.y + (q.y - avant.y) * f});
+            }
+        }
+        points.push_back(q);
+    }
+    std::vector<std::uint8_t> retires(points.size());
+    bool touche = false;
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        retires[i] = retire(points[i]);
+        touche = touche || retires[i];
+    }
+    if (!touche) {
+        return {trait};
+    }
+    // Pour une boucle, on commence juste après un point retiré : aucune suite n'est coupée en deux.
+    std::size_t debut = 0;
+    if (trait.ferme) {
+        while (debut < points.size() && !retires[debut]) {
+            ++debut;
+        }
+        points.pop_back();  // le point de fermeture, en double
+        retires.pop_back();
+        debut %= std::max<std::size_t>(1, points.size());
+    }
+    std::vector<Trait> morceaux;
+    Trait morceau;
+    morceau.type = trait.type;
+    const auto finir = [&]() {
+        double longueur = 0.0;
+        for (std::size_t i = 1; i < morceau.points.size(); ++i) {
+            longueur += distance(morceau.points[i - 1], morceau.points[i]);
+        }
+        if (longueur > longueur_min) {
+            morceaux.push_back(morceau);
+        }
+        morceau.points.clear();
+    };
+    for (std::size_t n = 0; n < points.size(); ++n) {
+        const std::size_t i = (debut + n) % points.size();
+        if (retires[i]) {
+            finir();
+        } else {
+            morceau.points.push_back(points[i]);
+        }
+    }
+    finir();
+    return morceaux;
+}
+
 ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& reglages_demandes,
-                                const OptionsMultiaxe& options, const std::vector<double>& reductions,
-                                const std::vector<int>& cotes, bool avec_peau = true) {
+                                const OptionsMultiaxe& options, std::vector<double>& reductions,
+                                std::vector<int>& cotes, bool avec_peau = true, bool planifier = false) {
     Reglages reglages = reglages_demandes;
     reglages.impression.peau_courbe = reglages.impression.peau_courbe && avec_peau;
     if (strategie.parties.empty()) {
@@ -1078,6 +1267,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             reglages_courbe.jupe_boucles = 0;
             reglages_courbe.hauteur_premiere_couche = r.hauteur_couche;
             t.couches = calculer_trajectoires(contours, reglages_courbe);
+            peau_des_couches_courbes(t.cartes, t.couches, r.largeur_extrusion);
             t.origine = t.cartes.front().origine, t.u = t.cartes.front().u;
             t.v = t.cartes.front().v, t.w = t.cartes.front().w;
             nombre_couches += t.couches.size();
@@ -1146,6 +1336,8 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         }
         // Pour chaque couche du tronc : la zone des branches à cette hauteur.
         std::vector<Polygones> zones_branches;
+        // Et l'intérieur du modèle, à plus d'une épaisseur de parois de sa vraie surface.
+        std::vector<Polygones> coeurs;
         if (partie.tronc_lisse && courbes) {
             // Seul le tronc est imprimé ici : la zone des branches est retirée
             // de chaque couche (et les éclats plus fins qu'un demi-cordon).
@@ -1160,6 +1352,8 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                 if (zones_branches[c].empty()) {
                     continue;
                 }
+                coeurs.resize(coupe.couches.size());
+                coeurs[c] = decaler(coupe.couches[c], -(parois + 0.3 * r.largeur_extrusion));
                 const Polygones reste = soustraire(coupe.couches[c], zones_branches[c]);
                 const Polygones tronc =
                     decaler(decaler(reste, -0.25 * r.largeur_extrusion), 0.25 * r.largeur_extrusion);
@@ -1180,18 +1374,102 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         t.couches = calculer_trajectoires(coupe.couches, reglages_partie);
         // Surface à nu : les morceaux de paroi qui tombent dans la zone d'une
         // branche sont retirés. Il reste le remplissage, apparent.
+        std::unordered_map<const CoucheCourbe*, Polygones> contours_elargis, contours_etroits;
         for (std::size_t c = 0; c < t.couches.size() && c < zones_branches.size(); ++c) {
             const Polygones& zone = zones_branches[c];
             if (zone.empty()) {
                 continue;
             }
-            const auto dans_la_zone = [&](const Point2& q) {
+            // Une paroi n'est retirée que là où une couche de la branche la
+            // recouvrira vraiment : le point est dans la zone de la branche,
+            // et il tombe dans le contour de la couche courbe qui passe à cet
+            // endroit. Partout ailleurs la paroi reste : le tronc garde sa
+            // peau jusqu'au ras de la branche.
+            const auto dans = [](const Polygones& polygones, const Point2& q) {
                 int dedans = 0;
-                for (const Contour& contour : zone) {
+                for (const Contour& contour : polygones) {
                     dedans += Clipper2Lib::PointInPolygon(en_unites(q), contour) !=
                               Clipper2Lib::PointInPolygonResult::IsOutside;
                 }
                 return dedans % 2 == 1;
+            };
+            const double z_cordon = t.couches[c].z - 0.5 * t.couches[c].hauteur;
+            const auto dans_la_zone = [&](const Point2& q) {
+                if (!dans(zone, q)) {
+                    return false;
+                }
+                const Vec3 ici{q.x, q.y, z_cordon};
+                double longueur = 0.0;
+                const int tige = plan.analyse.tige_en(ici);
+                bool connue = plan.analyse.champ.valeur(ici, longueur);
+                if (!connue) {
+                    // Tout au bord de la matière : la valeur du cube connu le plus proche.
+                    const ChampCouches& ch = plan.analyse.champ;
+                    const int i0 = static_cast<int>(std::floor((ici.x - ch.origine.x) / ch.pas));
+                    const int j0 = static_cast<int>(std::floor((ici.y - ch.origine.y) / ch.pas));
+                    const int k0 = static_cast<int>(std::floor((ici.z - ch.origine.z) / ch.pas));
+                    double plus_pres = std::numeric_limits<double>::max();
+                    for (int dk = -1; dk <= 1; ++dk) {
+                        for (int dj = -1; dj <= 1; ++dj) {
+                            for (int di = -1; di <= 1; ++di) {
+                                if (!ch.defini(i0 + di, j0 + dj, k0 + dk)) {
+                                    continue;
+                                }
+                                const Vec3 centre = ch.origine + Vec3{(i0 + di + 0.5) * ch.pas, (j0 + dj + 0.5) * ch.pas,
+                                                                      (k0 + dk + 0.5) * ch.pas};
+                                const double d = norme(centre - ici);
+                                if (d < plus_pres) {
+                                    plus_pres = d;
+                                    longueur = ch.valeurs[ch.indice(i0 + di, j0 + dj, k0 + dk)];
+                                    connue = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (tige < 0 || !connue) {
+                    // Sur la vraie surface du modèle, la paroi reste. En
+                    // dedans, elle longe le petit jeu laissé entre le tronc
+                    // et la branche : elle est retirée.
+                    return dans(coeurs[c], q);
+                }
+                // Juste sous la surface du tronc : c'est la première couche
+                // de la branche qui passera au-dessus, si elle vient jusqu'ici.
+                // (Là, seul un cordon qui passe vraiment au-dessus compte.)
+                const bool dessous = longueur <= 0.0;
+                longueur = std::max(longueur, 1e-6);
+                for (const CoucheCourbe& carte : plan.tiges[static_cast<std::size_t>(tige)]) {
+                    const double haut = plan.dessus[carte.niveau];
+                    // La couche qui passe ici, et ses deux voisines (le cordon a une épaisseur).
+                    const double e = plan.epaisseurs[carte.niveau];
+                    if (longueur > haut + e || longueur <= haut - 2.0 * e) {
+                        continue;
+                    }
+                    const Vec3 d = ici - carte.origine;
+                    const Point2 sur_carte{produit_scalaire(d, carte.u), produit_scalaire(d, carte.v)};
+                    if (dessous) {
+                        auto etroit = contours_etroits.find(&carte);
+                        if (etroit == contours_etroits.end()) {
+                            const Polygones imprimable = decaler(carte.contour, -0.5 * r.largeur_extrusion);
+                            etroit = contours_etroits.emplace(&carte, decaler_arrondi(imprimable, 0.45 * r.largeur_extrusion)).first;
+                        }
+                        if (dans(etroit->second, sur_carte)) {
+                            return true;
+                        }
+                        continue;
+                    }
+                    auto elargi = contours_elargis.find(&carte);
+                    if (elargi == contours_elargis.end()) {
+                        // Là où la couche est trop étroite pour recevoir un
+                        // cordon, elle ne recouvre rien : le tronc garde sa paroi.
+                        const Polygones imprimable = decaler(carte.contour, -0.5 * r.largeur_extrusion);
+                        elargi = contours_elargis.emplace(&carte, decaler_arrondi(imprimable, 0.9 * r.largeur_extrusion)).first;
+                    }
+                    if (dans(elargi->second, sur_carte)) {
+                        return true;
+                    }
+                }
+                return false;
             };
             std::vector<Trait> gardes;
             for (Trait& trait : t.couches[c].traits) {
@@ -1308,8 +1586,8 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         tranchees.push_back(std::move(t));
     }
 
-    EcrivainCinqAxes ecrivain(reglages, hauteur_sure, options);
-    ecrire_entete(ecrivain, r, nombre_couches);
+    auto ecrivain_courant = std::make_unique<EcrivainCinqAxes>(reglages, hauteur_sure, options);
+    ecrire_entete(*ecrivain_courant, r, nombre_couches);
     // Ordre d'impression. D'ordinaire, une partie après l'autre. En couches
     // courbes, tout monte ensemble : la couche k de chaque partie, puis la
     // couche k + 1, comme dans une impression classique.
@@ -1326,24 +1604,24 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             passes.push_back({niveau, p, c});
         }
     }
-    std::size_t numero = 0;
-    std::size_t en_cours = tranchees.size();  // partie en cours d'impression (aucune)
-    for (const Passe& passe : passes) {
+    // Écrit une passe (une couche d'une partie). « changement » : la tête
+    // arrive sur cette partie. « cote » et « inclinaison » : le côté vers
+    // lequel la tête penche et son inclinaison maximale pour cette partie.
+    const auto ecrire_passe = [&](EcrivainCinqAxes& ecrivain, const Passe& passe, bool changement, int cote,
+                                  double inclinaison, std::size_t& numero) {
         const std::size_t p = passe.partie, c = passe.couche;
         PartieTranchee& t = tranchees[p];
         CoucheTrajectoires& couche = t.couches[c];
-        const bool changement = en_cours != p;
         if (changement) {
-            en_cours = p;
             // La partie est reprise là où elle en est : avec la carte de sa couche.
             const Vec3 origine = t.cartes.empty() ? t.origine : t.cartes[c].origine;
             const Vec3 u = t.cartes.empty() ? t.u : t.cartes[c].u;
             const Vec3 v = t.cartes.empty() ? t.v : t.cartes[c].v;
             const Vec3 w = t.cartes.empty() ? t.w : t.cartes[c].w;
             ecrivain.ligne(std::format(";PARTIE:{} direction {:.4f} {:.4f} {:.4f}", p + 1, w.x, w.y, w.z));
-            ecrivain.partie(origine, u, v, w, t.cote, static_cast<int>(p));
+            ecrivain.partie(origine, u, v, w, cote, static_cast<int>(p));
             if (!t.cartes.empty()) {
-                ecrivain.limiter_inclinaison(std::max(10.0, t.inclinaison_outil_max));
+                ecrivain.limiter_inclinaison(std::max(10.0, inclinaison));
             }
             ecrivain.epaisseur_fixe();
             ecrivain.pivoter_entre_les_couches();
@@ -1370,7 +1648,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                 return false;
             });
             if (couche.traits.empty()) {
-                continue;
+                return;
             }
             ecrivain.ligne(";PEAU COURBE");
             // Un peu plus de matière que l'épaisseur nominale : la peau comble
@@ -1412,8 +1690,36 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                 throw ErreurTranchage(std::format(
                     "Des trajectoires de la partie {} sortent de la surface de leur couche courbe.", p + 1));
             }
+            // Les petits bouts de cordon qui chevaucheraient de la matière déjà posée ne sont pas imprimés.
+            std::vector<Vec3> boules;
+            for (const OptionsMultiaxe::Retrait& retrait : options.retraits) {
+                if (retrait.couche == numero) {
+                    boules.push_back(retrait.centre);
+                }
+            }
+            if (!boules.empty()) {
+                std::vector<Trait> gardes;
+                for (const Trait& trait : couche.traits) {
+                    double h = 0.0;
+                    for (Trait& morceau : sans_les_points(
+                             trait,
+                             [&](const Point2& q) {
+                                 Vec3 ici;
+                                 if (!poser_sur_la_surface(champ, carte, q, dessus[carte.niveau], h, ici)) {
+                                     return false;
+                                 }
+                                 return std::any_of(boules.begin(), boules.end(), [&](const Vec3& centre) {
+                                     return norme(ici - centre) < options.rayon_retrait;
+                                 });
+                             },
+                             r.largeur_extrusion)) {
+                        gardes.push_back(std::move(morceau));
+                    }
+                }
+                couche.traits = std::move(gardes);
+            }
             if (couche.traits.empty()) {
-                continue;
+                return;
             }
             surface = std::make_unique<SurfaceChamp>(champ, carte, dessus[carte.niveau]);
             ecrivain.couche_courbe(*surface, epaisseurs[carte.niveau], hauteur_trajet + 0.5, z_min);
@@ -1462,7 +1768,105 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
             debut_groupe = fin_groupe;
         }
         ecrivain.quitter_la_surface();
+        };
+    // Déplacements stratégiques. Avec la vraie forme de la machine, chaque
+    // branche est essayée « à blanc » avant d'être écrite, dans plusieurs
+    // positions : la tête penchée du côté le plus proche, puis de l'autre
+    // côté (le plateau fait demi-tour), puis moins inclinée, de 10° en 10°.
+    // Chaque essai est contrôlé aussitôt contre la machine et la matière
+    // déjà imprimée ; la première position qui ne touche rien est gardée.
+    planifier = planifier && courbes && !reglages.machine.modele_machine.empty();
+    std::optional<VerificationSuivie> suivi;
+    if (planifier) {
+        suivi.emplace(reglages);
     }
+    std::size_t lu = 0;  // longueur du G-code déjà vérifié
+    std::size_t numero = 0;
+    for (std::size_t debut = 0; debut < passes.size();) {
+        std::size_t fin = debut;
+        while (fin < passes.size() && passes[fin].partie == passes[debut].partie) {
+            ++fin;
+        }
+        const std::size_t p = passes[debut].partie;
+        const PartieTranchee& t = tranchees[p];
+        const auto ecrire_la_partie = [&](EcrivainCinqAxes& ecrivain, int cote, double inclinaison, std::size_t& n) {
+            for (std::size_t i = debut; i < fin; ++i) {
+                ecrire_passe(ecrivain, passes[i], i == debut, cote, inclinaison, n);
+            }
+        };
+        if (!planifier || t.cartes.empty()) {
+            ecrire_la_partie(*ecrivain_courant, t.cote, t.inclinaison_outil_max, numero);
+            if (suivi) {
+                suivi->lire(std::string_view(ecrivain_courant->gcode()).substr(lu));
+                lu = ecrivain_courant->gcode().size();
+            }
+            debut = fin;
+            continue;
+        }
+        struct Essai {
+            std::unique_ptr<EcrivainCinqAxes> ecrivain;
+            std::size_t numero = 0;
+            int cote = 0;
+            double reduction = 0.0;
+            bool arrete = false;       // la vérification a été arrêtée avant la fin
+            std::size_t fautes = 0;    // nombre d'erreurs (si elle est allée au bout)
+            std::size_t lignes = 0;    // lignes lues sans encombre (si elle a été arrêtée)
+        };
+        std::optional<Essai> meilleur;
+        std::optional<VerificationSuivie> suivi_du_meilleur;
+        std::string derniere_erreur;
+        const double inclinaison_de_base = strategie.parties[p].inclinaison_outil_max;
+        for (int etape = 0; etape <= options.redressements; ++etape) {
+            Essai essai;
+            essai.cote = etape == 0 ? t.cote : etape % 2 == 1 ? 1 : -1;
+            essai.reduction = etape == 0 ? 0.0 : 10.0 * ((etape - 1) / 2);
+            essai.numero = numero;
+            essai.ecrivain = std::make_unique<EcrivainCinqAxes>(*ecrivain_courant);
+            try {
+                ecrire_la_partie(*essai.ecrivain, essai.cote, inclinaison_de_base - essai.reduction, essai.numero);
+            } catch (const ErreurTranchage& erreur) {
+                derniere_erreur = erreur.what();
+                continue;
+            }
+            VerificationSuivie verification(*suivi);
+            const std::size_t avant = verification.erreurs();
+            // Au-delà de quelques fautes, inutile d'aller au bout : cet essai est mauvais.
+            const std::size_t tolerees = 3;
+            essai.lignes = verification.lire(std::string_view(essai.ecrivain->gcode()).substr(lu), avant + tolerees);
+            essai.arrete = verification.erreurs() > avant + tolerees;
+            essai.fautes = verification.erreurs() - avant;
+            const bool mieux = !meilleur || (essai.arrete != meilleur->arrete ? !essai.arrete
+                                             : essai.arrete ? essai.lignes > meilleur->lignes
+                                                            : essai.fautes < meilleur->fautes);
+            const bool parfait = !essai.arrete && essai.fautes == 0;
+            if (mieux) {
+                meilleur = std::move(essai);
+                suivi_du_meilleur.emplace(std::move(verification));
+            }
+            if (parfait) {
+                break;
+            }
+        }
+        if (!meilleur) {
+            throw ErreurTranchage(derniere_erreur.empty() ? "Une branche n'a pas pu être écrite." : derniere_erreur);
+        }
+        if (meilleur->arrete) {
+            // Aucune position n'est bonne : la moins mauvaise est gardée, et
+            // vérifiée jusqu'au bout pour que le rapport dise tout.
+            suivi_du_meilleur.emplace(*suivi);
+            suivi_du_meilleur->lire(std::string_view(meilleur->ecrivain->gcode()).substr(lu));
+        }
+        ecrivain_courant = std::move(meilleur->ecrivain);
+        suivi.emplace(std::move(*suivi_du_meilleur));
+        numero = meilleur->numero;
+        lu = ecrivain_courant->gcode().size();
+        if (p < cotes.size() && p < reductions.size()) {
+            cotes[p] = meilleur->cote;
+            reductions[p] = meilleur->reduction;
+        }
+        debut = fin;
+    }
+    EcrivainCinqAxes& ecrivain = *ecrivain_courant;
     ecrire_fin(ecrivain, r);
 
     ResultatTranchage resultat;
@@ -1471,7 +1875,12 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
     resultat.duree_estimee = ecrivain.duree();
     resultat.apercu = ecrivain.prendre_apercu();
     resultat.gcode = ecrivain.prendre_gcode();
-    resultat.verification = verifier_gcode_texte(resultat.gcode, reglages);
+    if (suivi) {
+        suivi->lire(std::string_view(resultat.gcode).substr(lu));
+        resultat.verification = suivi->terminer();
+    } else {
+        resultat.verification = verifier_gcode_texte(resultat.gcode, reglages);
+    }
     return resultat;
 }
 
@@ -1496,7 +1905,7 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
                                      const OptionsMultiaxe& options) {
     std::vector<double> reductions(strategie.parties.size(), 0.0);
     std::vector<int> cotes(strategie.parties.size(), 0), etapes(strategie.parties.size(), 0);
-    ResultatTranchage resultat = trancher_avec(strategie, reglages, options, reductions, cotes);
+    ResultatTranchage resultat = trancher_avec(strategie, reglages, options, reductions, cotes, true, true);
     const auto contact = [](TypeErreur type) {
         return type == TypeErreur::collision_matiere || type == TypeErreur::collision_plateau ||
                type == TypeErreur::collision_machine || type == TypeErreur::limite_b;
@@ -1510,7 +1919,9 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     // slicer y renonce : le dessus est imprimé en couches planes, et il le dit.
     const bool sans_peau = reglages.impression.peau_courbe && touche(resultat.verification);
     if (sans_peau) {
-        resultat = trancher_avec(strategie, reglages, options, reductions, cotes, false);
+        std::fill(reductions.begin(), reductions.end(), 0.0);
+        std::fill(cotes.begin(), cotes.end(), 0);
+        resultat = trancher_avec(strategie, reglages, options, reductions, cotes, false, true);
         resultat.remarques.push_back(
             "La peau courbe a été abandonnée pour cette pièce : pendant cette passe, la tête aurait "
             "touché la pièce ou la machine. Le dessus est imprimé en couches planes.");
@@ -1522,7 +1933,11 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     // gardent la même forme ; seule l'orientation de la buse change.
     const bool courbes = std::any_of(strategie.parties.begin(), strategie.parties.end(),
                                      [](const PartieImpression& p) { return p.couches_courbes; });
-    for (int essai = 1; courbes && essai <= options.redressements && touche(resultat.verification); ++essai) {
+    // (Avec la vraie forme de la machine, ce choix est déjà fait branche par
+    // branche pendant l'écriture : voir « déplacements stratégiques ».)
+    const bool deja_planifie = !reglages.machine.modele_machine.empty();
+    for (int essai = 1;
+         courbes && !deja_planifie && essai <= options.redressements && touche(resultat.verification); ++essai) {
         // À quelle partie appartient chaque ligne du G-code.
         std::vector<std::size_t> debuts;  // ligne où commence chaque passage sur une partie
         std::vector<std::size_t> parties;
@@ -1583,6 +1998,76 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
             reductions = reductions_avant;
             cotes = cotes_avant;
         }
+    }
+    // Réparation des petits chevauchements. S'il ne reste que quelques
+    // endroits où un cordon de branche chevauche de la matière déjà posée
+    // (au ras du pied d'une branche, le plus souvent), ces petits bouts de
+    // cordon ne sont pas imprimés : la matière y est déjà.
+    OptionsMultiaxe options_reparees = options;
+    for (int tour = 0; tour < 3 && courbes && !resultat.verification.valide(); ++tour) {
+        const RapportVerification& v = resultat.verification;
+        const bool chevauchements = std::all_of(v.erreurs.begin(), v.erreurs.end(), [](const ErreurVerification& e) {
+            return e.type == TypeErreur::dans_matiere || e.type == TypeErreur::sous_matiere;
+        });
+        if (!chevauchements || v.nombre_erreurs > 6 || v.erreurs.size() != v.nombre_erreurs) {
+            break;
+        }
+        // Le numéro de couche de chaque ligne du G-code.
+        std::vector<std::size_t> lignes_des_couches, numeros_des_couches;
+        {
+            std::size_t numero = 0, debut = 0;
+            const std::string& g = resultat.gcode;
+            while (debut < g.size()) {
+                ++numero;
+                std::size_t fin = g.find('\n', debut);
+                if (fin == std::string::npos) {
+                    fin = g.size();
+                }
+                if (g.compare(debut, 8, ";COUCHE:") == 0) {
+                    lignes_des_couches.push_back(numero);
+                    numeros_des_couches.push_back(static_cast<std::size_t>(std::stoul(g.substr(debut + 8, 9))));
+                }
+                debut = fin + 1;
+            }
+        }
+        const std::size_t avant = options_reparees.retraits.size();
+        for (const ErreurVerification& e : v.erreurs) {
+            const auto apres = std::upper_bound(lignes_des_couches.begin(), lignes_des_couches.end(),
+                                                static_cast<std::size_t>(e.ligne));
+            if (apres == lignes_des_couches.begin()) {
+                continue;
+            }
+            PositionMachine position = e.position;
+            position.b -= reglages.machine.b_vertical;  // (l'erreur donne la valeur de B du G-code)
+            OptionsMultiaxe::Retrait retrait;
+            retrait.couche = numeros_des_couches[static_cast<std::size_t>(apres - lignes_des_couches.begin()) - 1];
+            retrait.centre = pose_dans_piece(reglages.machine, position).pointe;
+            options_reparees.retraits.push_back(retrait);
+        }
+        if (options_reparees.retraits.size() == avant) {
+            break;
+        }
+        std::vector<double> reductions_essai(strategie.parties.size(), 0.0);
+        std::vector<int> cotes_essai(strategie.parties.size(), 0);
+        if (!deja_planifie) {
+            reductions_essai = reductions;
+            cotes_essai = cotes;
+        }
+        ResultatTranchage repare =
+            trancher_avec(strategie, reglages, options_reparees, reductions_essai, cotes_essai, !sans_peau, true);
+        if (repare.verification.nombre_erreurs >= resultat.verification.nombre_erreurs) {
+            break;
+        }
+        repare.remarques = resultat.remarques;
+        resultat = std::move(repare);
+        reductions = reductions_essai;
+        cotes = cotes_essai;
+    }
+    if (resultat.verification.valide() && !options_reparees.retraits.empty()) {
+        resultat.remarques.push_back(std::format(
+            "{} petit(s) bout(s) de cordon (environ {:.0f} mm chacun) n'ont pas été imprimés au ras d'une "
+            "branche : ils auraient chevauché de la matière déjà posée.",
+            options_reparees.retraits.size(), 2.0 * options_reparees.rayon_retrait));
     }
     if (resultat.verification.valide()) {
         for (std::size_t p = 0; p < reductions.size(); ++p) {

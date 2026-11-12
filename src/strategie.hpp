@@ -80,6 +80,11 @@ struct OptionsStrategie {
     // pivotent le long de la courbe. Faux : elle est partagée en tronçons
     // droits, chacun avec sa direction fixe.
     bool couches_pivotantes = true;
+    // Faux (d'ordinaire) : seules deux stratégies sont proposées, la
+    // classique (3 axes) et les couches courbes (5 axes continu). Vrai : les
+    // anciennes stratégies à couches orientées (« autre pose », « par
+    // branches ») sont proposées aussi ; elles ne servent plus qu'aux essais.
+    bool couches_orientees = false;
 };
 
 // Surface (mm²) des faces du maillage qui seraient imprimées dans le vide en
