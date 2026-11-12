@@ -150,7 +150,7 @@ function brancherChoixPrevus() {
 // Sous-groupes de la feuille « Réglages de la machine ».
 const FAMILLES_MACHINE = [
   ['Volume d\'impression', ['rayon_plateau', 'hauteur_impression', 'centre_plateau_x', 'centre_plateau_y']],
-  ['Tête inclinable (axe B)', ['distance_pivot_buse', 'axe_pivot_b', 'sens_b', 'b_min', 'b_max', 'b_limite_pres_plateau', 'hauteur_bascule_b']],
+  ['Tête inclinable (axe B)', ['distance_pivot_buse', 'axe_pivot_b', 'sens_b', 'b_vertical', 'b_min', 'b_max', 'b_limite_pres_plateau', 'hauteur_bascule_b']],
   ['Plateau rotatif (axe C)', ['sens_c', 'c_min', 'c_max']],
   ['Courses des axes', ['course_x_min', 'course_x_max', 'course_y_min', 'course_y_max', 'course_z_min', 'course_z_max']],
   ['Collisions', ['modele_machine', 'marge_securite', 'zone_buse', 'marge_buse']],

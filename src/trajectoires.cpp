@@ -48,14 +48,22 @@ Trait boucle(const Contour& contour, TypeTrait type) {
 }
 
 // Ajoute les boucles d'un niveau de paroi, en simplifiant les points inutiles.
+// « largeur_cordon » (facultatif) : une boucle écrasée, dont les deux côtés
+// sont à moins d'une demi-largeur l'un de l'autre, est laissée de côté ; le
+// cordon s'y recouvrirait lui-même.
 void ajouter_boucles(std::vector<Trait>& traits, const Polygones& contours, TypeTrait type,
-                     double longueur_minimale) {
+                     double longueur_minimale, double largeur_cordon = 0.0) {
     for (const Contour& contour :
          Clipper2Lib::SimplifyPaths(contours, 0.002 * unites_par_mm)) {
-        if (contour.size() >= 3 &&
-            Clipper2Lib::Length(contour, true) / unites_par_mm >= longueur_minimale) {
-            traits.push_back(boucle(contour, type));
+        if (contour.size() < 3 ||
+            Clipper2Lib::Length(contour, true) / unites_par_mm < longueur_minimale) {
+            continue;
         }
+        if (largeur_cordon > 0.0 && Clipper2Lib::IsPositive(contour) &&
+            decaler({contour}, -0.25 * largeur_cordon).empty()) {
+            continue;
+        }
+        traits.push_back(boucle(contour, type));
     }
 }
 
@@ -267,7 +275,7 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
         for (int i = r.nombre_parois - 1; i >= 0; --i) {
             ajouter_boucles(couche.traits, decaler(matiere, -(0.5 + i) * largeur),
                             i == 0 ? TypeTrait::paroi_externe : TypeTrait::paroi_interne,
-                            2.0 * largeur);
+                            2.0 * largeur, largeur);
         }
 
         // Intérieur : ce qui reste une fois les parois posées.
@@ -297,11 +305,15 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
              lignes_de_remplissage(decaler(plein, -retrait_lignes), largeur, angle)) {
             couche.traits.push_back({TypeTrait::remplissage_plein, std::move(points), false});
         }
-        // Remplissage intérieur : lignes espacées selon la densité.
+        // Remplissage intérieur : lignes espacées selon la densité. Elles
+        // s'arrêtent à une demi-largeur de la zone pleine : sinon leurs
+        // liaisons longeraient le bout des lignes pleines en les recouvrant
+        // de moitié (matière déposée deux fois).
         if (r.densite_remplissage > 0.001) {
             const double espacement = largeur * 100.0 / r.densite_remplissage;
-            for (auto& points :
-                 lignes_de_remplissage(decaler(creux, -retrait_lignes), espacement, angle)) {
+            const Polygones zone_creuse =
+                soustraire(decaler(creux, -retrait_lignes), decaler(plein, 0.5 * largeur));
+            for (auto& points : lignes_de_remplissage(zone_creuse, espacement, angle)) {
                 couche.traits.push_back({TypeTrait::remplissage, std::move(points), false});
             }
         }

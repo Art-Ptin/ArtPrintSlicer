@@ -253,10 +253,14 @@ std::vector<DescriptionReglage> construire() {
             "Limite de l'axe dans les coordonnées du G-code. Vide : non vérifiée."},
             -10000.0, 10000.0));
     }
+    d.push_back(nombre(M, &RM::b_vertical, {"b_vertical", machine,
+        "Valeur de B quand la buse est verticale", "°",
+        "Angle écrit dans le G-code pour une buse verticale (0 sur la plupart des machines)."},
+        -360.0, 360.0));
     d.push_back(nombre(M, &RM::b_min, {"b_min", machine, "Butée basse de B", "°",
-        "Plus petite valeur de l'axe B."}, -180.0, 180.0));
+        "Inclinaison la plus négative de la tête, comptée depuis la verticale."}, -180.0, 180.0));
     d.push_back(nombre(M, &RM::b_max, {"b_max", machine, "Butée haute de B", "°",
-        "Plus grande valeur de l'axe B."}, -180.0, 180.0));
+        "Inclinaison la plus positive de la tête, comptée depuis la verticale."}, -180.0, 180.0));
     d.push_back(nombre(M, &RM::b_limite_pres_plateau, {"b_limite_pres_plateau", machine,
         "Inclinaison maximale près du plateau", "°",
         "Limite de B sous la hauteur de bascule."}, 0.0, 180.0));

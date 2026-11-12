@@ -54,6 +54,11 @@ PoseOutil pose_dans_piece(const ReglagesMachine& machine, const PositionMachine&
 std::optional<PositionMachine> position_machine(const ReglagesMachine& machine,
                                                 const PoseOutil& pose, double c_precedent);
 
+// Position des axes qui amène la pointe de la buse à cet endroit de la pièce
+// quand B et C sont déjà choisis (par exemple au milieu d'une rotation).
+PositionMachine position_avec_angles(const ReglagesMachine& machine, const Vec3& pointe,
+                                     double b, double c);
+
 // Ramène un angle C à la valeur équivalente (à 360° près) la plus proche de
 // « reference ». Exemple : -170 près de 170 donne 190.
 double angle_le_plus_proche(double angle, double reference);

@@ -39,3 +39,9 @@ add_executable(test_collisions
     test_collisions.cpp)
 target_link_libraries(test_collisions PRIVATE artprint_core)
 add_test(NAME collisions COMMAND test_collisions)
+
+# 5 axes : découpe par plan, squelette, stratégies, G-code multi-directions vérifié.
+add_executable(test_strategie
+    test_strategie.cpp)
+target_link_libraries(test_strategie PRIVATE artprint_core)
+add_test(NAME strategie COMMAND test_strategie)

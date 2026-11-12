@@ -97,11 +97,16 @@ std::optional<PositionMachine> position_machine(const ReglagesMachine& machine,
         return std::nullopt;
     }
 
-    const double longueur = distance_pivot(machine, meilleur->b);
-    const double angle = en_radians(meilleur->c) * machine.sens_c;
-    const Vec3 pointe = tourner_autour_de_z(pose.pointe, angle) + centre_plateau(machine);
-    const Vec3 pivot = pointe + direction_machine(machine, meilleur->b) * longueur;
-    return PositionMachine{pivot.x, pivot.y, pivot.z - longueur, meilleur->b, meilleur->c};
+    return position_avec_angles(machine, pose.pointe, meilleur->b, meilleur->c);
+}
+
+PositionMachine position_avec_angles(const ReglagesMachine& machine, const Vec3& pointe_piece,
+                                     double b, double c) {
+    const double longueur = distance_pivot(machine, b);
+    const double angle = en_radians(c) * machine.sens_c;
+    const Vec3 pointe = tourner_autour_de_z(pointe_piece, angle) + centre_plateau(machine);
+    const Vec3 pivot = pointe + direction_machine(machine, b) * longueur;
+    return PositionMachine{pivot.x, pivot.y, pivot.z - longueur, b, c};
 }
 
 }  // namespace artprint

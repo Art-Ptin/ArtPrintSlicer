@@ -43,6 +43,10 @@ struct ReglagesMachine {
     std::optional<double> course_z_min, course_z_max;
 
     // Butées de l'axe B, en degrés.
+    // Valeur de B, dans le G-code, quand la buse est verticale. Les butées et
+    // les limites de B ci-dessous sont des inclinaisons comptées depuis cette
+    // position verticale.
+    double b_vertical = 0.0;
     double b_min = -90.0;
     double b_max = 90.0;
     // Inclinaison maximale près du plateau, en degrés.

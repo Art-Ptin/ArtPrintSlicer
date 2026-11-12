@@ -14,7 +14,11 @@ add_library(artprint_core
     api.cpp
     machine.cpp
     champ_distance.cpp
-    collisions.cpp)
+    collisions.cpp
+    decoupe.cpp
+    squelette.cpp
+    strategie.cpp
+    multiaxe.cpp)
 target_include_directories(artprint_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(artprint_core PUBLIC Clipper2 nlohmann_json::nlohmann_json)
 

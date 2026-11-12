@@ -116,8 +116,11 @@ private:
         if (++compte_par_type_[type] > verif_.erreurs_max_par_type) {
             return;
         }
+        // La position est rendue comme la machine l'affiche (valeur de B du G-code).
+        PositionMachine affichee = position;
+        affichee.b += machine_.b_vertical;
         rapport_.erreurs.push_back(
-            {type, ligne_, texte_ligne_, position, std::move(probleme), std::move(solution)});
+            {type, ligne_, texte_ligne_, affichee, std::move(probleme), std::move(solution)});
     }
 
     void traiter_g(const LigneGcode& ligne) {
@@ -163,7 +166,7 @@ private:
         if (const auto v = ligne.parametre('X')) position_.x = *v;
         if (const auto v = ligne.parametre('Y')) position_.y = *v;
         if (const auto v = ligne.parametre('Z')) position_.z = *v;
-        if (const auto v = ligne.parametre('B')) position_.b = *v;
+        if (const auto v = ligne.parametre('B')) position_.b = *v - machine_.b_vertical;
         if (const auto v = ligne.parametre('C')) position_.c = *v;
         if (const auto v = ligne.parametre('E')) e_ = *v;
     }
@@ -180,7 +183,10 @@ private:
         lire_axe('X', cible.x);
         lire_axe('Y', cible.y);
         lire_axe('Z', cible.z);
-        lire_axe('B', cible.b);
+        // En interne, B est l'inclinaison de la tête comptée depuis la verticale.
+        if (const auto v = ligne.parametre('B')) {
+            cible.b = absolu_ ? *v - machine_.b_vertical : cible.b + *v;
+        }
         lire_axe('C', cible.c);
 
         double delta_e = 0.0;

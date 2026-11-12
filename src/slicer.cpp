@@ -8,6 +8,7 @@
 #include <numbers>
 #include <vector>
 
+#include "ecriture_gcode.hpp"
 #include "tranchage.hpp"
 #include "trajectoires.hpp"
 #include "version.hpp"
@@ -67,8 +68,9 @@ public:
         }
         if (!place_) {
             // Premier déplacement : tous les axes sont écrits.
-            ligne(std::format("G0 X{:.3f} Y{:.3f} Z{:.3f} B0 C0 F{:.0f}", x_machine(p),
-                              y_machine(p), z_trajet, vitesse));
+            // Buse verticale : B prend la valeur « verticale » de la machine.
+            ligne(std::format("G0 X{:.3f} Y{:.3f} Z{:.3f} B{} C0 F{:.0f}", x_machine(p),
+                              y_machine(p), z_trajet, machine_.b_vertical, vitesse));
         } else {
             ligne(std::format("G0 X{:.3f} Y{:.3f} F{:.0f}", x_machine(p), y_machine(p), vitesse));
             duree_ += distance(position_, p) / r_.vitesse_a_vide;
@@ -151,65 +153,6 @@ private:
     std::uint8_t type_ = 0;
     std::vector<CoucheApercu> apercu_;
 };
-
-double vitesse_du_type(const ReglagesImpression& r, TypeTrait type, bool premiere_couche) {
-    if (premiere_couche) {
-        return r.vitesse_premiere_couche;
-    }
-    switch (type) {
-        case TypeTrait::paroi_externe:
-            return r.vitesse_paroi_externe;
-        case TypeTrait::paroi_interne:
-        case TypeTrait::jupe:
-            return r.vitesse_paroi_interne;
-        case TypeTrait::remplissage_plein:
-        case TypeTrait::remplissage:
-            return r.vitesse_remplissage;
-    }
-    return r.vitesse_paroi_interne;
-}
-
-// Imprime les traits [debut, fin) d'un même type, en choisissant chaque fois
-// le plus proche de la buse pour limiter les déplacements à vide.
-void ecrire_groupe(EcrivainGcode& ecrivain, std::vector<Trait>& traits, std::size_t debut,
-                   std::size_t fin, double vitesse) {
-    std::vector<bool> fait(fin - debut, false);
-    for (std::size_t reste = fin - debut; reste > 0; --reste) {
-        std::size_t choisi = 0;
-        bool a_l_envers = false;
-        double meilleure = std::numeric_limits<double>::max();
-        for (std::size_t i = debut; i < fin; ++i) {
-            if (fait[i - debut]) {
-                continue;
-            }
-            const Trait& trait = traits[i];
-            const double d_debut =
-                ecrivain.place() ? distance(ecrivain.position(), trait.points.front()) : 0.0;
-            if (d_debut < meilleure) {
-                meilleure = d_debut, choisi = i, a_l_envers = false;
-            }
-            // Un trait ouvert peut être parcouru dans les deux sens.
-            if (!trait.ferme && ecrivain.place()) {
-                const double d_fin = distance(ecrivain.position(), trait.points.back());
-                if (d_fin < meilleure) {
-                    meilleure = d_fin, choisi = i, a_l_envers = true;
-                }
-            }
-        }
-        fait[choisi - debut] = true;
-        Trait& trait = traits[choisi];
-        if (a_l_envers) {
-            std::reverse(trait.points.begin(), trait.points.end());
-        }
-        ecrivain.aller_a(trait.points.front());
-        for (std::size_t i = 1; i < trait.points.size(); ++i) {
-            ecrivain.extruder_vers(trait.points[i], vitesse);
-        }
-        if (trait.ferme) {
-            ecrivain.extruder_vers(trait.points.front(), vitesse);
-        }
-    }
-}
 
 }  // namespace
 
@@ -299,21 +242,7 @@ ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages) {
     }
 
     EcrivainGcode ecrivain(reglages);
-    ecrivain.ligne(std::format("; Fichier produit par ArtPrint Slicer {}", version()));
-    ecrivain.ligne(std::format("; Couches : {}   Hauteur de couche : {:.2f} mm   Largeur : {:.2f} mm",
-                               couches.size(), r.hauteur_couche, r.largeur_extrusion));
-    ecrivain.ligne("G90 ; positions absolues");
-    ecrivain.ligne("M83 ; extrusion relative");
-    if (r.temperature_plateau > 0.0) {
-        ecrivain.ligne(std::format("M140 S{:.0f} ; chauffe du plateau", r.temperature_plateau));
-    }
-    ecrivain.ligne(std::format("M104 S{:.0f} ; chauffe de la buse", r.temperature_buse));
-    ecrivain.ligne("G28 ; prise d'origine");
-    if (r.temperature_plateau > 0.0) {
-        ecrivain.ligne(std::format("M190 S{:.0f} ; attente du plateau", r.temperature_plateau));
-    }
-    ecrivain.ligne(std::format("M109 S{:.0f} ; attente de la buse", r.temperature_buse));
-    ecrivain.ligne("G92 E0");
+    ecrire_entete(ecrivain, r, couches.size());
 
     for (std::size_t c = 0; c < couches.size(); ++c) {
         CoucheTrajectoires& couche = couches[c];
@@ -341,14 +270,7 @@ ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages) {
         }
     }
 
-    ecrivain.ligne("; Fin de l'impression");
-    ecrivain.degager(10.0);
-    ecrivain.ligne("M107 ; arrêt du ventilateur");
-    ecrivain.ligne("M104 S0 ; arrêt de la chauffe de la buse");
-    if (r.temperature_plateau > 0.0) {
-        ecrivain.ligne("M140 S0 ; arrêt de la chauffe du plateau");
-    }
-    ecrivain.ligne("M84 ; moteurs libres");
+    ecrire_fin(ecrivain, r);
 
     ResultatTranchage resultat;
     resultat.couches = couches.size();
