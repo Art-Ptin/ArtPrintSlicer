@@ -518,7 +518,8 @@ std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele
 
 }  // namespace
 
-PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe) {
+PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe,
+                               const std::vector<Vec3>& a_plat) {
     PlanBranches plan;
     // La matière des tiges qu'on n'a pas su découper : elle est imprimée avec le tronc.
     std::vector<std::uint8_t> avec_le_tronc;
@@ -552,6 +553,14 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
                 pellicules.insert(static_cast<int>(n));
             }
         }
+        // Les branches qu'on a demandé d'imprimer à plat (celles qui
+        // contiennent un des points donnés, si elles sont encore des branches).
+        for (const Vec3& point : a_plat) {
+            const int tige = plan.analyse.tige_en(point);
+            if (tige >= 0) {
+                pellicules.insert(tige);
+            }
+        }
         if (impossibles.empty() && pellicules.empty()) {
             return plan;
         }
@@ -564,7 +573,11 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
         // horizontales. Les tiges qui la portent aussi (elle ne peut pas être
         // imprimée avant elles). Celles qu'elle porte restent des branches :
         // elles seront imprimées contre elle. Puis on recommence.
-        std::set<int> rendues(pellicules.begin(), pellicules.end());
+        std::set<int> rendues;
+        for (const int tige : pellicules) {
+            for (int t = tige; t >= 0 && rendues.insert(t).second; t = plan.analyse.meres[static_cast<std::size_t>(t)]) {
+            }
+        }
         for (const auto& [tige, raison] : impossibles) {
             for (int t = tige; t >= 0 && rendues.insert(t).second; t = plan.analyse.meres[static_cast<std::size_t>(t)]) {
             }

@@ -522,6 +522,22 @@ void test_couches_courbes() {
     const ResultatTranchage resultat = trancher_strategie(*courbes, r);
     VERIFIER_ACCEPTE(resultat.verification);
     VERIFIER(resultat.verification.extrusions_en_rotation > 1000);
+    // Le choix de l'utilisateur : une branche imprimée à plat, avec le tronc.
+    // Il reste alors le tronc et une seule branche en couches courbes, et le
+    // tranchage est toujours accepté (la jonction se refait toute seule).
+    {
+        OptionsStrategie choix;
+        choix.a_plat.push_back(courbes->parties[1].repere);
+        const std::vector<Strategie> avec_choix = proposer_strategies(pose, r, choix);
+        const Strategie* reste = trouver(avec_choix, TypeStrategie::couches_courbes);
+        VERIFIER(reste != nullptr);
+        if (reste) {
+            VERIFIER(reste->parties.size() == 2);
+            const ResultatTranchage a_plat = trancher_strategie(*reste, r);
+            VERIFIER_ACCEPTE(a_plat.verification);
+            VERIFIER(a_plat.verification.extrusions_en_rotation > 500);
+        }
+    }
     // La vérification « au fur et à mesure » trouve la même chose que la
     // vérification d'un seul trait, même si le G-code est donné en deux
     // morceaux ; et une copie prise en route repart bien du même point.

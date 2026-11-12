@@ -12,6 +12,7 @@ const PIECES = [
   { fichier: 'chassis_drone.stl', donnees: 'chassis_drone', nom: 'Châssis de drone', detail: '88 × 88 × 32 mm, quatre bras qui montent' },
   { fichier: 'chandelier.stl', donnees: 'chandelier', nom: 'Chandelier', detail: '51 × 46 × 52 mm, trois bras courbes' },
   { fichier: 'tuyau_en_y.stl', donnees: 'tuyau_en_y', nom: 'Tuyau en Y (creux)', detail: '54 × 16 × 51 mm, deux sorties inclinées' },
+  { fichier: 'w40_banc_d_essai.stl', donnees: 'w40_banc_d_essai', nom: 'Banc d\'essai d\'imprimante', detail: '68 × 44 × 67 mm : éventail de surplombs (30° à 90°), pont, colonne fine et boule, pointe, bras courbe' },
   { fichier: 'v05_etoile.stl', donnees: 'v05_etoile', nom: 'Étoile (six branches au même niveau)', detail: '51 × 45 × 50 mm, modèle d\'essai n° 5' },
   { fichier: 'v08_fourches_en_cascade.stl', donnees: 'v08_fourches_en_cascade', nom: 'Fourches en cascade', detail: '53 × 30 × 63 mm, quatorze branches sur trois niveaux' },
   { fichier: 'v20_corail.stl', donnees: 'v20_corail', nom: 'Corail', detail: '35 × 30 × 77 mm, seize branches et rameaux' },

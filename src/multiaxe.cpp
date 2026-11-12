@@ -10,6 +10,7 @@
 #include <numbers>
 #include <unordered_map>
 #include <optional>
+#include <set>
 #include <vector>
 
 #include "champ_couches.hpp"
@@ -1275,7 +1276,7 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
         if (strategie.modele.triangles.empty()) {
             throw ErreurTranchage("La stratégie en couches courbes ne contient pas le modèle entier.");
         }
-        plan = preparer_branches(strategie.modele, r.hauteur_couche, 0.45 * r.largeur_extrusion);
+        plan = preparer_branches(strategie.modele, r.hauteur_couche, 0.45 * r.largeur_extrusion, strategie.a_plat);
     }
     const ChampCouches& champ = plan.analyse.champ;
     const std::vector<double>& dessus = plan.dessus;
@@ -2190,6 +2191,68 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
         resultat = std::move(repare);
         reductions = reductions_essai;
         cotes = cotes_essai;
+    }
+    // Dernier recours. S'il reste des fautes pendant une branche, cette
+    // branche n'est pas faite pour les couches courbes telle quelle : elle
+    // est imprimée à plat, avec le tronc (en couches horizontales), et le
+    // tranchage est refait. Les autres branches restent en couches courbes.
+    // Au pire, tout le modèle finit en impression classique : le slicer ne
+    // refuse pas une pièce que le 3 axes sait imprimer.
+    if (courbes && !resultat.verification.valide() && options.replis > 0) {
+        std::vector<std::size_t> debuts, parties;
+        {
+            std::size_t numero = 0, debut = 0;
+            const std::string& g = resultat.gcode;
+            while (debut < g.size()) {
+                ++numero;
+                std::size_t fin = g.find('\n', debut);
+                if (fin == std::string::npos) {
+                    fin = g.size();
+                }
+                if (g.compare(debut, 8, ";PARTIE:") == 0) {
+                    debuts.push_back(numero);
+                    parties.push_back(static_cast<std::size_t>(std::stoul(g.substr(debut + 8, 6))) - 1);
+                }
+                debut = fin + 1;
+            }
+        }
+        std::set<std::size_t> fautives;
+        for (const ErreurVerification& e : resultat.verification.erreurs) {
+            const auto apres = std::upper_bound(debuts.begin(), debuts.end(), static_cast<std::size_t>(e.ligne));
+            if (apres == debuts.begin()) {
+                continue;
+            }
+            const std::size_t partie = parties[static_cast<std::size_t>(apres - debuts.begin()) - 1];
+            if (partie < strategie.parties.size() && strategie.parties[partie].couches_courbes) {
+                fautives.insert(partie);
+            }
+        }
+        if (!fautives.empty()) {
+            OptionsStrategie choix;
+            choix.a_plat = strategie.a_plat;
+            for (const std::size_t partie : fautives) {
+                choix.a_plat.push_back(strategie.parties[partie].repere);
+            }
+            const std::vector<Strategie> suites = proposer_strategies(strategie.modele, reglages, choix);
+            const Strategie* suite = &suites.front();
+            for (const Strategie& s : suites) {
+                if (s.type == TypeStrategie::couches_courbes) {
+                    suite = &s;
+                }
+            }
+            OptionsMultiaxe options_suite = options;
+            options_suite.replis = options.replis - 1;
+            options_suite.retraits.clear();
+            ResultatTranchage replie = trancher_strategie(*suite, reglages, options_suite);
+            if (replie.verification.nombre_erreurs < resultat.verification.nombre_erreurs) {
+                replie.remarques.insert(
+                    replie.remarques.begin(),
+                    std::format("{} branche(s) imprimée(s) à plat, avec le tronc : en couches courbes, {} "
+                                "provoqué des fautes (cordon dans la matière, contact...).",
+                                fautives.size(), fautives.size() > 1 ? "elles auraient" : "elle aurait"));
+                return replie;
+            }
+        }
     }
     if (resultat.verification.valide() && !options_reparees.retraits.empty()) {
         resultat.remarques.push_back(std::format(

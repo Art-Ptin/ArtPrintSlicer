@@ -1135,12 +1135,13 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
         // courbes ne serviraient à rien : inutile de les calculer.)
         if (surplomb_classique > 1.0) {
             const PlanBranches plan = preparer_branches(pose, reglages.impression.hauteur_couche,
-                                                        0.45 * reglages.impression.largeur_extrusion);
+                                                        0.45 * reglages.impression.largeur_extrusion, options.a_plat);
             if (!plan.vide()) {
                 Strategie courbes;
                 courbes.type = TypeStrategie::couches_courbes;
                 courbes.nom = "Couches courbes (5 axes continu)";
                 courbes.modele = pose;
+                courbes.a_plat = options.a_plat;
                 PartieImpression tronc;
                 tronc.maillage = pose;
                 tronc.tronc_lisse = true;
@@ -1159,6 +1160,24 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                     }
                     branche.parent = mere >= 0 ? partie_de[mere] : 0;
                     branche.base = plan.tiges[n].front().origine;
+                    // Un point de repère dans la matière de la branche : sur sa
+                    // couche du milieu, un peu en dedans du bord. (Le centre de
+                    // la couche ne convient pas : dans un tube, il est dans le vide.)
+                    {
+                        const CoucheCourbe& milieu = plan.tiges[n][plan.tiges[n].size() / 2];
+                        branche.repere = milieu.origine;
+                        Polygones dedans = decaler(milieu.contour, -0.6);
+                        if (dedans.empty()) {
+                            dedans = milieu.contour;
+                        }
+                        if (!dedans.empty() && !dedans.front().empty()) {
+                            Vec3 ici;
+                            if (poser_sur_la_surface(plan.analyse.champ, milieu, en_mm(dedans.front().front()),
+                                                     plan.dessus[milieu.niveau], ici)) {
+                                branche.repere = ici;
+                            }
+                        }
+                    }
                     branche.direction = plan.tiges[n].back().w;
                     for (const CoucheCourbe& couche : plan.tiges[n]) {
                         branche.inclinaison = std::max(branche.inclinaison, angle_entre(couche.w, {0.0, 0.0, 1.0}));
@@ -1225,7 +1244,7 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                 // il faut qu'elles laissent nettement moins de surface dans
                 // le vide que l'impression classique. (Les bosses d'un vase,
                 // par exemple, s'impriment très bien à plat.)
-                if (surplomb_classique > 1.0 && courbes.surplomb < 0.8 * surplomb_classique) {
+                if (surplomb_classique > 1.0 && (courbes.surplomb < 0.8 * surplomb_classique || !options.a_plat.empty())) {
                     strategies.push_back(std::move(courbes));
                 }
             }

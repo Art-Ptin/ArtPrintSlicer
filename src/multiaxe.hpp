@@ -48,6 +48,9 @@ struct OptionsMultiaxe {
         std::size_t couche = 0;
         Vec3 centre;
     };
+    // Couches courbes : nombre de fois où, faute de mieux, les branches
+    // fautives sont imprimées à plat avec le tronc et le tranchage refait.
+    int replis = 6;
     std::vector<Retrait> retraits;
     double rayon_retrait = 1.3;  // rayon de la boule, en mm
 };

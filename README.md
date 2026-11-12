@@ -25,7 +25,7 @@ Ce qui fonctionne aujourd'hui :
 
 Sur une branche courbe, la tête et le plateau tournent pendant l'extrusion : c'est le premier mouvement 5 axes continu du slicer.
 
-- **Couches courbes (5 axes continu)** : pour une forme en arbre, le tronc est imprimé d'abord, lisse et sans amorce de branche, laissé à nu là où une branche viendra ; chaque branche est ensuite imprimée contre lui, en couches qui épousent sa surface. Avec la vraie forme de la machine, le slicer essaie chaque branche dans plusieurs positions (plateau retourné, tête moins inclinée) et garde celle qui ne touche rien.
+- **Couches courbes (5 axes continu)** : pour une forme en arbre, le tronc est imprimé d'abord, lisse et sans amorce de branche, laissé à nu là où une branche viendra ; chaque branche est ensuite imprimée contre lui, en couches qui épousent sa surface. Avec la vraie forme de la machine, le slicer essaie chaque branche dans plusieurs positions (plateau retourné, tête moins inclinée) et garde celle qui ne touche rien. L'orientation de chaque branche peut aussi être choisie à la main (couches courbes, tête moins inclinée, ou à plat avec le tronc) : la jonction se refait toute seule.
 
 - **Peau courbe (option)** : une dernière passe suit la forme du dessus de la pièce pour effacer les marches d'escalier.
 

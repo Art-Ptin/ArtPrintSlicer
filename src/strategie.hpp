@@ -55,6 +55,9 @@ struct PartieImpression {
     // En couches courbes : plus grande inclinaison donnée à la tête, en
     // degrés (celle qui a été trouvée sans collision pour cette partie).
     double inclinaison_outil_max = 90.0;
+    // Couches courbes : un point à l'intérieur de la branche, qui sert à la
+    // désigner (pour demander qu'elle soit imprimée à plat, par exemple).
+    Vec3 repere;
 };
 
 enum class TypeStrategie { classique, autre_pose, par_branches, couches_courbes };
@@ -69,6 +72,9 @@ struct Strategie {
     // Pour les couches courbes : le modèle entier, posé sur le plateau. Le
     // chemin de la matière se calcule sur tout le modèle, pas partie par partie.
     Maillage modele;
+    // Couches courbes : les branches imprimées à plat avec le tronc, à la
+    // demande (chacune désignée par un point à l'intérieur d'elle).
+    std::vector<Vec3> a_plat;
 };
 
 struct OptionsStrategie {
@@ -85,6 +91,9 @@ struct OptionsStrategie {
     // anciennes stratégies à couches orientées (« autre pose », « par
     // branches ») sont proposées aussi ; elles ne servent plus qu'aux essais.
     bool couches_orientees = false;
+    // Couches courbes : des points du modèle ; la branche qui contient
+    // chacun d'eux est imprimée à plat, avec le tronc.
+    std::vector<Vec3> a_plat;
 };
 
 // Surface (mm²) des faces du maillage qui seraient imprimées dans le vide en

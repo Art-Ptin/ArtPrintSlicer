@@ -19,6 +19,7 @@
 
 #include "decoupe.hpp"
 #include "formes_organiques.hpp"
+#include "modeles_quarante.hpp"
 #include "modeles_vingt.hpp"
 #include "modeles_essai.hpp"
 #include "multiaxe.hpp"
@@ -90,6 +91,10 @@ int main(int argc, char** argv) {
     // Et les vingt modèles d'essai des couches courbes (noms en « v01_ »... « v20_ »).
     std::vector<std::pair<std::string, std::function<Maillage()>>> tous(objets.begin(), objets.end());
     for (auto& modele : essai::les_vingt()) {
+        tous.push_back(std::move(modele));
+    }
+    // Et les quarante suivants (« w01_ »... « w40_ »), dont le banc d'essai.
+    for (auto& modele : essai::les_quarante()) {
         tous.push_back(std::move(modele));
     }
     // Quatrième argument « stl » : écrire seulement les fichiers STL, sans trancher.

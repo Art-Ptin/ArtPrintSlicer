@@ -18,6 +18,7 @@ const etat = {
   strategies: [],      // façons d'imprimer proposées pour le modèle ouvert
   strategie: 'classique',
   strategiesPerimees: false,  // vrai si un réglage a changé depuis qu'elles ont été proposées
+  branches: {},        // couches courbes : choix de l'utilisateur par branche (numéro de partie -> choix)
 };
 
 // --- Messages ----------------------------------------------------------------
@@ -219,6 +220,7 @@ async function proposerStrategies() {
   etat.strategies = [];
   etat.strategie = 'classique';
   etat.strategiesPerimees = false;
+  etat.branches = {};
   if (etat.modele && etat.modele.ferme) {
     occuper('Recherche des façons d\'imprimer ce modèle…');
     await new Promise((suite) => setTimeout(suite, 30));
@@ -236,7 +238,7 @@ function afficherStrategies() {
     liste.replaceChildren(new Option('Classique (3 axes)', 'classique'));
     detail.textContent = etat.modele
       ? 'Tout le modèle est imprimé en couches horizontales, la tête à la verticale.'
-      : 'Ouvre un modèle : le slicer proposera les façons de l\'imprimer (3 axes, ou 5 axes par branches).';
+      : 'Ouvre un modèle : le slicer proposera les façons de l\'imprimer (3 axes, ou couches courbes en 5 axes).';
     return;
   }
   liste.replaceChildren(...etat.strategies.map((s) => new Option(
@@ -248,6 +250,43 @@ function afficherStrategies() {
     inclinaisons.textContent = choisie.parties.map((p) =>
       (p.courbe ? `jusqu'à ${Math.round(p.inclinaison)}° (courbe)` : `${Math.round(p.inclinaison)}°`)).join(', ');
     detail.append(document.createTextNode(' Inclinaisons : '), inclinaisons, document.createTextNode('.'));
+  }
+  // Couches courbes : pour chaque branche, l'utilisateur peut choisir la
+  // façon de l'imprimer. La jonction avec le reste se fait toute seule.
+  if (choisie.type === 'couches_courbes' && choisie.parties.length > 1) {
+    const table = document.createElement('div');
+    table.className = 'branches';
+    table.id = 'branches';
+    const titre = document.createElement('span');
+    titre.className = 'branches-titre';
+    titre.textContent = 'Orientation de chaque branche';
+    table.append(titre);
+    choisie.parties.forEach((p, i) => {
+      if (i === 0) return;
+      const ligne = document.createElement('label');
+      ligne.className = 'branche';
+      const nom = document.createElement('span');
+      nom.textContent = `Branche ${i + 1} · ${p.volume_cm3.toFixed(1)} cm³` +
+        (p.parent > 0 ? ` · sur la branche ${p.parent + 1}` : '');
+      const choix = document.createElement('select');
+      choix.id = `branche-${i + 1}`;
+      for (const [valeur, texte] of [
+        ['courbes', 'Couches courbes (tête d\'aplomb)'],
+        ['incline60', 'Couches courbes, tête moins inclinée (60° au plus)'],
+        ['incline45', 'Couches courbes, tête peu inclinée (45° au plus)'],
+        ['a_plat', 'À plat, avec le tronc (couches horizontales)'],
+      ]) {
+        choix.append(new Option(texte, valeur, false, (etat.branches[i + 1] || 'courbes') === valeur));
+      }
+      choix.addEventListener('change', () => {
+        etat.branches[i + 1] = choix.value;
+        if (choix.value === 'courbes') delete etat.branches[i + 1];
+        perimerResultat();
+      });
+      ligne.append(nom, choix);
+      table.append(ligne);
+    });
+    detail.append(table);
   }
   const remarques = [...choisie.remarques];
   if (etat.strategiesPerimees) {
@@ -286,7 +325,13 @@ async function trancher() {
   occuper('Tranchage et vérification en cours…');
   // Laisse l'écran afficher le message avant le calcul.
   await new Promise((suite) => setTimeout(suite, 30));
-  const reponse = await demander('trancher', { strategie: etat.strategie });
+  const demande = { strategie: etat.strategie };
+  if (etat.strategie === 'couches_courbes' && Object.keys(etat.branches).length) {
+    demande.branches = Object.entries(etat.branches).map(([partie, choix]) => (
+      choix === 'a_plat' ? { partie: Number(partie), mode: 'a_plat' }
+        : { partie: Number(partie), mode: 'courbes', inclinaison_max: choix === 'incline60' ? 60 : 45 }));
+  }
+  const reponse = await demander('trancher', demande);
   liberer();
   if (!reponse) {
     definirEtat('mauvais', 'Tranchage impossible', 'Voir le message en haut de la vue.');

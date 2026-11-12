@@ -59,7 +59,12 @@ struct PlanBranches {
 // être découpé ainsi (trop bombé, par exemple un chapeau tout autour d'un
 // pied) est laissé avec le tronc. « pointe » : les pointes de couche plus
 // étroites que deux fois cette valeur sont arrondies.
-PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe);
+// « a_plat » : des points du modèle ; la branche qui contient chacun d'eux
+// est imprimée à plat, avec le tronc (en couches horizontales), au lieu
+// d'être découpée en couches courbes. Les branches qui la portent aussi ;
+// celles qu'elle porte restent en couches courbes et se soudent sur elle.
+PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe,
+                               const std::vector<Vec3>& a_plat = {});
 
 // Point de la surface de niveau « niveau » qui se trouve à l'aplomb du point
 // (x, y) de la carte : la carte est quittée le long de w jusqu'à la surface.

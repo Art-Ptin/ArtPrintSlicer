@@ -5,6 +5,7 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -120,7 +121,8 @@ int verifier(const std::filesystem::path& chemin_gcode,
 // la commande « strategies ».
 int trancher_fichier(const std::filesystem::path& chemin_modele,
                      const std::filesystem::path& chemin_gcode,
-                     const std::filesystem::path& chemin_reglages, int strategie = 0) {
+                     const std::filesystem::path& chemin_reglages, int strategie = 0,
+                     const std::vector<int>& a_plat = {}) {
     using namespace artprint;
     try {
         const Reglages reglages =
@@ -136,8 +138,31 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
         if (strategie <= 0) {
             resultat = trancher_classique(modele.maillage, reglages);
         } else {
-            const std::vector<Strategie> strategies =
-                proposer_strategies(poser_au_centre(modele.maillage), reglages);
+            std::vector<Strategie> strategies = proposer_strategies(poser_au_centre(modele.maillage), reglages);
+            // « --a-plat=3,5 » : ces branches (leur numéro de partie) sont
+            // imprimées à plat avec le tronc, au lieu des couches courbes.
+            if (!a_plat.empty() && static_cast<std::size_t>(strategie) <= strategies.size()) {
+                const Strategie& base = strategies[static_cast<std::size_t>(strategie) - 1];
+                OptionsStrategie options;
+                for (const int numero : a_plat) {
+                    if (numero < 2 || static_cast<std::size_t>(numero) > base.parties.size() ||
+                        !base.parties[static_cast<std::size_t>(numero) - 1].couches_courbes) {
+                        std::cerr << std::format("Erreur : la partie {} n'est pas une branche en couches courbes.\n", numero);
+                        return 1;
+                    }
+                    options.a_plat.push_back(base.parties[static_cast<std::size_t>(numero) - 1].repere);
+                }
+                const TypeStrategie type = base.type;
+                std::vector<Strategie> nouvelles = proposer_strategies(poser_au_centre(modele.maillage), reglages, options);
+                strategie = 1;
+                for (std::size_t n = 0; n < nouvelles.size(); ++n) {
+                    if (nouvelles[n].type == type) {
+                        strategie = static_cast<int>(n) + 1;
+                    }
+                }
+                strategies = std::move(nouvelles);
+                std::cout << std::format("{} branche(s) imprimée(s) à plat, à la demande.\n", a_plat.size());
+            }
             if (static_cast<std::size_t>(strategie) > strategies.size()) {
                 std::cerr << std::format(
                     "Erreur : la stratégie {} n'existe pas pour ce modèle ({} proposée(s)).\n",
@@ -250,6 +275,24 @@ int lancer(std::vector<std::filesystem::path> arguments) {
     if (arguments.size() == 1 && arguments[0] == "api") {
         return servir_api();
     }
+    // Option « --a-plat=3,5 », tout à la fin de la commande « trancher ».
+    std::vector<int> a_plat;
+    if (!arguments.empty()) {
+        const std::string dernier = arguments.back().string();
+        const std::string option = "--a-plat=";
+        if (dernier.rfind(option, 0) == 0) {
+            std::stringstream liste(dernier.substr(option.size()));
+            for (std::string numero; std::getline(liste, numero, ',');) {
+                try {
+                    a_plat.push_back(std::stoi(numero));
+                } catch (const std::exception&) {
+                    std::cerr << "Erreur : « --a-plat= » doit être suivi de numéros de partie séparés par des virgules.\n";
+                    return 2;
+                }
+            }
+            arguments.pop_back();
+        }
+    }
     // Option « --strategie=N », à la fin de la commande « trancher ».
     int strategie = 0;
     if (!arguments.empty()) {
@@ -280,10 +323,10 @@ int lancer(std::vector<std::filesystem::path> arguments) {
         }
     } else if (!arguments.empty() && arguments[0] == "trancher") {
         if (arguments.size() == 3) {
-            return trancher_fichier(arguments[1], arguments[2], {}, strategie);
+            return trancher_fichier(arguments[1], arguments[2], {}, strategie, a_plat);
         }
         if (arguments.size() == 4) {
-            return trancher_fichier(arguments[1], arguments[2], arguments[3], strategie);
+            return trancher_fichier(arguments[1], arguments[2], arguments[3], strategie, a_plat);
         }
     } else if (!arguments.empty() && arguments[0] == "strategies") {
         if (arguments.size() == 2) {
@@ -298,10 +341,11 @@ int lancer(std::vector<std::filesystem::path> arguments) {
     std::cerr << "Utilisation :\n"
                  "  artprint-slicer <fichier.stl>\n"
                  "      affiche le résumé d'un modèle 3D\n"
-                 "  artprint-slicer trancher <modele.stl> <sortie.gcode> [reglages.txt] [--strategie=N]\n"
-                 "      tranche un modèle et écrit le G-code vérifié (3 axes, ou la stratégie N)\n"
+                 "  artprint-slicer trancher <modele.stl> <sortie.gcode> [reglages.txt] [--strategie=N] [--a-plat=3,5]\n"
+                 "      tranche un modèle et écrit le G-code vérifié (3 axes, ou la stratégie N) ;\n"
+                 "      « --a-plat » : ces branches (numéros de partie) sont imprimées à plat avec le tronc\n"
                  "  artprint-slicer strategies <modele.stl> [reglages.txt]\n"
-                 "      propose plusieurs façons d'imprimer le modèle (3 axes, 5 axes par branches)\n"
+                 "      propose les façons d'imprimer le modèle (3 axes, couches courbes en 5 axes)\n"
                  "  artprint-slicer verifier <fichier.gcode> [reglages.txt]\n"
                  "      vérifie qu'un G-code respecte les règles physiques\n";
     return 2;

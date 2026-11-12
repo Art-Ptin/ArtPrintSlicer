@@ -14,7 +14,44 @@ build/linux/tests/banc_strategies - dossier_de_sortie v
 (« v » ne garde que les modèles dont le nom contient cette lettre ; ajouter
 `stl` à la fin écrit seulement les fichiers STL, sans trancher.)
 
-## Résultats
+## Soixante modèles, aucun refus
+
+Aux vingt premiers modèles s'ajoutent quarante autres
+(`tests/modeles_quarante.hpp`, noms en « w01_ »... « w40_ ») : des familles où
+un seul réglage change (une branche de 35° à 100°, de deux à huit branches en
+couronne, des fourches de 25° à 70°, des arcs, des hélices, des ponts...), et
+une pièce « banc d'essai d'imprimante » (éventail de surplombs de 30° à 90°,
+pont, colonne fine et boule, pointe, bras courbe à coupelle).
+
+Sur les soixante, **aucun n'est refusé** :
+
+- 52 sont tranchés avec la stratégie « couches courbes » et vérifiés ;
+- 8 n'ont que la stratégie classique, parce que le slicer ne sait pas encore
+  les découper en couches courbes : les trois ponts, l'arche, l'anse, le
+  champignon, la table et l'arc en demi-tour.
+
+Parmi les 52, quelques-uns ont une ou plusieurs branches imprimées **à plat,
+avec le tronc** : le socle à quatre bras (ses quatre bras, trop près du
+plateau), le tronc penché (une branche), le banc d'essai (un morceau). C'est
+le « repli » : quand une branche provoquerait des fautes en couches courbes,
+le slicer l'imprime en couches horizontales avec le tronc et refait le
+tranchage, au lieu de refuser toute la pièce. Une remarque le dit.
+
+## Choisir l'orientation d'une branche
+
+Le même mécanisme sert au choix de l'utilisateur. Dans l'application, avec
+la stratégie « couches courbes », chaque branche a sa liste :
+
+- couches courbes, tête d'aplomb (d'office) ;
+- couches courbes, tête moins inclinée (60° ou 45° au plus) ;
+- à plat, avec le tronc (couches horizontales).
+
+La jonction avec le reste de la pièce est recalculée toute seule. En ligne
+de commande : `--a-plat=3,5` après `--strategie=2`. Par l'interface de
+commandes : le champ `branches` de la commande `trancher`.
+
+## Résultats des vingt premiers
+
 
 Machine idéale d'essai (aucune forme de machine), réglages par défaut.
 « Vérifié » : le G-code passe le vérificateur sans aucune faute.
@@ -24,12 +61,12 @@ Machine idéale d'essai (aucune forme de machine), réglages par défaut.
 | 1 | Branche horizontale | tête couchée à 90° | ✅ vérifié |
 | 2 | Branche raide (20°) | pied très allongé | ✅ vérifié |
 | 3 | Branche tombante (110°) | branche qui retombe | ✅ vérifié |
-| 4 | Socle et quatre bras | bras qui partent à 5 mm du plateau | ❌ refusé |
+| 4 | Socle et quatre bras | bras qui partent à 5 mm du plateau | ✅ vérifié, ses quatre bras à plat |
 | 5 | Étoile | six branches au même niveau | ✅ vérifié |
 | 6 | Spirale | huit branches en hélice | ✅ vérifié |
 | 7 | Fourche en Y | le tronc s'arrête et se partage | ✅ vérifié (7 bouts de cordon retirés) |
 | 8 | Fourches en cascade | quatorze branches sur trois niveaux | ✅ vérifié (2 bouts retirés) |
-| 9 | Tronc penché (15°) | le tronc lui-même penche | ❌ refusé |
+| 9 | Tronc penché (15°) | le tronc lui-même penche | ✅ vérifié, une branche à plat |
 | 10 | Tronc carré | branche sur une face plate, près d'une arête | ✅ vérifié |
 | 11 | Branche carrée | arêtes vives | ✅ vérifié |
 | 12 | Branche en S | branche qui change deux fois de direction | ✅ vérifié |
@@ -42,7 +79,7 @@ Machine idéale d'essai (aucune forme de machine), réglages par défaut.
 | 19 | Sucette | boule au bout d'une tige | ✅ vérifié |
 | 20 | Corail | quatorze branches et rameaux | ✅ vérifié (5 bouts retirés ; une branche imprimée avec le tronc) |
 
-Quatorze modèles sur vingt sont vérifiés en couches courbes.
+Seize modèles sur vingt sont vérifiés avec la stratégie couches courbes (deux d'entre eux avec des branches à plat).
 
 ## Ce que la campagne a fait corriger
 

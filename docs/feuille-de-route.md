@@ -107,8 +107,11 @@ Légende : ✅ fait · 🟡 en partie · ⬜ à faire
 | Déplacements stratégiques : chaque branche essayée à blanc dans plusieurs positions | 🟡 | côté et inclinaison de la tête ; pas encore l'ordre ni les trajets |
 | Petits chevauchements réparés (le bout de cordon n'est pas imprimé) | ✅ | une trentaine au plus, avec une remarque |
 | Premières couches trop enroulées : découpées au lieu d'abandonner la branche | ✅ | les bords très enroulés restent au tronc |
-| Vingt modèles d'essai des couches courbes | 🟡 | quatorze vérifiés ; voir `docs/essais-vingt-modeles.md` |
+| Vingt modèles d'essai des couches courbes | ✅ | voir `docs/essais-vingt-modeles.md` |
 | Tronc qui penche (jusqu'à 27° environ) | 🟡 | la branche placée sous lui n'est pas encore traitée |
-| Arche, anse, chapeau, table, bras près du plateau, branche sous un tronc penché | ⬜ | voir `docs/essais-vingt-modeles.md` |
+| Repli automatique : une branche fautive est imprimée à plat avec le tronc | ✅ | plus aucun refus sur les soixante modèles d'essai |
+| Choix de l'orientation de chaque branche (courbes, tête moins inclinée, à plat) | ✅ | application, ligne de commande et interface de commandes |
+| Soixante modèles d'essai et un banc d'essai d'imprimante | ✅ | 52 en couches courbes, 8 en 3 axes |
+| Arche, pont, anse, chapeau, table en couches courbes | ⬜ | voir `docs/essais-vingt-modeles.md` |
 | Peau courbe : une dernière passe suit la forme du dessus (option) | 🟡 | tête d'aplomb sur la surface ; abandonnée si elle provoquerait un contact |
 | Vérificateur : croisement de cordons sur une couche inclinée | ✅ | toléré sur une courte longueur, comme à plat |

@@ -645,6 +645,16 @@ function afficherStrategies() {
       el('b', '', choisie.parties.map((p) => (p.courbe ? `jusqu'à ${fr(p.inclinaison, 0)}° (courbe)` : `${fr(p.inclinaison, 0)}°`)).join(', ')),
       document.createTextNode('.'));
   }
+  if (choisie.type === 'couches_courbes' && choisie.parties.length > 1) {
+    // Dans l'application, chaque branche a son propre choix d'orientation.
+    // La simulation rejoue des tranchages enregistrés : elle montre le choix d'office.
+    const liste = el('span', 'remarque', '');
+    liste.id = 'branches-note';
+    liste.textContent = `Orientation de chaque branche (${choisie.parties.length - 1}) : dans l'application, tu choisis pour chacune ` +
+      '« couches courbes », « tête moins inclinée » ou « à plat avec le tronc » ; la jonction se refait toute seule. ' +
+      'La simulation montre ici le choix d\'office : couches courbes partout.';
+    detail.append(liste);
+  }
   for (const remarque of choisie.remarques) detail.append(el('span', 'remarque', remarque));
 }
 

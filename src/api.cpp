@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <algorithm>
 #include <format>
 #include <fstream>
 #include <optional>
@@ -251,8 +252,90 @@ std::string Session::executer(std::string_view demande_json) {
                 etat.resultat = trancher_classique(*etat.modele, etat.reglages);
             } else {
                 const Strategie* choisie = nullptr;
-                const std::vector<Strategie> strategies =
-                    proposer_strategies(*etat.modele, etat.reglages);
+                std::vector<Strategie> strategies = proposer_strategies(*etat.modele, etat.reglages);
+                // « branches » (facultatif) : le choix de l'utilisateur pour
+                // certaines branches des couches courbes. Chaque entrée :
+                //   "partie" : son numéro dans la liste des parties (2, 3...) ;
+                //   "mode" : "courbes" (d'office) ou "a_plat" (imprimée à plat,
+                //            en couches horizontales, avec le tronc) ;
+                //   "cote" : -1 ou 1 pour imposer le côté où la tête penche ;
+                //   "inclinaison_max" : inclinaison maximale de la tête, en degrés.
+                if (demande.contains("branches") && voulue == "couches_courbes") {
+                    const Strategie* base = nullptr;
+                    for (const Strategie& strategie : strategies) {
+                        if (strategie.type == TypeStrategie::couches_courbes) {
+                            base = &strategie;
+                        }
+                    }
+                    if (!base) {
+                        throw std::runtime_error("Les couches courbes ne sont pas proposées pour ce modèle.");
+                    }
+                    struct Choix {
+                        Vec3 repere;
+                        int cote = 0;
+                        double inclinaison_max = 0.0;
+                    };
+                    std::vector<Choix> choix;
+                    OptionsStrategie options;
+                    for (const Json& branche : demande["branches"]) {
+                        const int numero = branche.value("partie", 0);
+                        if (numero < 2 || static_cast<std::size_t>(numero) > base->parties.size()) {
+                            throw std::runtime_error(std::format(
+                                "La partie {} n'est pas une branche de ce modèle (les branches vont de 2 à {}).",
+                                numero, base->parties.size()));
+                        }
+                        const PartieImpression& partie = base->parties[static_cast<std::size_t>(numero) - 1];
+                        const std::string mode = branche.value("mode", std::string("courbes"));
+                        if (mode == "a_plat") {
+                            options.a_plat.push_back(partie.repere);
+                        } else if (mode != "courbes") {
+                            throw std::runtime_error(std::format(
+                                "Mode de branche inconnu : « {} » (attendu : courbes ou a_plat).", mode));
+                        } else {
+                            choix.push_back({partie.repere, branche.value("cote", 0),
+                                             branche.value("inclinaison_max", 0.0)});
+                        }
+                    }
+                    if (!options.a_plat.empty()) {
+                        strategies = proposer_strategies(*etat.modele, etat.reglages, options);
+                    }
+                    // Les autres choix sont reportés sur les branches restantes
+                    // (reconnues par leur point de repère).
+                    for (Strategie& strategie : strategies) {
+                        if (strategie.type != TypeStrategie::couches_courbes) {
+                            continue;
+                        }
+                        for (const Choix& c : choix) {
+                            PartieImpression* proche = nullptr;
+                            double distance_min = 3.0;  // mm
+                            for (PartieImpression& partie : strategie.parties) {
+                                const double d = norme(partie.repere - c.repere);
+                                if (partie.couches_courbes && d < distance_min) {
+                                    distance_min = d;
+                                    proche = &partie;
+                                }
+                            }
+                            if (proche) {
+                                proche->cote = c.cote < 0 ? -1 : c.cote > 0 ? 1 : proche->cote;
+                                if (c.inclinaison_max > 0.0) {
+                                    proche->inclinaison_outil_max = std::clamp(c.inclinaison_max, 10.0, 90.0);
+                                }
+                            }
+                        }
+                    }
+                    // Si toutes les branches sont à plat, il ne reste que le classique.
+                    if (std::none_of(strategies.begin(), strategies.end(), [](const Strategie& strategie) {
+                            return strategie.type == TypeStrategie::couches_courbes;
+                        })) {
+                        etat.resultat = trancher_classique(*etat.modele, etat.reglages);
+                        etat.resultat->remarques.push_back(
+                            "Toutes les branches sont imprimées à plat : c'est une impression classique.");
+                        reponse["resultat"] = decrire_resultat(*etat.resultat);
+                        reponse["strategie"] = voulue;
+                        reponse["ok"] = true;
+                        return reponse.dump(-1, ' ', false, Json::error_handler_t::replace);
+                    }
+                }
                 for (const Strategie& strategie : strategies) {
                     if (nom_type_strategie(strategie.type) == voulue) {
                         choisie = &strategie;
