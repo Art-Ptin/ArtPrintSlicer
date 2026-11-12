@@ -170,7 +170,7 @@ inline Maillage banc_d_essai() {
         f = fondre(f, palet(p, {6, 16, 36}, 5.5, 1.4) - 0.7, 1.5);
         return f;
     };
-    return forme_posee(d, {-40, -28, 0}, {38, 26, 70}, 0.7);
+    return forme_posee(d, {-40, -28, 0}, {38, 26, 70}, 0.9);
 }
 
 // La liste des quarante, dans l'ordre.
