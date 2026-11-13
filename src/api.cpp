@@ -2,6 +2,7 @@
 #include "api.hpp"
 #include "decoupe.hpp"
 
+#include <cstdlib>
 #include <cmath>
 #include <filesystem>
 #include <algorithm>
@@ -143,6 +144,14 @@ Json decrire_strategie(const Strategie& strategie) {
              {"parent", partie.parent}});
     }
     return reponse;
+}
+
+// Pour le diagnostic seulement (voir main.cpp) : la variable d'environnement
+// ARTPRINT_GCODE_REFUSE donne un fichier où garder un G-code refusé.
+void garder_le_refus(const ResultatTranchage& resultat) {
+    if (const char* diagnostic = std::getenv("ARTPRINT_GCODE_REFUSE"); diagnostic && !resultat.verification.valide()) {
+        std::ofstream(diagnostic, std::ios::binary) << "; G-CODE REFUSE - NE PAS IMPRIMER\n" << resultat.gcode;
+    }
 }
 
 Json decrire_resultat(const ResultatTranchage& resultat) {
@@ -438,6 +447,7 @@ std::string Session::executer(std::string_view demande_json) {
                         etat.resultat = trancher_classique(*etat.modele, etat.reglages, true);
                         etat.resultat->remarques.push_back(
                             "Toutes les branches sont imprimées à plat : c'est une impression classique.");
+                        garder_le_refus(*etat.resultat);
                         reponse["resultat"] = decrire_resultat(*etat.resultat);
                         reponse["resultat"]["preparation_s"] = std::round(etat.reglages.impression.duree_preparation * 60.0);
                         reponse["resultat"]["duree_classique_s"] = std::round(etat.resultat->duree_estimee);
@@ -457,6 +467,7 @@ std::string Session::executer(std::string_view demande_json) {
                 }
                 etat.resultat = trancher_strategie(*choisie, etat.reglages);
             }
+            garder_le_refus(*etat.resultat);
             reponse["resultat"] = decrire_resultat(*etat.resultat);
             reponse["resultat"]["preparation_s"] = std::round(etat.reglages.impression.duree_preparation * 60.0);
             reponse["strategie"] = voulue;

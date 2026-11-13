@@ -254,6 +254,11 @@ void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, dou
 // qui se frôlent). « rangs » : pour chaque trait à partir de « premier », son
 // rang de priorité (le plus petit est gardé en premier : les parois externes
 // passent avant les autres). L'ordre d'impression n'est pas changé.
+// À partir du rang « rang_remplissage », ce sont des lignes de remplissage :
+// elles touchent les parois par leurs bouts, c'est voulu ; seul un passage
+// qui longe un cordon sur plus d'une largeur et demie est coupé (un raccord
+// collé contre une paroi qui fait des vagues).
+const int rang_remplissage = 1000;
 void retirer_les_recouvrements(std::vector<Trait>& traits, std::size_t premier, const std::vector<int>& rangs,
                                double largeur) {
     // Un axe est « dans » un cordon voisin à moins d'une demi-largeur, plus
@@ -331,12 +336,34 @@ void retirer_les_recouvrements(std::vector<Trait>& traits, std::size_t premier, 
                 }
                 if (e.garde) {
                     poses[cle(e.p.x, e.p.y)].push_back({e.p, numero, e.abscisse});
-                } else {
-                    tout_garde = false;
                 }
                 echantillons.push_back(e);
             }
             abscisse += longueur;
+        }
+        // Remplissage : un contact court est gardé.
+        if (rangs[numero - premier] >= rang_remplissage) {
+            for (std::size_t k = 0; k < echantillons.size();) {
+                if (echantillons[k].garde) {
+                    ++k;
+                    continue;
+                }
+                std::size_t fin = k;
+                while (fin < echantillons.size() && !echantillons[fin].garde) {
+                    ++fin;
+                }
+                if (echantillons[fin - 1].abscisse - echantillons[k].abscisse < 1.5 * largeur) {
+                    for (std::size_t i = k; i < fin; ++i) {
+                        echantillons[i].garde = true;
+                        poses[cle(echantillons[i].p.x, echantillons[i].p.y)].push_back(
+                            {echantillons[i].p, numero, echantillons[i].abscisse});
+                    }
+                }
+                k = fin;
+            }
+        }
+        for (const Echantillon& e : echantillons) {
+            tout_garde = tout_garde && e.garde;
         }
         if (tout_garde) {
             continue;
@@ -358,7 +385,8 @@ void retirer_les_recouvrements(std::vector<Trait>& traits, std::size_t premier, 
             for (std::size_t i = 1; i < morceau.points.size(); ++i) {
                 longueur += distance(morceau.points[i - 1], morceau.points[i]);
             }
-            if (morceau.points.size() >= 2 && longueur >= 1.5 * largeur) {
+            if (morceau.points.size() >= 2 &&
+                longueur >= (rangs[numero - premier] >= rang_remplissage ? 0.5 : 1.5) * largeur) {
                 remplacants[numero].push_back(morceau);
             }
             morceau.points.clear();
@@ -665,11 +693,17 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
             ajouter_comblements(couche.traits, i == 0 ? matiere : decaler(matiere, -i * largeur), largeur, type);
             rangs.resize(couche.traits.size() - premiere_paroi, 2 * i + 1);
         }
-        retirer_les_recouvrements(couche.traits, premiere_paroi, rangs, largeur);
+
+        // Filet de sécurité, à la fin de la couche (parois puis remplissage).
+        const auto filet = [&]() {
+            rangs.resize(couche.traits.size() - premiere_paroi, rang_remplissage);
+            retirer_les_recouvrements(couche.traits, premiere_paroi, rangs, largeur);
+        };
 
         // Intérieur : ce qui reste une fois les parois posées.
         const Polygones interieur = decaler(matiere, -r.nombre_parois * largeur);
         if (interieur.empty()) {
+            filet();
             continue;
         }
 
@@ -710,6 +744,7 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
                 couche.traits.push_back({TypeTrait::remplissage, std::move(points), false});
             }
         }
+        filet();
     }
     return couches;
 }
