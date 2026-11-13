@@ -351,6 +351,7 @@ export class Vue3D {
       depart = [e.clientX, e.clientY];
       prise = null;
       if (!this.modele.visible || !this.modele.children.length) return;
+      if (this.surPointage) return;   // on désigne un point : la pièce ne se déplace pas
       const rayon = viser(e);
       if (rayon.intersectObjects(this.modele.children).length) {
         const point = surLePlateau(rayon);
@@ -376,12 +377,52 @@ export class Vue3D {
         return;
       }
       if (bouge || !depart) return;
+      if (this.surPointage) {
+        // Le point de la pièce sous la souris, dans le repère du plateau (mm).
+        const vise = this.modele.visible ? viser(e).intersectObjects(this.modele.children)[0] : null;
+        this.surPointage(vise ? [vise.point.x, vise.point.y, vise.point.z] : null);
+        return;
+      }
       const touche = this.fantomes && this.fantomes.length ? viser(e).intersectObjects(this.fantomes)[0] : null;
       if (touche && this.surChoixPlateau) this.surChoixPlateau(touche.object.userData.plateau);
       else if (this.selection) this.selectionner(false);
     };
     this.canvas.addEventListener('pointerup', lacher);
     this.canvas.addEventListener('pointercancel', () => { prise = null; this.controles.enabled = true; this.modele.position.set(0, 0, 0); this.demanderRendu(); });
+  }
+
+  // Zones orientées : pour chacune, le plan de coupe (un disque) et la
+  // direction d'impression (une flèche). « zones » : [{ point: [x, y, z],
+  // inclinaison, azimut }], en mm et en degrés ; « choisie » : numéro de la
+  // zone mise en avant (ou -1).
+  afficherZones(zones, choisie = -1) {
+    if (!this.zones) {
+      this.zones = new THREE.Group();
+      this.modele.parent.add(this.zones);
+    }
+    this.vider(this.zones);
+    const taille = this.boite ? Math.max(8, 0.32 * this.boite.getSize(new THREE.Vector3()).length()) : 20;
+    zones.forEach((zone, i) => {
+      const t = zone.inclinaison * Math.PI / 180, a = zone.azimut * Math.PI / 180;
+      const direction = new THREE.Vector3(Math.sin(t) * Math.cos(a), Math.sin(t) * Math.sin(a), Math.cos(t));
+      const point = new THREE.Vector3(...zone.point);
+      const couleur = this.jeton(i === choisie ? '--c-selection' : '--c-accent', '#cf4a23');
+      const disque = new THREE.Mesh(new THREE.CircleGeometry(taille, 48), new THREE.MeshBasicMaterial({
+        color: couleur, transparent: true, opacity: i === choisie ? 0.34 : 0.18, side: THREE.DoubleSide, depthWrite: false, depthTest: false }));
+      disque.renderOrder = 5;
+      disque.position.copy(point);
+      disque.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+      const fleche = new THREE.ArrowHelper(direction, point, 0.6 * taille, couleur, 0.14 * taille, 0.08 * taille);
+      // Le plan et la flèche restent visibles à travers la pièce.
+      for (const morceau of [fleche.line, fleche.cone]) { morceau.material.depthTest = false; morceau.renderOrder = 6; }
+      const bord = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
+        Array.from({ length: 64 }, (_, k) => new THREE.Vector3(taille * Math.cos(k * Math.PI / 32), taille * Math.sin(k * Math.PI / 32), 0))),
+        new THREE.LineBasicMaterial({ color: couleur, depthTest: false }));
+      bord.position.copy(point); bord.quaternion.copy(disque.quaternion); bord.renderOrder = 6;
+      this.zones.add(disque, bord, fleche);
+    });
+    this.zones.visible = this.modele.visible;
+    this.demanderRendu();
   }
 
   // Montre que la pièce est sélectionnée (elle prend la couleur de sélection).
@@ -562,6 +603,7 @@ export class Vue3D {
   // « preparer » : le modèle plein. « apercu » : les trajectoires.
   montrer(vue) {
     this.modele.visible = vue === 'preparer';
+    if (this.zones) this.zones.visible = vue === 'preparer';
     this.apercu.visible = vue === 'apercu';
     this.demanderRendu();
   }

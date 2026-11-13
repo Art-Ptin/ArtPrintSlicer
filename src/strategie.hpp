@@ -112,4 +112,23 @@ double surface_en_surplomb(const Maillage& maillage, const Vec3& direction, cons
 std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages& reglages,
                                            const OptionsStrategie& options = {});
 
+// Une zone désignée par l'utilisateur : à partir du point choisi sur le
+// modèle, la matière est imprimée dans une autre direction.
+struct ZoneOrientee {
+    Vec3 point;                // point choisi sur le modèle posé, en mm
+    double inclinaison = 0.0;  // angle de la direction d'impression avec la verticale, en degrés
+    double azimut = 0.0;       // côté vers lequel elle penche, en degrés (0 : vers +X, 90 : vers +Y)
+};
+
+// Direction d'impression d'une zone, longueur 1.
+Vec3 direction_de_zone(const ZoneOrientee& zone);
+
+// Stratégie « par zones » : le modèle est coupé, à chaque point choisi, par
+// un plan perpendiculaire à la direction demandée. Ce qui est sous le plan
+// est imprimé d'abord ; ce qui est au-dessus est imprimé ensuite, couche par
+// couche le long de cette direction, la tête inclinée et le plateau tourné.
+// Lève std::runtime_error (message en français) si une zone ne détache rien.
+Strategie strategie_par_zones(const Maillage& pose, const Reglages& reglages,
+                              const std::vector<ZoneOrientee>& zones, const OptionsStrategie& options = {});
+
 }  // namespace artprint

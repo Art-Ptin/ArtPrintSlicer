@@ -19,8 +19,44 @@ La stratégie 5 axes s'appelle **Ondulation**. Elle est proposée pour **tout**
 modèle fermé, même quand elle n'apporte rien : une remarque le dit, et la
 durée est comparée à celle du classique après le tranchage.
 
-Quand on clique sur « Trancher le plateau » avec l'ondulation, une fenêtre
-demande comment imprimer chaque partie inclinée :
+Quand la carte « Ondulation » est choisie, un panneau **Ondulation · 5 axes**
+s'ouvre dans la colonne de gauche, sous les deux cartes. Il n'y a plus de
+fenêtre au moment de trancher : tout se règle là.
+
+### Les zones orientées
+
+Une zone dit : « à partir de ce point de la pièce, imprime dans une autre
+direction ». Le bas de la pièce est imprimé à plat ; ce qui est au-dessus du
+plan de coupe est imprimé ensuite, couche par couche le long de la direction
+choisie, la tête inclinée et le plateau tourné.
+
+- **Ajouter une zone en cliquant** : le bouton met la souris en attente, puis
+  un clic sur la pièce pose la zone à cet endroit. L'outil « Direction
+  d'impression par zone » de la barre fait la même chose.
+- **Le haut en diagonale** : pose une zone à mi-hauteur, inclinée de 45°.
+- Chaque zone a trois réglages (un curseur et un champ) : l'**inclinaison**
+  (0° = tête verticale), la **direction** (le côté vers lequel les couches
+  penchent : 0° vers la droite du plateau, 90° vers le fond) et la
+  **hauteur** du point de coupe.
+- Dans la vue, un disque montre le plan de coupe et une flèche la direction
+  d'impression.
+- Sous les zones, le slicer dit ce qu'elles donnent sans attendre le
+  tranchage : le nombre de parties, leur volume, ce qui reste à soutenir, ou
+  pourquoi une zone ne peut pas être imprimée (avec une solution).
+
+Les zones passent par le même vérificateur que le reste : un G-code où la
+tête toucherait la pièce, ou imprimerait dans la matière, est refusé.
+
+Limites : une zone ne dépasse pas 90° d'inclinaison pour l'instant ; près du
+plateau elle est limitée comme tout le reste (« b_limite_pres_plateau »,
+« hauteur_bascule_b ») ; si le modèle est déplacé, tourné ou mis à l'échelle,
+les zones sont retirées (leurs points ne seraient plus au bon endroit). Avec
+des zones, les parties que le slicer trouve tout seul ne sont pas utilisées.
+
+### Sans zone : les parties trouvées par le slicer
+
+Sans zone, le panneau liste les parties que le slicer sait incliner tout
+seul, avec un choix pour chacune :
 
 - ondulation, tête d'aplomb sur les couches (d'office) ;
 - ondulation, tête moins inclinée (60° ou 45° au plus) ;
@@ -68,7 +104,7 @@ d'avancement, et tout à droite le bouton des **messages** du tranchage.
 | Poser sur une face | choisit laquelle des six faces va contre le plateau, ou la pose automatique |
 | Mesurer | dimensions, volume, poids plein, position, surface à soutenir |
 | Stratégie de tranchage | mène au choix de la stratégie |
-| Direction d'impression par zone | lance l'ondulation et sa fenêtre d'options |
+| Direction d'impression par zone | choisit l'ondulation et attend un clic sur la pièce pour y poser une zone orientée |
 | Simulation de la machine | fait défiler les couches du G-code, de la première à la dernière |
 
 Toutes ces transformations passent par la commande `transformer_modele` du
@@ -97,7 +133,7 @@ gradué tous les 25 mm à partir de 50 mm, avec le nom du logiciel à l'avant.
 - **La barre d'avancement** ne montre pas un pourcentage réel : elle est
   animée pendant le calcul, pleine quand c'est fini.
 - **Supports** : toujours 0 g, le slicer n'en fabrique pas.
-- **La simulation** ne recalcule rien : les options de l'ondulation,
+- **La simulation** ne recalcule rien : les zones et les options de l'ondulation,
   l'échelle et l'orientation n'y changent pas le tranchage affiché.
 - **Pages Imprimante, Projet, Calibration, Gestionnaire** : ce sont encore
   des maquettes, non reliées à une vraie imprimante.

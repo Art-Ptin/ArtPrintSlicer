@@ -1926,6 +1926,31 @@ ResultatTranchage trancher_avec(const Strategie& strategie, const Reglages& regl
                 ecrivain.pivoter_entre_les_couches();
             }
         } else {
+            // Couche plane d'une partie orientée : les petits bouts de cordon
+            // qui chevaucheraient de la matière déjà posée ne sont pas imprimés.
+            std::vector<Vec3> boules;
+            for (const OptionsMultiaxe::Retrait& retrait : options.retraits) {
+                if (retrait.couche == numero) {
+                    boules.push_back(retrait.centre);
+                }
+            }
+            if (!boules.empty()) {
+                std::vector<Trait> gardes;
+                for (const Trait& trait : couche.traits) {
+                    for (Trait& morceau : sans_les_points(
+                             trait,
+                             [&](const Point2& q) {
+                                 const Vec3 ici = t.origine + t.u * q.x + t.v * q.y + t.w * couche.z;
+                                 return std::any_of(boules.begin(), boules.end(), [&](const Vec3& centre) {
+                                     return norme(ici - centre) < options.rayon_retrait;
+                                 });
+                             },
+                             r.largeur_extrusion)) {
+                        gardes.push_back(std::move(morceau));
+                    }
+                }
+                couche.traits = std::move(gardes);
+            }
             ecrivain.couche(couche.z, couche.hauteur);
         }
         const bool premiere = c == 0 && (t.cartes.empty() || t.sur_plateau);
@@ -2291,7 +2316,10 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
     // (au ras du pied d'une branche, le plus souvent), ces petits bouts de
     // cordon ne sont pas imprimés : la matière y est déjà.
     OptionsMultiaxe options_reparees = options;
-    for (int tour = 0; tour < 6 && courbes && !resultat.verification.valide() && !budget_depasse(options); ++tour) {
+    // (Aussi pour les zones orientées choisies par l'utilisateur.)
+    const bool orientees = strategie.type == TypeStrategie::par_branches && strategie.parties.size() > 1;
+    for (int tour = 0;
+         tour < (orientees ? 24 : 6) && (courbes || orientees) && !resultat.verification.valide() && !budget_depasse(options); ++tour) {
         const RapportVerification& v = resultat.verification;
         const bool chevauchements = std::all_of(v.erreurs.begin(), v.erreurs.end(), [](const ErreurVerification& e) {
             return e.type == TypeErreur::dans_matiere || e.type == TypeErreur::sous_matiere;
@@ -2343,7 +2371,10 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
         }
         ResultatTranchage repare =
             trancher_avec(strategie, reglages, options_reparees, reductions_essai, cotes_essai, !sans_peau, true);
-        if (repare.verification.nombre_erreurs >= resultat.verification.nombre_erreurs) {
+        // (Zones orientées : le long d'une arête au ras du plateau, la faute
+        // se déplace d'un bout de cordon au suivant avant de disparaître.)
+        if (repare.verification.nombre_erreurs > resultat.verification.nombre_erreurs ||
+            (!orientees && repare.verification.nombre_erreurs == resultat.verification.nombre_erreurs)) {
             break;
         }
         repare.remarques = resultat.remarques;

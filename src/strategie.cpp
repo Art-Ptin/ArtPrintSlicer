@@ -1306,4 +1306,107 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
     return strategies;
 }
 
+Vec3 direction_de_zone(const ZoneOrientee& zone) {
+    const double pi = std::acos(-1.0);
+    const double t = zone.inclinaison * pi / 180.0;
+    const double a = zone.azimut * pi / 180.0;
+    return {std::sin(t) * std::cos(a), std::sin(t) * std::sin(a), std::cos(t)};
+}
+
+Strategie strategie_par_zones(const Maillage& pose, const Reglages& reglages,
+                              const std::vector<ZoneOrientee>& zones, const OptionsStrategie& options) {
+    Strategie strategie;
+    strategie.type = TypeStrategie::par_branches;
+    strategie.nom = "Ondulation par zones (5 axes)";
+    strategie.modele = pose;
+    const double pas = options.pas_voxels > 0.0 ? options.pas_voxels : pas_voxels_conseille(pose);
+    const GrilleVoxels matiere = remplir_voxels(pose, pas);
+    const BoiteEnglobante boite = calculer_boite(pose);
+    const double volume_total = volume_maillage(pose);
+
+    std::vector<PartieImpression> parties;
+    {
+        PartieImpression tronc;
+        tronc.maillage = pose;
+        tronc.base = {0.0, 0.0, boite.min.z};
+        parties.push_back(std::move(tronc));
+    }
+    // Les zones les plus basses d'abord : une zone plus haute peut alors être
+    // prise dans une zone déjà détachée.
+    std::vector<std::size_t> ordre(zones.size());
+    std::iota(ordre.begin(), ordre.end(), std::size_t{0});
+    std::stable_sort(ordre.begin(), ordre.end(),
+                     [&](std::size_t a, std::size_t b) { return zones[a].point.z < zones[b].point.z; });
+    const double limite = inclinaison_machine_max(reglages.machine);
+    for (const std::size_t z : ordre) {
+        const ZoneOrientee& zone = zones[z];
+        if (zone.inclinaison < 0.0 || zone.inclinaison > 170.0) {
+            throw std::runtime_error(std::format(
+                "Zone {} : l'inclinaison doit être entre 0 et 170 degrés (reçu : {:.0f}).", z + 1, zone.inclinaison));
+        }
+        if (zone.inclinaison > limite + 0.5) {
+            throw std::runtime_error(std::format(
+                "Zone {} : {:.0f}° d'inclinaison demandés, mais la machine ne dépasse pas {:.0f}° (réglages "
+                "« butées de B » et « inclinaison maximale de B »). Solution : réduire l'inclinaison de cette zone.",
+                z + 1, zone.inclinaison, limite));
+        }
+        const Vec3 direction = direction_de_zone(zone);
+        const Plan plan{zone.point, direction};
+        // La matière à détacher : juste au-dessus du plan, autour du point.
+        const std::vector<Vec3> graines = {zone.point + direction * 0.6, zone.point + direction * 1.5};
+        bool faite = false;
+        for (std::size_t p = parties.size(); p-- > 0 && !faite;) {
+            auto coupe = couper_par_plan(parties[p].maillage, plan, graines);
+            if (!coupe) {
+                continue;
+            }
+            const double volume = volume_maillage(coupe->partie);
+            if (volume < 1.0 || volume_maillage(coupe->reste) < 1.0) {
+                continue;
+            }
+            // Près du plateau, la tête ne peut pas s'incliner autant qu'en hauteur.
+            const double z_bas = calculer_boite(coupe->partie).min.z;
+            const double possible = inclinaison_possible(reglages.machine, z_bas);
+            if (zone.inclinaison > possible + 0.5) {
+                throw std::runtime_error(std::format(
+                    "Zone {} : elle descend jusqu'à {:.1f} mm du plateau, et à cette hauteur la tête ne peut pas "
+                    "s'incliner de plus de {:.0f}° (réglages « b_limite_pres_plateau » et « hauteur_bascule_b »). "
+                    "Solution : réduire l'inclinaison de la zone à {:.0f}° ou moins, ou choisir un point plus haut "
+                    "sur le modèle.",
+                    z + 1, std::max(0.0, z_bas), possible, possible));
+            }
+            PartieImpression nouvelle;
+            nouvelle.maillage = std::move(coupe->partie);
+            nouvelle.direction = direction;
+            nouvelle.base = coupe->centre_coupe;
+            nouvelle.parent = static_cast<int>(p);
+            parties[p].maillage = std::move(coupe->reste);
+            parties.push_back(std::move(nouvelle));
+            faite = true;
+        }
+        if (!faite) {
+            throw std::runtime_error(std::format(
+                "Zone {} (X {:.1f}, Y {:.1f}, Z {:.1f}) : le plan de coupe ne détache rien d'imprimable à cet "
+                "endroit. Solution : choisir un point plus bas sur le modèle, ou changer l'orientation de la zone.",
+                z + 1, zone.point.x, zone.point.y, zone.point.z));
+        }
+    }
+    parties = ordonner(std::move(parties));
+    for (PartieImpression& partie : parties) {
+        mesurer(partie, options.surplomb_max, matiere);
+        strategie.surplomb += partie.surplomb;
+    }
+    strategie.description = std::format(
+        "Le modèle est coupé en {} parties aux endroits choisis : le bas est imprimé d'abord, puis chaque zone "
+        "dans la direction demandée, la tête inclinée et le plateau tourné.",
+        parties.size());
+    if (volume_total > 0.0 && parties.front().volume < 0.02 * volume_total) {
+        strategie.remarques.push_back(
+            "Presque tout le modèle est dans une zone orientée : il reste très peu de matière imprimée à plat "
+            "pour la porter.");
+    }
+    strategie.parties = std::move(parties);
+    return strategie;
+}
+
 }  // namespace artprint

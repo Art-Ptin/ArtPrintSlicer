@@ -232,6 +232,30 @@ input.interrupteur {
 .strategie-detail { margin: 0; font-size: var(--t-11); line-height: var(--interligne-serre); color: var(--c-texte-2); }
 .strategie-detail b { color: var(--c-texte); font-weight: var(--g-fort); }
 .strategie-detail .remarque { display: block; margin-top: var(--e-1); color: var(--c-attention); }
+/* Ondulation : le panneau des réglages 5 axes, dans la colonne.
+   Quand il est ouvert, toute la section Procédé défile d'un seul tenant. */
+.procede-corps:has(.ondulation:not([hidden])) { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--c-bord-fort) transparent; }
+.procede-corps:has(.ondulation:not([hidden])) > * { flex: none; }
+.procede-corps:has(.ondulation:not([hidden])) .liste { overflow: visible; }
+.strategie { padding-bottom: var(--e-1); }
+.ondulation {
+  display: grid; gap: var(--e-2); margin-top: var(--e-1); padding: var(--e-2);
+  border: var(--bord); border-radius: var(--r-2); background: var(--c-survol);
+}
+.ondulation h3 { margin: 0; font-size: var(--t-12); font-weight: var(--g-fort); color: var(--c-texte); }
+.ondulation .aide { margin: 0; font-size: var(--t-11); line-height: var(--interligne-serre); color: var(--c-texte-2); }
+.ondulation .aide.alerte { color: var(--c-attention); }
+.ondulation label { display: grid; gap: var(--e-1); font-size: var(--t-11); color: var(--c-texte-2); }
+.ondulation select, .ondulation input[type="number"] { width: 100%; min-width: 0; }
+.ondulation .rangee { display: flex; flex-wrap: wrap; gap: var(--e-1); }
+.ondulation .rangee .bouton { flex: 1 1 auto; }
+.ondulation .bouton[aria-pressed="true"] { background: var(--c-accent-voile); border-color: var(--c-accent); color: var(--c-accent-texte); }
+.zone-orientee { display: grid; gap: var(--e-1); padding: var(--e-2); border: var(--bord); border-radius: var(--r-2); background: var(--c-champ); }
+.zone-orientee.choisie { border-color: var(--c-accent); }
+.zone-orientee header { display: flex; align-items: center; gap: var(--e-1); font-size: var(--t-12); color: var(--c-texte); }
+.zone-orientee header span { flex: 1; }
+.zone-orientee .reglage { display: grid; grid-template-columns: 5.5em minmax(0, 1fr) 4.2em; gap: var(--e-1); align-items: center; font-size: var(--t-11); color: var(--c-texte-2); }
+.zone-orientee .reglage input[type="range"] { width: 100%; min-width: 0; }
 .procede-corps > .champ { flex: none; width: auto; height: var(--h-champ-serre); margin: 0 var(--e-2) var(--e-1) var(--e-8); }
 .onglets { display: flex; gap: var(--e-4); flex: none; padding: 0 var(--e-3); border-bottom: var(--bord); overflow-x: auto; }
 .onglets button {

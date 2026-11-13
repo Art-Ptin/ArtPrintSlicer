@@ -176,6 +176,17 @@ export async function appeler(commande, parametres = {}) {
     case 'strategies':
       if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
       return { ok: true, strategies: structuredClone(piece.strategies ?? []) };
+    case 'apercu_zones': {
+      // Simulation : des parties vraisemblables, sans calcul de géométrie.
+      if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
+      const zones = parametres.zones ?? [];
+      const volume = (piece.strategies?.[0]?.parties ?? []).reduce((somme, p) => somme + (p.volume_cm3 ?? 0), 0) || 10;
+      const part = volume / (zones.length + 1);
+      return { ok: true, strategie: { type: 'par_branches', nom: 'Ondulation par zones (5 axes)', description: '', surplomb_mm2: 0,
+        remarques: ['Simulation : les volumes sont indicatifs.'],
+        parties: [{ inclinaison: 0, volume_cm3: part, surplomb_mm2: 0, parent: -1 },
+          ...zones.map((z) => ({ inclinaison: z.inclinaison, volume_cm3: part, surplomb_mm2: 0, parent: 0 }))] } };
+    }
     case 'trancher': {
       if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
       await pause(700);

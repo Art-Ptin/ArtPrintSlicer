@@ -916,7 +916,68 @@ void test_au_dela_de_90() {
                          [](const ErreurVerification& e) { return e.type == TypeErreur::limite_b; }));
 }
 
+// Zones orientées choisies par l'utilisateur : à partir d'un point du
+// modèle, la matière est imprimée dans une autre direction.
+void test_zones_orientees() {
+    ConstructeurMaillage c;
+    essai::ajouter_cylindre(c, {0, 0, 0}, {0, 0, 30}, 10.0, 64);
+    const Maillage cylindre = c.terminer();
+    Reglages r = reglages_essai();
+    r.machine.contrat_gcode = 1;
+    const auto b_extremes = [](const ResultatTranchage& resultat) {
+        std::pair<double, double> extremes{0.0, 0.0};
+        for (const LigneLue& ligne : lire_mouvements(resultat.gcode)) {
+            extremes.first = std::min(extremes.first, ligne.b);
+            extremes.second = std::max(extremes.second, ligne.b);
+        }
+        return extremes;
+    };
+
+    // Le haut du cylindre à 30° : deux parties, le bas à plat puis le haut incliné.
+    const std::vector<ZoneOrientee> une = {{{0, 0, 15}, 30.0, 0.0}};
+    const Strategie par_zones = strategie_par_zones(cylindre, r, une);
+    VERIFIER(par_zones.parties.size() == 2);
+    VERIFIER(proche(par_zones.parties[0].inclinaison, 0.0, 1e-6) && proche(par_zones.parties[1].inclinaison, 30.0, 1e-6));
+    VERIFIER(par_zones.parties[1].parent == 0);
+    VERIFIER(proche(par_zones.parties[0].volume + par_zones.parties[1].volume, volume_maillage(cylindre), 5.0));
+    const ResultatTranchage incline = trancher_strategie(par_zones, r);
+    VERIFIER_ACCEPTE(incline.verification);
+    VERIFIER(proche(std::max(-b_extremes(incline).first, b_extremes(incline).second), 30.0, 0.01));
+
+    // La direction suit l'azimut demandé.
+    const Vec3 d = direction_de_zone({{0, 0, 0}, 30.0, 90.0});
+    VERIFIER(proche(d.x, 0.0, 1e-9) && proche(d.y, 0.5, 1e-9) && proche(d.z, std::sqrt(0.75), 1e-9));
+
+    // Deux zones l'une au-dessus de l'autre : la seconde est portée par la première.
+    const Strategie deux = strategie_par_zones(cylindre, r, {{{0, 0, 8}, 20.0, 0.0}, {{0, 0, 20}, 35.0, 180.0}});
+    VERIFIER(deux.parties.size() == 3 && deux.parties[2].parent == 1);
+    VERIFIER_ACCEPTE(trancher_strategie(deux, r).verification);
+
+    // Une tête qui ne penche que de 30° d'un côté : la zone à 40° est imprimée
+    // de l'autre côté (le plateau tourne), jamais au-delà de la butée.
+    Reglages un_cote = r;
+    un_cote.machine.b_min = -30.0;
+    const ResultatTranchage tourne = trancher_strategie(strategie_par_zones(cylindre, un_cote, {{{0, 0, 15}, 40.0, 180.0}}), un_cote);
+    VERIFIER_ACCEPTE(tourne.verification);
+    VERIFIER(b_extremes(tourne).first >= -30.0 - 1e-6 && proche(b_extremes(tourne).second, 40.0, 0.01));
+
+    // Refus avec un message : un point hors du modèle, une inclinaison que la
+    // machine ne sait pas prendre, une zone trop inclinée qui descend au plateau.
+    const auto refuse = [&](const std::vector<ZoneOrientee>& zones, const char* mot) {
+        try {
+            strategie_par_zones(cylindre, r, zones);
+        } catch (const std::runtime_error& erreur) {
+            return std::string(erreur.what()).find(mot) != std::string::npos;
+        }
+        return false;
+    };
+    VERIFIER(refuse({{{80, 0, 15}, 30.0, 0.0}}, "ne détache rien"));
+    VERIFIER(refuse({{{0, 0, 15}, 150.0, 0.0}}, "la machine ne dépasse pas"));
+    VERIFIER(refuse({{{0, 0, 15}, 80.0, 0.0}}, "Solution"));
+}
+
 int main() {
+    test_zones_orientees();
     test_decoupe();
     test_squelette();
     test_cinematique();

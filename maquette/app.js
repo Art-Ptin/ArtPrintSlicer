@@ -47,6 +47,10 @@ const etat = {
   strategies: [],       // façons d'imprimer proposées pour le modèle ouvert
   strategie: 'classique',
   branches: {},         // ondulation : choix de l'utilisateur par branche (numéro de partie -> choix)
+  zones: [],            // ondulation : zones orientées choisies sur le modèle ({ point, inclinaison, azimut })
+  zoneChoisie: -1,
+  pointage: false,      // vrai : le prochain clic sur le modèle ajoute une zone
+  apercuZones: null,    // ce que le slicer dit des zones ({ texte, alerte })
   chemin: null,         // fichier du modèle ouvert
   echelle: 1,           // facteur d'échelle du modèle (1 : taille d'origine)
   orientation: 'origine',
@@ -654,6 +658,7 @@ function afficherStrategies() {
   $('strategie').parentElement.hidden = !etat.strategies.length;
   if (!etat.modele || !etat.strategies.length) {
     $('strategie-detail').textContent = 'Ouvre un modèle : le slicer dira ce que chaque stratégie laisse à soutenir.';
+    afficherOndulation();
     return;
   }
   $('strategie').replaceChildren(...etat.strategies.map((s) => new Option(
@@ -661,18 +666,22 @@ function afficherStrategies() {
   const choisie = etat.strategies.find((s) => s.type === etat.strategie) || etat.strategies[0];
   const detail = $('strategie-detail');
   detail.replaceChildren(document.createTextNode(choisie.description));
+  if (choisie.type === 'couches_courbes' && etat.zones.length) {
+    // Des zones choisies à la main : ce sont elles qui décident, pas les parties trouvées par le slicer.
+    detail.replaceChildren(document.createTextNode(`Ondulation par zones : ${etat.zones.length} zone(s) choisie(s) sur la pièce. ` +
+      'Le bas est imprimé à plat, puis chaque zone dans sa direction.'));
+    afficherOndulation();
+    return;
+  }
   if (choisie.parties.length > 1) {
     detail.append(document.createTextNode(' Inclinaisons : '),
       el('b', '', choisie.parties.map((p) => (p.courbe ? `jusqu'à ${fr(p.inclinaison, 0)}° (courbe)` : `${fr(p.inclinaison, 0)}°`)).join(', ')),
       document.createTextNode('.'));
   }
   if (choisie.type === 'couches_courbes') {
-    const note = el('span', 'remarque', 'Au moment de trancher, une fenêtre te demande comment imprimer chaque partie ' +
-      '(ondulation, tête moins inclinée, ou à plat).');
-    note.id = 'branches-note';
-    detail.append(note);
   }
   for (const remarque of choisie.remarques) detail.append(el('span', 'remarque', remarque));
+  afficherOndulation();
 }
 
 // --- Relevés, modèle, tranchage --------------------------------------------------
@@ -738,6 +747,9 @@ async function poserModele(modele, garderVue = false) {
   etat.plateaux[etat.plateau].positions = modele.positions;   // pour le dessiner quand un autre plateau est choisi
   etat.resultat = null;
   etat.branches = {};
+  // (Le modèle a changé de place ou de taille : les points choisis ne sont plus les bons.)
+  const zonesPerdues = etat.zones.length;
+  oublierZones();
   etat.modele.nom = etat.chemin.split(/[\\/]/).pop();
   vue3d.afficherModele(modele.positions, garderVue);
   vue3d.rafraichirTheme();
@@ -754,6 +766,7 @@ async function poserModele(modele, garderVue = false) {
   if (!etat.strategies.some((st) => st.type === etat.strategie)) etat.strategie = 'classique';
   afficherStrategies();
   if (!etat.modele.ferme) dire(etat.modele.message_fermeture);
+  else if (zonesPerdues) dire('Le modèle a changé : les zones orientées ont été retirées. Remets-les sur la pièce.', { info: true });
   $('btn-trancher').disabled = false;
   perimer();
   afficherPlateaux();
@@ -1048,7 +1061,7 @@ function outilAjouterPlateau() {
   dire(`Plateau ${etat.plateaux.length} ajouté, à côté. Clique dessus (ou sur son bouton en bas) pour travailler dessus.`, { info: true });
 }
 
-// --- Ondulation : les options demandées au moment de trancher -------------------------
+// --- Ondulation : le panneau des réglages 5 axes, dans la colonne ---------------------
 
 const CHOIX_BRANCHE = [
   ['courbes', 'Ondulation, tête d\'aplomb sur les couches'],
@@ -1057,36 +1070,180 @@ const CHOIX_BRANCHE = [
   ['a_plat', 'À plat, avec le corps de la pièce (couches horizontales)'],
 ];
 
-// Rend vrai si l'utilisateur lance le tranchage, faux s'il annule.
-async function optionsOndulation() {
+// Plus grande inclinaison qu'une zone peut demander, d'après les réglages de la machine.
+function inclinaisonMaxZone() {
+  const nombre = (cle, repli) => { const v = lireNombre(moteur(cle)); return Number.isFinite(v) ? v : repli; };
+  const butee = Math.max(Math.abs(nombre('b_min', -90)), Math.abs(nombre('b_max', 90)));
+  return Math.max(5, Math.min(90, butee, nombre('b_inclinaison_max', 90)));
+}
+
+function pointer(actif) {
+  etat.pointage = actif;
+  $('canvas3d').style.cursor = actif ? 'crosshair' : '';
+  vue3d.surPointage = actif ? (point) => {
+    if (!point) { dire('Clique sur la pièce elle-même : c\'est là que la zone commencera.', { info: true }); return; }
+    pointer(false);
+    ajouterZone(point);
+  } : null;
+}
+
+function ajouterZone(point, inclinaison = 30, azimut = 0) {
+  etat.zones.push({ point: point.map((v) => Math.round(v * 10) / 10), inclinaison: Math.min(inclinaison, inclinaisonMaxZone()), azimut });
+  etat.zoneChoisie = etat.zones.length - 1;
+  zonesChangees();
+}
+
+// Tout le haut du modèle en diagonale : une zone au milieu de la pièce, à 45° (ou moins si la machine ne peut pas).
+function zoneDiagonale() {
+  const boite = vue3d.boite;
+  if (!boite) return;
+  ajouterZone([(boite.min.x + boite.max.x) / 2, (boite.min.y + boite.max.y) / 2, boite.min.z + 0.5 * (boite.max.z - boite.min.z)], 45, 0);
+}
+
+let minuterieZones = 0;
+function zonesChangees() {
+  vue3d.afficherZones(etat.zones, etat.zoneChoisie);
+  perimer();
+  afficherStrategies();
+  clearTimeout(minuterieZones);
+  if (!etat.zones.length) { etat.apercuZones = null; return; }
+  // Le slicer dit ce que donnent ces zones (sans trancher), un instant après le dernier réglage.
+  minuterieZones = setTimeout(async () => {
+    const zones = structuredClone(etat.zones);
+    const reponse = await appeler('apercu_zones', { zones });
+    if (JSON.stringify(zones) !== JSON.stringify(etat.zones)) return;   // réglé de nouveau entre-temps
+    if (!reponse.ok) etat.apercuZones = { texte: reponse.erreur || 'Ces zones ne peuvent pas être imprimées.', alerte: true };
+    else {
+      const parties = reponse.strategie.parties;
+      etat.apercuZones = { alerte: false, texte: `${parties.length} parties : le bas à plat (${fr(parties[0].volume_cm3, 1)} cm³), puis ` +
+        parties.slice(1).map((p) => `${fr(p.volume_cm3, 1)} cm³ à ${fr(p.inclinaison, 0)}°`).join(', ') +
+        `. Reste à soutenir : ${entier(reponse.strategie.surplomb_mm2)} mm².` +
+        (reponse.strategie.remarques.length ? ' ' + reponse.strategie.remarques.join(' ') : '') };
+    }
+    afficherOndulation();
+  }, 350);
+}
+
+function oublierZones() {
+  if (etat.pointage) pointer(false);
+  etat.zones = [];
+  etat.zoneChoisie = -1;
+  etat.apercuZones = null;
+  vue3d.afficherZones([]);
+}
+
+// Une ligne de réglage d'une zone : un curseur et un champ, qui disent la même valeur.
+function reglageZone(libelle, id, valeur, min, max, unite, surChange) {
+  const ligne = el('div', 'reglage');
+  const curseur = el('input');
+  curseur.type = 'range'; curseur.min = min; curseur.max = max; curseur.step = 1; curseur.value = valeur;
+  curseur.id = id; curseur.setAttribute('aria-label', `${libelle} (${unite})`);
+  const champ = el('input', 'champ');
+  champ.type = 'number'; champ.min = min; champ.max = max; champ.step = 1; champ.value = valeur;
+  champ.id = `${id}-champ`; champ.setAttribute('aria-label', `${libelle} (${unite})`);
+  const poser = (texte, final) => {
+    const v = Math.min(max, Math.max(min, Number(texte)));
+    if (!Number.isFinite(v)) return;
+    curseur.value = v;
+    if (final || document.activeElement !== champ) champ.value = v;
+    surChange(v);
+  };
+  curseur.addEventListener('input', () => { champ.value = curseur.value; poser(curseur.value, false); });
+  champ.addEventListener('change', () => poser(champ.value, true));
+  ligne.append(el('span', '', libelle), curseur, champ);
+  return ligne;
+}
+
+function afficherOndulation() {
+  const panneau = $('panneau-ondulation');
+  const actif = Boolean(etat.modele) && etat.strategie === 'couches_courbes';
+  panneau.hidden = !actif;
+  if (!actif) {
+    if (etat.pointage) pointer(false);
+    vue3d.afficherZones([]);
+    return;
+  }
+  // Pendant qu'on fait glisser un curseur, le panneau n'est pas reconstruit (le curseur serait lâché).
+  if (panneau.contains(document.activeElement) && document.activeElement.type === 'range') {
+    const note = $('zones-apercu');
+    if (note && etat.apercuZones) { note.textContent = etat.apercuZones.texte; note.classList.toggle('alerte', etat.apercuZones.alerte); }
+    return;
+  }
+  const contenu = [el('h3', '', 'Ondulation · 5 axes')];
   const strategie = etat.strategies.find((st) => st.type === 'couches_courbes');
-  const contenu = [];
-  if (!strategie || strategie.parties.length < 2) {
-    contenu.push(el('p', 'aide', 'Ce modèle n\'a aucune partie que le slicer sache imprimer la tête inclinée : en ondulation, ' +
-      'il sera imprimé comme en classique. Tu peux quand même lancer le tranchage.'));
+  const max = inclinaisonMaxZone();
+
+  // 1. Les zones orientées, choisies à la main.
+  contenu.push(el('p', 'aide', 'Zones orientées : clique sur la pièce pour dire « à partir d\'ici, imprime dans une autre direction ». ' +
+    'Le bas est imprimé à plat, puis chaque zone la tête inclinée et le plateau tourné.'));
+  const rangee = el('div', 'rangee');
+  const ajouter = el('button', 'bouton fin', etat.pointage ? 'Clique sur la pièce… (annuler)' : 'Ajouter une zone en cliquant');
+  ajouter.id = 'zone-ajouter';
+  ajouter.setAttribute('aria-pressed', String(etat.pointage));
+  ajouter.addEventListener('click', () => { pointer(!etat.pointage); afficherOndulation(); });
+  const diagonale = el('button', 'bouton fin', 'Le haut en diagonale');
+  diagonale.id = 'zone-diagonale';
+  diagonale.title = 'Ajoute une zone à mi-hauteur de la pièce, inclinée de 45° : à régler ensuite.';
+  diagonale.addEventListener('click', zoneDiagonale);
+  rangee.append(ajouter, diagonale);
+  contenu.push(rangee);
+
+  etat.zones.forEach((zone, i) => {
+    const carte = el('div', 'zone-orientee' + (i === etat.zoneChoisie ? ' choisie' : ''));
+    carte.id = `zone-${i + 1}`;
+    const tete = el('header');
+    const retirer = el('button', 'bouton-icone');
+    retirer.id = `zone-${i + 1}-retirer`;
+    retirer.title = 'Retirer cette zone';
+    retirer.setAttribute('aria-label', `Retirer la zone ${i + 1}`);
+    retirer.append(icone('supprimer'));
+    retirer.addEventListener('click', () => { etat.zones.splice(i, 1); etat.zoneChoisie = -1; zonesChangees(); });
+    tete.append(el('span', '', `Zone ${i + 1}`), retirer);
+    const choisir = () => { if (etat.zoneChoisie !== i) { etat.zoneChoisie = i; vue3d.afficherZones(etat.zones, i); } };
+    carte.addEventListener('pointerdown', choisir);
+    carte.addEventListener('focusin', choisir);
+    const hauteurMax = Math.max(1, Math.floor(vue3d.boite ? vue3d.boite.max.z : 260));
+    carte.append(tete,
+      reglageZone('Inclinaison', `zone-${i + 1}-inclinaison`, zone.inclinaison, 0, max, 'degrés', (v) => { zone.inclinaison = v; zonesChangees(); }),
+      reglageZone('Direction', `zone-${i + 1}-azimut`, zone.azimut, 0, 359, 'degrés', (v) => { zone.azimut = v; zonesChangees(); }),
+      reglageZone('Hauteur', `zone-${i + 1}-hauteur`, Math.round(zone.point[2]), 0, hauteurMax, 'mm', (v) => { zone.point[2] = v; zonesChangees(); }));
+    contenu.push(carte);
+  });
+  if (etat.zones.length) {
+    const note = el('p', 'aide' + (etat.apercuZones?.alerte ? ' alerte' : ''), etat.apercuZones?.texte ?? 'Calcul des parties…');
+    note.id = 'zones-apercu';
+    contenu.push(note, el('p', 'aide', `Inclinaison : 0° = tête verticale, ${fr(max, 0)}° au plus sur cette machine. Direction : le côté vers lequel ` +
+      'les couches penchent (0° vers la droite du plateau, 90° vers le fond). Le disque dans la vue montre le plan de coupe, la flèche la direction d\'impression.' +
+      (simulation ? ' (Simulation : le tranchage affiché est enregistré, il ne tient pas compte des zones.)' : '')));
+  } else if (!strategie || strategie.parties.length < 2) {
+    // 2. Pas de zone, et rien que le slicer sache incliner tout seul.
+    contenu.push(el('p', 'aide', 'Sans zone, ce modèle sera imprimé comme en classique : le slicer n\'y trouve aucune partie à imprimer la tête inclinée.'));
   } else {
-    contenu.push(el('p', 'aide', `Ce modèle a ${strategie.parties.length - 1} partie(s) imprimée(s) dans une autre direction. ` +
-      'Choisis pour chacune la façon de l\'imprimer : la jonction avec le reste de la pièce est refaite toute seule.'));
+    // 3. Pas de zone : les parties trouvées par le slicer, à régler une par une.
+    contenu.push(el('p', 'aide', `Sans zone, le slicer imprime tout seul ${strategie.parties.length - 1} partie(s) dans une autre direction. ` +
+      'Choisis pour chacune la façon de l\'imprimer :'));
     strategie.parties.forEach((partie, i) => {
       if (i === 0) return;
       const etiquette = el('label', '', `Partie ${i + 1} · ${fr(partie.volume_cm3, 1)} cm³ · inclinée de ${fr(partie.inclinaison, 0)}°` +
         (partie.parent > 0 ? ` · portée par la partie ${partie.parent + 1}` : ''));
-      const choix = el('select');
+      const choix = el('select', 'champ');
       choix.id = `branche-${i + 1}`;
       for (const [valeur, texte] of CHOIX_BRANCHE) {
         choix.append(new Option(texte, valeur, false, (etat.branches[i + 1] || 'courbes') === valeur));
       }
       choix.addEventListener('change', () => {
         if (choix.value === 'courbes') delete etat.branches[i + 1]; else etat.branches[i + 1] = choix.value;
+        perimer();
       });
       etiquette.append(choix);
       contenu.push(etiquette);
     });
+    if (simulation) contenu.push(el('p', 'aide', '(Simulation : le tranchage affiché est enregistré, il ne tient pas compte de ces choix.)'));
   }
-  contenu.push(el('p', 'aide', 'Imprimer dans une autre direction peut allonger l\'impression : après le tranchage, ' +
-    'la durée est comparée à celle du classique.' +
-    (simulation ? ' (Simulation : le tranchage affiché est enregistré, il ne tient pas compte de ces choix.)' : '')));
-  return fenetreOptions('Options de l\'ondulation', contenu, 'Trancher', 'options-trancher');
+  if (etat.zones.length && strategie && strategie.parties.length > 1) {
+    contenu.push(el('p', 'aide', 'Avec des zones, les parties que le slicer trouve tout seul ne sont pas utilisées : seules tes zones comptent.'));
+  }
+  panneau.replaceChildren(...contenu);
 }
 
 function montrerRemarques() {
@@ -1159,8 +1316,9 @@ async function trancher() {
   if (etat.page !== 'preparer' && etat.page !== 'apercu') choisirVue('preparer');   // pour voir l'attente
   const demande = { strategie: etat.strategie };
   if (etat.strategie === 'couches_courbes') {
-    if (!(await optionsOndulation())) return;
-    const branches = Object.entries(etat.branches).map(([partie, choix]) => (
+    if (etat.pointage) pointer(false);
+    if (etat.zones.length) demande.zones = etat.zones;
+    const branches = etat.zones.length ? [] : Object.entries(etat.branches).map(([partie, choix]) => (
       choix === 'a_plat' ? { partie: Number(partie), mode: 'a_plat' }
         : { partie: Number(partie), mode: 'courbes', inclinaison_max: choix === 'incline60' ? 60 : 45 }));
     if (branches.length) demande.branches = branches;
@@ -1316,9 +1474,11 @@ const OUTILS_BRANCHES = {
   'direction-zone': () => {
     if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
     etat.strategie = etat.strategies.some((st) => st.type === 'couches_courbes') ? 'couches_courbes' : etat.strategie;
-    afficherStrategies();
     perimer();
-    trancher();
+    // L'outil met la souris en attente d'un clic sur la pièce : la zone commencera là.
+    if (etat.strategie === 'couches_courbes') pointer(true);
+    afficherStrategies();
+    if (etat.pointage) dire('Clique sur la pièce : à partir de ce point, elle sera imprimée dans une autre direction.', { info: true });
   },
 };
 

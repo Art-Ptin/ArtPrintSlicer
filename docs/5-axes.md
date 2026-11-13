@@ -276,6 +276,28 @@ Avec la forme réelle d'une tête, trois choses limitent cette stratégie :
 - le **bras** qui porte la tête doit pouvoir passer à côté du tronc déjà
   imprimé.
 
+## Les zones orientées : la direction choisie à la main
+
+Le slicer ne trouve pas toujours seul une partie à incliner (une pièce sans
+branche, par exemple). L'utilisateur peut alors désigner lui-même des
+**zones** : un point de la pièce, une inclinaison et une direction.
+
+À chaque zone, le modèle est coupé par un plan qui passe par le point et qui
+est perpendiculaire à la direction demandée (`strategie_par_zones`, dans
+`strategie.hpp`). Ce qui est sous le plan est imprimé d'abord, à plat ; ce qui
+est au-dessus est imprimé ensuite en couches planes empilées le long de la
+direction, la tête inclinée (B) et le plateau tourné (C). Une zone plus haute
+peut être prise dans une zone déjà détachée : elle est alors portée par elle.
+
+Contrôles faits avant de trancher, avec un message et une solution :
+l'inclinaison demandée contre les butées de B, la limite près du plateau pour
+une zone qui descend bas, et un plan qui ne détache rien. Le G-code passe
+ensuite par le vérificateur comme les autres ; au ras du plateau, les petits
+bouts de cordon qui chevaucheraient le bas déjà posé ne sont pas imprimés.
+
+Dans l'interface : commande `trancher` avec `"zones"`, et `apercu_zones` pour
+connaître les parties sans trancher. Une zone est limitée à 90° pour l'instant.
+
 ## La peau courbe (option)
 
 Réglage « Peau courbe (dessus lisse) », onglet Qualité (`peau_courbe = 1`

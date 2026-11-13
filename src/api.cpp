@@ -146,6 +146,23 @@ Json decrire_strategie(const Strategie& strategie) {
     return reponse;
 }
 
+// Les zones orientées d'une demande de l'interface.
+std::vector<ZoneOrientee> lire_zones(const Json& liste) {
+    std::vector<ZoneOrientee> zones;
+    for (const Json& z : liste) {
+        const Json& p = z.at("point");
+        if (!p.is_array() || p.size() != 3) {
+            throw std::runtime_error("Zone : « point » doit donner trois nombres (X, Y, Z).");
+        }
+        ZoneOrientee zone;
+        zone.point = {p[0].get<double>(), p[1].get<double>(), p[2].get<double>()};
+        zone.inclinaison = z.value("inclinaison", 0.0);
+        zone.azimut = z.value("azimut", 0.0);
+        zones.push_back(zone);
+    }
+    return zones;
+}
+
 // Pour le diagnostic seulement (voir main.cpp) : la variable d'environnement
 // ARTPRINT_GCODE_REFUSE donne un fichier où garder un G-code refusé.
 void garder_le_refus(const ResultatTranchage& resultat) {
@@ -367,6 +384,12 @@ std::string Session::executer(std::string_view demande_json) {
             const std::string voulue = demande.value("strategie", std::string("classique"));
             if (voulue == "classique") {
                 etat.resultat = trancher_classique(*etat.modele, etat.reglages, true);
+            } else if (voulue == "couches_courbes" && demande.contains("zones") && !demande["zones"].empty()) {
+                // « zones » (facultatif) : les zones orientées choisies par
+                // l'utilisateur. Chaque entrée : "point" [x, y, z] sur le
+                // modèle posé, "inclinaison" et "azimut" en degrés.
+                etat.resultat = trancher_strategie(
+                    strategie_par_zones(*etat.modele, etat.reglages, lire_zones(demande["zones"])), etat.reglages);
             } else {
                 const Strategie* choisie = nullptr;
                 std::vector<Strategie> strategies = proposer_strategies(*etat.modele, etat.reglages);
@@ -477,6 +500,14 @@ std::string Session::executer(std::string_view demande_json) {
                 reponse["resultat"]["duree_classique_s"] =
                     std::round(trancher_classique(*etat.modele, etat.reglages, true).duree_estimee);
             }
+        } else if (commande == "apercu_zones") {
+            // Ce que donneraient les zones orientées, sans trancher : les
+            // parties, leur direction, leur volume, ce qui reste à soutenir.
+            if (!etat.modele) {
+                throw std::runtime_error("Aucun modèle n'est ouvert.");
+            }
+            reponse["strategie"] = decrire_strategie(
+                strategie_par_zones(*etat.modele, etat.reglages, lire_zones(demande.at("zones"))));
         } else if (commande == "strategies") {
             if (!etat.modele) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");
