@@ -374,6 +374,17 @@ private:
         return std::format("X{:.3f} Y{:.3f} Z{:.3f} B{:.3f} C{:.3f}", m.x, m.y, m.z, m.b + machine_.b_vertical, m.c);
     }
 
+    // Position de la machine pour cette pose. Le côté demandé pour la partie
+    // est essayé d'abord ; si la machine ne peut pas le prendre (une tête
+    // qui ne penche que d'un côté, par exemple), l'autre côté est accepté.
+    std::optional<PositionMachine> orienter(const PoseOutil& pose) const {
+        auto position = position_machine(machine_, pose, c_, cote_);
+        if (!position && cote_ != 0) {
+            position = position_machine(machine_, pose, c_, 0);
+        }
+        return position;
+    }
+
     double limite_inclinaison(double z) const {
         const bool haut = machine_.hauteur_bascule_b && z >= *machine_.hauteur_bascule_b + 0.5;
         // (Le firmware a sa propre limite d'inclinaison : elle n'est jamais dépassée.)
@@ -530,7 +541,7 @@ private:
         bool grand_changement = !oriente_;
         if (!grand_changement && pivot_) {
             // Couche suivante de la même partie : la carte a un peu tourné.
-            const auto orientation = position_machine(machine_, {cible, outil_}, c_, cote_);
+            const auto orientation = orienter({cible, outil_});
             if (!orientation) {
                 throw ErreurTranchage(
                     "La machine ne peut pas suivre cette couche courbe : l'orientation demandée "
@@ -729,7 +740,7 @@ private:
     // de la couche en cours. Renvoie la hauteur (dans le repère de la partie)
     // où la buse s'arrête, prête à descendre le long de son axe.
     double changer_orientation(const Point2& p) {
-        const auto cible = position_machine(machine_, {point(p, z_), outil_}, c_, cote_);
+        const auto cible = orienter({point(p, z_), outil_});
         if (!cible) {
             throw ErreurTranchage(std::format(
                 "La machine ne peut pas orienter la tête pour une partie penchée de {:.0f}° : "
@@ -776,7 +787,7 @@ private:
     // Renvoie la hauteur (dans le nouveau repère) où la buse s'arrête.
     double pivoter_vers(const Point2& p) {
         pivot_ = false;
-        const auto cible = position_machine(machine_, {point(p, z_), outil_}, c_, cote_);
+        const auto cible = orienter({point(p, z_), outil_});
         if (!cible) {
             throw ErreurTranchage(
                 "La machine ne peut pas suivre la courbe de cette partie : l'orientation "
@@ -798,7 +809,7 @@ private:
     // vers l'orientation de la couche suivante pendant l'impression.
     void preparer_pivot_continu() {
         a_preparer_ = false;
-        const auto fin = position_machine(machine_, {pointe_, outil_suivant_}, c_, cote_);
+        const auto fin = orienter({pointe_, outil_suivant_});
         if (!fin) {
             return;  // hors des butées : le changement d'orientation suivant le dira
         }
@@ -2070,8 +2081,33 @@ ResultatTranchage trancher_classique(const Maillage& modele, const Reglages& reg
     return trancher_strategie(classique, reglages);
 }
 
+namespace {
+ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const Reglages& reglages,
+                                               const OptionsMultiaxe& options);
+}  // namespace
+
 ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
                                      const OptionsMultiaxe& options) {
+    ResultatTranchage resultat = trancher_strategie_avec_peau(strategie, reglages, options);
+    // Peau courbe : si le fichier est refusé avec elle (la passe de peau
+    // repasse dans la matière, ou sous elle), le slicer y renonce et le dit.
+    if (reglages.impression.peau_courbe && !resultat.verification.valide()) {
+        Reglages sans = reglages;
+        sans.impression.peau_courbe = false;
+        ResultatTranchage simple = trancher_strategie_avec_peau(strategie, sans, options);
+        if (simple.verification.nombre_erreurs < resultat.verification.nombre_erreurs) {
+            simple.remarques.push_back(
+                "La peau courbe a été abandonnée pour cette pièce : avec elle, le G-code était refusé "
+                "(la passe de peau repassait dans la matière déjà posée). Le dessus est imprimé en couches planes.");
+            return simple;
+        }
+    }
+    return resultat;
+}
+
+namespace {
+ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const Reglages& reglages,
+                                               const OptionsMultiaxe& options) {
     // Ondulation sans aucune branche : c'est une impression classique.
     if (strategie.type == TypeStrategie::couches_courbes && strategie.parties.size() == 1) {
         ResultatTranchage simple = trancher_classique(strategie.modele, reglages, true);
@@ -2093,7 +2129,13 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
         const bool ondulation = std::any_of(strategie.parties.begin(), strategie.parties.end(),
                                             [](const PartieImpression& p) { return p.couches_courbes; });
         if (!ondulation || options.replis <= 0) {
-            throw;
+            // Dernier recours : toute la pièce en couches horizontales, la
+            // tête verticale. C'est toujours possible, et l'utilisateur est prévenu.
+            ResultatTranchage simple = trancher_classique(strategie.modele, reglages, true);
+            simple.remarques.insert(simple.remarques.begin(),
+                                    std::string("La pièce est imprimée en classique (3 axes) : la machine ne peut pas "
+                                                "prendre l'orientation que demandait cette stratégie. ") + erreur.what());
+            return simple;
         }
         const std::string message = erreur.what();
         std::size_t fautive = 0;  // 0 : inconnue
@@ -2367,5 +2409,6 @@ ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages&
     }
     return resultat;
 }
+}  // namespace
 
 }  // namespace artprint

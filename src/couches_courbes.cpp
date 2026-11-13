@@ -364,11 +364,13 @@ bool cartes_de_la_tige(std::vector<Brut>& bruts, const ChampCouches& champ, doub
                 }
                 ombre = Clipper2Lib::Union(ombre, Clipper2Lib::FillRule::NonZero);
                 const Clipper2Lib::Rect64 boite = Clipper2Lib::GetBounds(ombre);
-                const double fin = std::max(0.2, 0.5 * champ.pas);
                 const double x0 = static_cast<double>(boite.left) / unites_par_mm;
                 const double y0 = static_cast<double>(boite.top) / unites_par_mm;
                 const double x1 = static_cast<double>(boite.right) / unites_par_mm;
                 const double y1 = static_cast<double>(boite.bottom) / unites_par_mm;
+                // (Sur une très grande couche, la grille de mesure est moins
+                // fine : sinon ce calcul prendrait des minutes.)
+                const double fin = std::max({0.2, 0.5 * champ.pas, std::abs(x1 - x0) / 140.0, std::abs(y1 - y0) / 140.0});
                 const double seuil = std::cos(en_radians(72.0));
                 Polygones bandes;
                 for (double y = std::min(y0, y1); y < std::max(y0, y1); y += fin) {

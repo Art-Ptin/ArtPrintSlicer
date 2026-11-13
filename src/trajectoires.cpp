@@ -68,6 +68,16 @@ void ajouter_boucles(std::vector<Trait>& traits, const Polygones& contours, Type
     }
 }
 
+// Clé d'une case de grille. Les voisines se cherchent en décalant le NUMÉRO
+// de case (un entier), jamais la coordonnée : ajouter la taille d'une case à
+// une coordonnée presque nulle et négative donne exactement la taille de la
+// case, et la recherche sauterait une case.
+std::int64_t cle_de_case(double x, double y, double taille, int dx = 0, int dy = 0) {
+    const std::int64_t i = static_cast<std::int64_t>(std::floor(x / taille)) + dx;
+    const std::int64_t j = static_cast<std::int64_t>(std::floor(y / taille)) + dy;
+    return i * 4294967296LL + (j & 0xffffffffLL);
+}
+
 // Cordons uniques au milieu des passages étroits. « libre » : la zone où ce
 // niveau de paroi peut se poser. Là où elle fait moins de deux largeurs de
 // cordon, deux parois ne tiennent pas côte à côte : elles se recouvriraient.
@@ -92,10 +102,7 @@ void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, dou
     }
     // Grille : pour chaque case, les arêtes qui la traversent (à une case près).
     const double case_grille = 2.5 * largeur;
-    const auto cle = [&](double x, double y) {
-        return (static_cast<std::int64_t>(std::floor(x / case_grille)) << 32) ^
-               (static_cast<std::int64_t>(std::floor(y / case_grille)) & 0xffffffffLL);
-    };
+    const auto cle = [&](double x, double y) { return cle_de_case(x, y, case_grille); };
     std::unordered_map<std::int64_t, std::vector<std::uint32_t>> cases;
     for (std::uint32_t n = 0; n < aretes.size(); ++n) {
         const Arete& a = aretes[n];
@@ -115,7 +122,7 @@ void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, dou
         double plus_pres = std::numeric_limits<double>::max();
         for (int dx = -1; dx <= 1; ++dx) {
             for (int dy = -1; dy <= 1; ++dy) {
-                const auto trouve = cases.find(cle(q.x + dx * case_grille, q.y + dy * case_grille));
+                const auto trouve = cases.find(cle_de_case(q.x, q.y, case_grille, dx, dy));
                 if (trouve == cases.end()) {
                     continue;
                 }
@@ -148,10 +155,7 @@ void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, dou
         std::size_t chaine, rang;
     };
     const double case_points = 1.8 * largeur;
-    const auto cle_point = [&](double x, double y) {
-        return (static_cast<std::int64_t>(std::floor(x / case_points)) << 32) ^
-               (static_cast<std::int64_t>(std::floor(y / case_points)) & 0xffffffffLL);
-    };
+    const auto cle_point = [&](double x, double y) { return cle_de_case(x, y, case_points); };
     std::unordered_map<std::int64_t, std::vector<Pose>> poses;
     std::size_t numero_chaine = 0;
     struct Milieu {
@@ -217,7 +221,7 @@ void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, dou
                 bool deja = false;
                 for (int dx = -1; dx <= 1 && !deja; ++dx) {
                     for (int dy = -1; dy <= 1 && !deja; ++dy) {
-                        const auto trouve = poses.find(cle_point(milieu.x + dx * case_points, milieu.y + dy * case_points));
+                        const auto trouve = poses.find(cle_de_case(milieu.x, milieu.y, case_points, dx, dy));
                         if (trouve == poses.end()) {
                             continue;
                         }
@@ -272,10 +276,7 @@ void retirer_les_recouvrements(std::vector<Trait>& traits, std::size_t premier, 
         double abscisse;
     };
     const double case_grille = seuil;
-    const auto cle = [&](double x, double y) {
-        return (static_cast<std::int64_t>(std::floor(x / case_grille)) << 32) ^
-               (static_cast<std::int64_t>(std::floor(y / case_grille)) & 0xffffffffLL);
-    };
+    const auto cle = [&](double x, double y) { return cle_de_case(x, y, case_grille); };
     std::unordered_map<std::int64_t, std::vector<Pose>> poses;
     std::vector<std::size_t> ordre(traits.size() - premier);
     for (std::size_t k = 0; k < ordre.size(); ++k) {
@@ -315,7 +316,7 @@ void retirer_les_recouvrements(std::vector<Trait>& traits, std::size_t premier, 
                 Echantillon e{{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t}, i, abscisse + longueur * t, true};
                 for (int dx = -1; dx <= 1 && e.garde; ++dx) {
                     for (int dy = -1; dy <= 1 && e.garde; ++dy) {
-                        const auto trouve = poses.find(cle(e.p.x + dx * case_grille, e.p.y + dy * case_grille));
+                        const auto trouve = poses.find(cle_de_case(e.p.x, e.p.y, case_grille, dx, dy));
                         if (trouve == poses.end()) {
                             continue;
                         }
