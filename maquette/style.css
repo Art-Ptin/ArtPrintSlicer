@@ -74,6 +74,7 @@ input.interrupteur {
 .titre-bouton, .titre-icone { border: 0; background: none; color: var(--c-barre-texte); cursor: pointer; transition: background var(--d-rapide), color var(--d-rapide); }
 .titre-bouton { display: inline-flex; align-items: center; gap: var(--e-2); padding: 0 var(--e-2) 0 var(--e-3); }
 .titre-bouton .chevron { display: grid; color: var(--c-barre-texte-2); }
+.titre-icone:disabled { opacity: 0.4; cursor: default; background: none; }
 .titre-icone { width: var(--h-barre-titre); display: grid; place-items: center; color: var(--c-barre-texte-2); }
 .titre-bouton:hover, .titre-bouton[aria-expanded="true"], .titre-icone:hover { background: var(--c-barre-2); color: var(--c-barre-texte); }
 .titre-sep { align-self: center; width: var(--trait); height: var(--i-16); background: var(--c-barre-texte-3); margin: 0 var(--e-1); }

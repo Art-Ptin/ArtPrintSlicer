@@ -47,6 +47,7 @@ const etat = {
   strategies: [],       // façons d'imprimer proposées pour le modèle ouvert
   strategie: 'classique',
   branches: {},         // ondulation : choix de l'utilisateur par branche (numéro de partie -> choix)
+  coupes: [],           // coupes faites sur le modèle ouvert ({ hauteur, garder, pose })
   zones: [],            // ondulation : zones orientées choisies sur le modèle ({ point, inclinaison, azimut })
   zoneChoisie: -1,
   pointage: false,      // vrai : le prochain clic sur le modèle ajoute une zone
@@ -736,8 +737,10 @@ async function chargerModele(chemin) {
   etat.orientation = 'origine';
   etat.rotation = [0, 0, 0];
   etat.decalage = [0, 0];
+  etat.coupes = [];
   etat.plateaux[etat.plateau] = { chemin, echelle: 1, orientation: 'origine', rotation: [0, 0, 0], decalage: [0, 0] };
   await poserModele(reponse.modele);
+  noter();
   return true;
 }
 
@@ -790,6 +793,224 @@ async function transformer(parametres, message) {
     rotation: etat.rotation, decalage: etat.decalage, positions: etat.plateaux[etat.plateau]?.positions };
   await poserModele(reponse.modele, true);
   dire(((parametres.orientation || parametres.rotation) && reponse.note) || message, { info: true });
+  noter();
+}
+
+// --- Annuler, refaire --------------------------------------------------------------
+// L'historique garde la pièce et ce qu'on lui a fait : pose, échelle, coupes,
+// stratégie, zones. (Les paramètres du procédé n'en font pas partie.)
+
+const historique = { passe: [], futur: [], courant: null, gele: false };
+const instantane = () => structuredClone({ chemin: etat.chemin, echelle: etat.echelle, orientation: etat.orientation,
+  rotation: etat.rotation, decalage: etat.decalage, coupes: etat.coupes, strategie: etat.strategie,
+  branches: etat.branches, zones: etat.zones });
+function boutonsHistorique() {
+  $('btn-annuler').disabled = !historique.passe.length;
+  $('btn-refaire').disabled = !historique.futur.length;
+}
+// À appeler après chaque action aboutie.
+function noter() {
+  if (historique.gele) return;
+  const ici = instantane();
+  if (historique.courant && JSON.stringify(ici) === JSON.stringify(historique.courant)) return;
+  if (historique.courant) historique.passe.push(historique.courant);
+  if (historique.passe.length > 50) historique.passe.shift();
+  historique.courant = ici;
+  historique.futur = [];
+  boutonsHistorique();
+}
+let minuterieNote = 0;
+function noterBientot() { clearTimeout(minuterieNote); minuterieNote = setTimeout(noter, 700); }
+function oublierHistorique() {
+  historique.passe = [];
+  historique.futur = [];
+  historique.courant = etat.chemin ? instantane() : null;
+  boutonsHistorique();
+}
+
+const poseDe = (i) => {
+  const parametres = { echelle: i.echelle, decalage: i.decalage ?? [0, 0] };
+  if (i.orientation === 'auto') parametres.orientation = 'auto'; else parametres.rotation = i.rotation ?? [0, 0, 0];
+  return parametres;
+};
+
+// Remet la pièce dans l'état d'un instantané (historique ou projet). Rend faux en cas d'échec.
+async function restaurer(cible) {
+  historique.gele = true;
+  try {
+    if (!cible.chemin) { await fermerModele(); return true; }
+    const memeBase = cible.chemin === etat.chemin && JSON.stringify(cible.coupes ?? []) === JSON.stringify(etat.coupes);
+    if (!memeBase) {
+      if (!(await chargerModele(cible.chemin))) return false;
+      // Les coupes sont refaites dans l'ordre, chacune dans la pose où elle avait été faite.
+      for (const coupe of cible.coupes ?? []) {
+        await transformer(coupe.pose, 'Pièce remise en place.');
+        if (!(await couper(coupe.hauteur, coupe.garder))) return false;
+      }
+    }
+    await transformer(poseDe(cible), 'Pièce remise en place.');
+    etat.strategie = etat.strategies.some((st) => st.type === cible.strategie) ? cible.strategie : 'classique';
+    etat.branches = structuredClone(cible.branches ?? {});
+    etat.zones = structuredClone(cible.zones ?? []);
+    etat.zoneChoisie = -1;
+    zonesChangees();
+    return true;
+  } finally {
+    historique.gele = false;
+  }
+}
+
+async function annuler() {
+  if (!historique.passe.length) { dire('Il n\'y a rien à annuler.', { info: true }); return; }
+  clearTimeout(minuterieNote);
+  const cible = historique.passe.pop(), depart = historique.courant;
+  if (!(await restaurer(cible))) { historique.passe.push(cible); return; }
+  historique.futur.push(depart);
+  historique.courant = cible;
+  boutonsHistorique();
+  dire('Dernière action annulée.', { info: true });
+}
+async function refaire() {
+  if (!historique.futur.length) { dire('Il n\'y a rien à refaire.', { info: true }); return; }
+  const cible = historique.futur.pop(), depart = historique.courant;
+  if (!(await restaurer(cible))) { historique.futur.push(cible); return; }
+  historique.passe.push(depart);
+  historique.courant = cible;
+  boutonsHistorique();
+  dire('Action refaite.', { info: true });
+}
+
+// --- Couper la pièce ---------------------------------------------------------------
+
+// Coupe la pièce posée par un plan horizontal et garde le bas ou le haut. Rend faux en cas d'échec.
+async function couper(hauteur, garder) {
+  const pose = poseDe(etat);
+  occuper('Coupe de la pièce…');
+  const reponse = await demander('couper_modele', { hauteur, garder });
+  liberer();
+  if (!reponse) return false;
+  etat.coupes = [...etat.coupes, { hauteur, garder, pose }];
+  etat.echelle = reponse.echelle;
+  etat.orientation = reponse.orientation;
+  etat.rotation = reponse.rotation;
+  etat.decalage = reponse.decalage;
+  etat.plateaux[etat.plateau] = { ...etat.plateaux[etat.plateau], echelle: etat.echelle, orientation: etat.orientation,
+    rotation: etat.rotation, decalage: etat.decalage };
+  await poserModele(reponse.modele, true);
+  return true;
+}
+
+async function outilCouper() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  const haut = etat.modele.dimensions[2];
+  const champ = el('input');
+  champ.type = 'text';
+  champ.id = 'coupe-hauteur';
+  champ.inputMode = 'decimal';
+  champ.value = ecrire(Math.round(haut * 5) / 10);
+  const etiquette = el('label', '', 'Hauteur de la coupe, depuis le plateau (mm)');
+  etiquette.append(champ);
+  const choix = el('select');
+  choix.id = 'coupe-garder';
+  choix.append(new Option('Garder le bas', 'bas'), new Option('Garder le haut', 'haut'));
+  const etiquetteChoix = el('label', '', 'Morceau gardé');
+  etiquetteChoix.append(choix);
+  const aide = el('p', 'aide', `La pièce fait ${fr(haut)} mm de haut. Elle est coupée à plat à cette hauteur ; le morceau gardé ` +
+    'est reposé sur le plateau, l\'autre est retiré. « Annuler » (en haut à gauche) revient à la pièce entière.' +
+    (simulation ? ' (Simulation : la coupe demande le vrai slicer, dans l\'application.)' : ''));
+  if (!(await fenetreOptions('Couper la pièce', [etiquette, etiquetteChoix, aide], 'Couper', 'coupe-appliquer', { panneau: true }))) return;
+  const hauteur = lireNombre(champ.value);
+  if (!(hauteur > 0 && hauteur < haut)) { dire(`La hauteur de coupe doit être entre 0 et ${fr(haut)} mm.`); return; }
+  if (await couper(hauteur, choix.value)) {
+    dire(`Pièce coupée à ${fr(hauteur)} mm : le ${choix.value === 'bas' ? 'bas' : 'haut'} est gardé.`, { info: true });
+    noter();
+  }
+}
+
+// --- Projet : nouveau, enregistrer, ouvrir ------------------------------------------
+
+const FILTRE_PROJET = [['Projet ArtPrint Slicer', '*.artprint']];
+
+async function fermerModele() {
+  await demander('fermer_modele');
+  oublierZones();
+  etat.modele = null;
+  etat.chemin = null;
+  etat.coupes = [];
+  etat.strategies = [];
+  etat.strategie = 'classique';
+  etat.branches = {};
+  etat.echelle = 1;
+  etat.orientation = 'origine';
+  etat.rotation = [0, 0, 0];
+  etat.decalage = [0, 0];
+  etat.plateaux = [{}];
+  etat.plateau = 0;
+  vue3d.afficherModele([]);
+  $('r-modele').textContent = 'Aucun modèle';
+  $('r-dimensions').textContent = '';
+  $('titre-document').textContent = 'Sans titre';
+  $('btn-trancher').disabled = true;
+  $('accueil').hidden = false;
+  afficherStrategies();
+  perimer();
+  afficherPlateaux();
+}
+
+async function nouveauProjet() {
+  await fermerModele();
+  etat.cheminProjet = null;
+  oublierHistorique();
+  dire('Nouveau projet : le plateau est vide. Les réglages sont gardés.', { info: true });
+}
+
+async function enregistrerProjet() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle : il n\'y a rien à enregistrer.', { info: true }); return; }
+  const nom = (etat.modele.nom || 'piece').replace(/\.[^.]+$/, '') + '.artprint';
+  const choix = await demander('dialogue_enregistrer', { titre: 'Enregistrer le projet', nom_propose: etat.cheminProjet || nom, filtres: FILTRE_PROJET });
+  if (!choix || !choix.chemin) return;
+  const projet = { format: 'artprint-projet', version: 1, ...instantane(), profil: etat.profil, valeurs: etat.valeurs,
+    reglages: Object.fromEntries(etat.moteur.map((r) => [r.cle, r.valeur])) };
+  if (!(await demander('enregistrer_projet', { chemin: choix.chemin, projet }))) return;
+  etat.cheminProjet = choix.chemin;
+  dire(`Projet enregistré : ${choix.chemin}. Il garde le chemin du modèle, sa pose, les coupes, les zones et les réglages.`, { info: true });
+}
+
+async function ouvrirProjet() {
+  const choix = await demander('dialogue_ouvrir', { titre: 'Ouvrir un projet', filtres: [...FILTRE_PROJET, ['Tous les fichiers', '*.*']] });
+  if (!choix || !choix.chemin) return;
+  const reponse = await demander('charger_projet', { chemin: choix.chemin });
+  if (!reponse) return;
+  const projet = reponse.projet;
+  // Les réglages d'abord (la pose automatique et les stratégies en dépendent).
+  if (projet.reglages) {
+    const retour = await demander('definir_reglages', { valeurs: projet.reglages });
+    if (retour) etat.moteur = retour.reglages;
+  }
+  if (projet.valeurs) {
+    if (projet.profil) etat.profil = projet.profil;
+    for (const p of PARAMETRES) if (p.cle in projet.valeurs) etat.valeurs[p.cle] = projet.valeurs[p.cle];
+    etat.saisies = {};
+    await synchroniser(PARAMETRES);
+    afficherProcede();
+  }
+  afficherImprimante();
+  if (!(await restaurer(projet))) {
+    dire(`Le modèle du projet est introuvable : ${projet.chemin}. Le projet garde le chemin du fichier, pas le fichier lui-même.`);
+    return;
+  }
+  etat.cheminProjet = choix.chemin;
+  oublierHistorique();
+  dire(`Projet ouvert : ${choix.chemin}.`, { info: true });
+}
+
+async function exporterStl() {
+  if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  const nom = (etat.modele.nom || 'piece').replace(/\.[^.]+$/, '') + '-pose.stl';
+  const choix = await demander('dialogue_enregistrer', { titre: 'Exporter en STL', nom_propose: nom, filtres: [['Modèles STL', '*.stl']] });
+  if (!choix || !choix.chemin) return;
+  if (!(await demander('exporter_stl', { chemin: choix.chemin }))) return;
+  dire(`Modèle exporté tel qu'il est posé (échelle, rotation, coupes) : ${choix.chemin}.`, { info: true });
 }
 
 // Demande des paramètres. D'ordinaire dans une fenêtre ; avec « panneau », dans
@@ -1026,6 +1247,7 @@ function afficherPlateaux() {
 
 async function choisirPlateau(numero) {
   if (numero === etat.plateau) return;
+  setTimeout(oublierHistorique, 0);   // (l'historique ne suit qu'un plateau à la fois)
   etat.plateau = numero;
   const plateau = etat.plateaux[numero];
   if (!plateau.chemin) {
@@ -1083,7 +1305,12 @@ function pointer(actif) {
   vue3d.surPointage = actif ? (point) => {
     if (!point) { dire('Clique sur la pièce elle-même : c\'est là que la zone commencera.', { info: true }); return; }
     pointer(false);
-    ajouterZone(point);
+    // D'office, la zone penche vers l'extérieur de la pièce : du centre vers le point cliqué
+    // (c'est le sens d'une branche). Tout près du centre : vers la droite.
+    const boite = vue3d.boite;
+    const dx = point[0] - (boite ? (boite.min.x + boite.max.x) / 2 : 0), dy = point[1] - (boite ? (boite.min.y + boite.max.y) / 2 : 0);
+    const azimut = Math.hypot(dx, dy) > 1 ? Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360) : 0;
+    ajouterZone(point, 30, azimut);
   } : null;
 }
 
@@ -1105,6 +1332,7 @@ function zonesChangees() {
   vue3d.afficherZones(etat.zones, etat.zoneChoisie);
   perimer();
   afficherStrategies();
+  noterBientot();
   clearTimeout(minuterieZones);
   if (!etat.zones.length) { etat.apercuZones = null; return; }
   // Le slicer dit ce que donnent ces zones (sans trancher), un instant après le dernier réglage.
@@ -1234,6 +1462,7 @@ function afficherOndulation() {
       choix.addEventListener('change', () => {
         if (choix.value === 'courbes') delete etat.branches[i + 1]; else etat.branches[i + 1] = choix.value;
         perimer();
+        noter();
       });
       etiquette.append(choix);
       contenu.push(etiquette);
@@ -1470,6 +1699,7 @@ const OUTILS_BRANCHES = {
   mesurer: outilMesurer,
   'simulation-machine': outilSimulation,
   echelle: outilEchelle,
+  couper: outilCouper,
   agencer: () => transformer({}, 'L\'objet est recentré sur le plateau. (Un seul objet par plateau pour l\'instant.)'),
   'direction-zone': () => {
     if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
@@ -1503,7 +1733,10 @@ function dessinerOutils() {
           if (!etat.modele) { dire('Ouvre d\'abord un modèle : les stratégies dépendent de sa forme.', { info: true }); return; }
           const replier = document.querySelector('.replier[aria-controls="corps-procede"]');
           if (replier.getAttribute('aria-expanded') !== 'true') replier.click();
+          if ($('btn-cote').getAttribute('aria-expanded') === 'false') $('btn-cote').click();
+          $('bloc-strategie').scrollIntoView({ block: 'start' });
           $('strategie').focus();
+          dire('La stratégie se choisit ici, à gauche : « Classique » (3 axes) ou « Ondulation » (5 axes).', { info: true });
         });
       } else if (OUTILS_BRANCHES[nom]) {
         bouton.title = libelle;
@@ -1565,14 +1798,15 @@ function exporterOuDire() {
   else dire('Tranche d\'abord le modèle : il n\'y a pas encore de G-code vérifié à exporter.');
 }
 const SORTIES_A_VENIR = [
-  { id: 'menu-exporter-stl', libelle: 'Exporter en STL…', note: 'à venir', action: aVenir('Export en STL') },
+  { id: 'menu-exporter-stl', libelle: 'Exporter en STL…', action: () => exporterStl() },
   { id: 'menu-exporter-3mf', libelle: 'Exporter en 3MF…', note: 'à venir', action: aVenir('Export en 3MF') },
-  { id: 'menu-enregistrer', libelle: 'Enregistrer le projet', note: 'à venir', action: aVenir('Enregistrement du projet') },
+  { id: 'menu-enregistrer', libelle: 'Enregistrer le projet…', action: () => enregistrerProjet() },
 ];
 function menuFichier() {
   ouvrirMenu($('btn-fichier'), [
-    { id: 'menu-nouveau', libelle: 'Nouveau projet', note: 'à venir', action: aVenir('Nouveau projet') },
+    { id: 'menu-nouveau', libelle: 'Nouveau projet', action: nouveauProjet },
     { id: 'menu-ouvrir', libelle: 'Ouvrir un modèle…', action: ouvrirModele },
+    { id: 'menu-ouvrir-projet', libelle: 'Ouvrir un projet…', action: ouvrirProjet },
     null,
     { id: 'menu-exporter-gcode', libelle: 'Exporter le G-code…', action: exporterOuDire },
     ...SORTIES_A_VENIR,
@@ -1626,9 +1860,19 @@ $('btn-fichier').addEventListener('click', menuFichier);
 $('btn-trancher-menu').addEventListener('click', menuTrancher);
 $('btn-sortie-menu').addEventListener('click', menuSortie);
 $('accueil-ouvrir').addEventListener('click', ouvrirModele);
-for (const [id, nom] of [['btn-enregistrer', 'Enregistrement du projet'], ['btn-annuler', 'Annuler'], ['btn-refaire', 'Refaire']]) {
-  $(id).addEventListener('click', aVenir(nom));
-}
+$('btn-enregistrer').addEventListener('click', enregistrerProjet);
+$('btn-annuler').addEventListener('click', annuler);
+$('btn-refaire').addEventListener('click', refaire);
+boutonsHistorique();
+// Ctrl+Z annule, Ctrl+Y (ou Ctrl+Maj+Z) refait, Ctrl+S enregistre le projet — sauf pendant qu'on tape dans un champ.
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const touche = e.key.toLowerCase();
+  if (touche === 's') { e.preventDefault(); enregistrerProjet(); return; }
+  if (/^(input|textarea|select)$/i.test(document.activeElement?.tagName ?? '')) return;
+  if (touche === 'z' && !e.shiftKey) { e.preventDefault(); annuler(); }
+  else if (touche === 'y' || (touche === 'z' && e.shiftKey)) { e.preventDefault(); refaire(); }
+});
 for (const nom of ['accueil', 'imprimante', 'projet', 'calibration', 'gestionnaire']) {
   $('vue-' + nom).addEventListener('click', () => choisirVue(nom));
 }
@@ -1672,7 +1916,7 @@ for (const bouton of document.querySelectorAll('.replier')) {
 }
 $('btn-retablir-tout').addEventListener('click', () => choisirProfil(etat.profil));
 $('profil-procede').addEventListener('change', (e) => choisirProfil(e.target.value));
-$('strategie').addEventListener('change', (e) => { etat.strategie = e.target.value; afficherStrategies(); perimer(); });
+$('strategie').addEventListener('change', (e) => { etat.strategie = e.target.value; afficherStrategies(); perimer(); noter(); });
 // La pastille « 3 axes | 5 axes » choisit la stratégie correspondante.
 function choisirMode(cinqAxes) {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle : le 5 axes dépend de sa forme.', { info: true }); return; }
@@ -1685,6 +1929,7 @@ function choisirMode(cinqAxes) {
   etat.strategie = voulue;
   afficherStrategies();
   perimer();
+  noter();
 }
 $('mode-3axes').addEventListener('click', () => choisirMode(false));
 $('mode-5axes').addEventListener('click', () => choisirMode(true));

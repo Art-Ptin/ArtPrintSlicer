@@ -401,7 +401,8 @@ export class Vue3D {
       this.modele.parent.add(this.zones);
     }
     this.vider(this.zones);
-    const taille = this.boite ? Math.max(8, 0.32 * this.boite.getSize(new THREE.Vector3()).length()) : 20;
+    // (Un petit cercle par zone : plusieurs zones restent lisibles côte à côte.)
+    const taille = this.boite ? Math.max(5, 0.16 * this.boite.getSize(new THREE.Vector3()).length()) : 12;
     zones.forEach((zone, i) => {
       const t = zone.inclinaison * Math.PI / 180, a = zone.azimut * Math.PI / 180;
       const direction = new THREE.Vector3(Math.sin(t) * Math.cos(a), Math.sin(t) * Math.sin(a), Math.cos(t));
@@ -412,14 +413,16 @@ export class Vue3D {
       disque.renderOrder = 5;
       disque.position.copy(point);
       disque.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
-      const fleche = new THREE.ArrowHelper(direction, point, 0.6 * taille, couleur, 0.14 * taille, 0.08 * taille);
+      const fleche = new THREE.ArrowHelper(direction, point, 1.3 * taille, couleur, 0.32 * taille, 0.18 * taille);
       // Le plan et la flèche restent visibles à travers la pièce.
       for (const morceau of [fleche.line, fleche.cone]) { morceau.material.depthTest = false; morceau.renderOrder = 6; }
       const bord = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
         Array.from({ length: 64 }, (_, k) => new THREE.Vector3(taille * Math.cos(k * Math.PI / 32), taille * Math.sin(k * Math.PI / 32), 0))),
         new THREE.LineBasicMaterial({ color: couleur, depthTest: false }));
       bord.position.copy(point); bord.quaternion.copy(disque.quaternion); bord.renderOrder = 6;
-      this.zones.add(disque, bord, fleche);
+      const centre = new THREE.Mesh(new THREE.SphereGeometry(0.07 * taille, 12, 8), new THREE.MeshBasicMaterial({ color: couleur, depthTest: false }));
+      centre.position.copy(point); centre.renderOrder = 7;
+      this.zones.add(disque, bord, fleche, centre);
     });
     this.zones.visible = this.modele.visible;
     this.demanderRendu();

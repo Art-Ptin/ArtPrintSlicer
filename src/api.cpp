@@ -500,6 +500,93 @@ std::string Session::executer(std::string_view demande_json) {
                 reponse["resultat"]["duree_classique_s"] =
                     std::round(trancher_classique(*etat.modele, etat.reglages, true).duree_estimee);
             }
+        } else if (commande == "exporter_stl") {
+            // Le modèle tel qu'il est posé sur le plateau, en STL binaire.
+            if (!etat.modele) {
+                throw std::runtime_error("Aucun modèle n'est ouvert.");
+            }
+            ecrire_stl(*etat.modele, chemin_depuis_json(demande));
+            reponse["triangles"] = etat.modele->triangles.size();
+        } else if (commande == "couper_modele") {
+            // Coupe le modèle posé par un plan horizontal, à « hauteur » mm du
+            // plateau, et garde le bas ("bas") ou le haut ("haut"). Le morceau
+            // gardé devient le modèle : il est reposé sur le plateau, et
+            // l'échelle et la rotation repartent de zéro.
+            if (!etat.modele) {
+                throw std::runtime_error("Aucun modèle n'est ouvert.");
+            }
+            const double hauteur = demande.at("hauteur").get<double>();
+            const std::string garder = demande.value("garder", std::string("bas"));
+            if (garder != "bas" && garder != "haut") {
+                throw std::runtime_error("Couper : « garder » attend « bas » ou « haut ».");
+            }
+            const BoiteEnglobante boite = calculer_boite(*etat.modele);
+            if (!(hauteur > boite.min.z + 0.05 && hauteur < boite.max.z - 0.05)) {
+                throw std::runtime_error(std::format(
+                    "La hauteur de coupe doit être à l'intérieur de la pièce : entre 0,1 et {:.1f} mm.",
+                    boite.max.z - boite.min.z - 0.1));
+            }
+            // Tous les morceaux au-dessus du plan sont détachés : une graine
+            // par sommet situé au-dessus (un échantillon suffit).
+            std::vector<Vec3> graines;
+            const std::size_t pas = std::max<std::size_t>(1, etat.modele->sommets.size() / 300);
+            for (std::size_t i = 0; i < etat.modele->sommets.size(); i += pas) {
+                const Point3& s = etat.modele->sommets[i];
+                if (s.z > hauteur + 0.05) {
+                    graines.push_back({s.x, s.y, s.z});
+                }
+            }
+            const auto coupe = couper_par_plan(*etat.modele, {{0.0, 0.0, hauteur}, {0.0, 0.0, 1.0}}, graines);
+            if (!coupe) {
+                throw std::runtime_error("La pièce n'a pas pu être coupée proprement à cette hauteur. "
+                                         "Solution : essayer une hauteur un peu différente.");
+            }
+            const Maillage& morceau = garder == "bas" ? coupe->reste : coupe->partie;
+            if (!verifier_fermeture(morceau).ferme || volume_maillage(morceau) < 1.0) {
+                throw std::runtime_error("Le morceau gardé ne serait pas un volume fermé. "
+                                         "Solution : essayer une hauteur un peu différente.");
+            }
+            etat.origine = poser_au_centre(morceau);
+            etat.echelle = 1.0;
+            etat.rotation = {0.0, 0.0, 0.0};
+            etat.oriente = false;
+            etat.modele = etat.origine;
+            for (Point3& sommet : etat.modele->sommets) {
+                sommet.x = static_cast<decltype(sommet.x)>(sommet.x + etat.decalage[0]);
+                sommet.y = static_cast<decltype(sommet.y)>(sommet.y + etat.decalage[1]);
+            }
+            etat.resultat.reset();
+            reponse["modele"] = decrire_modele(*etat.modele);
+            reponse["rotation"] = etat.rotation;
+            reponse["decalage"] = etat.decalage;
+            reponse["echelle"] = etat.echelle;
+            reponse["orientation"] = "origine";
+        } else if (commande == "fermer_modele") {
+            etat.modele.reset();
+            etat.origine.reset();
+            etat.resultat.reset();
+            etat.echelle = 1.0;
+            etat.rotation = {0.0, 0.0, 0.0};
+            etat.decalage = {0.0, 0.0};
+            etat.oriente = false;
+        } else if (commande == "enregistrer_projet") {
+            // Le projet est un texte JSON préparé par l'interface (modèle,
+            // pose, réglages, zones) : il est écrit tel quel.
+            std::ofstream fichier(chemin_depuis_json(demande), std::ios::binary);
+            fichier << demande.at("projet").dump(1);
+            if (!fichier) {
+                throw std::runtime_error("Impossible d'écrire le fichier du projet.");
+            }
+        } else if (commande == "charger_projet") {
+            std::ifstream fichier(chemin_depuis_json(demande), std::ios::binary);
+            if (!fichier) {
+                throw std::runtime_error("Impossible d'ouvrir le fichier du projet.");
+            }
+            const Json projet = Json::parse(fichier, nullptr, false);
+            if (!projet.is_object() || projet.value("format", std::string()) != "artprint-projet") {
+                throw std::runtime_error("Ce fichier n'est pas un projet ArtPrint Slicer.");
+            }
+            reponse["projet"] = projet;
         } else if (commande == "apercu_zones") {
             // Ce que donneraient les zones orientées, sans trancher : les
             // parties, leur direction, leur volume, ce qui reste à soutenir.

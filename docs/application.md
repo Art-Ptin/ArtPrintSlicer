@@ -102,6 +102,7 @@ d'avancement, et tout à droite le bouton des **messages** du tranchage.
 | Tourner | trois angles, autour de X, de Y et de Z, depuis la pose du fichier |
 | Mettre à l'échelle | échelle en pour cent de la taille d'origine |
 | Poser sur une face | choisit laquelle des six faces va contre le plateau, ou la pose automatique |
+| Couper | coupe la pièce à plat, à une hauteur donnée, et garde le bas ou le haut |
 | Mesurer | dimensions, volume, poids plein, position, surface à soutenir |
 | Stratégie de tranchage | mène au choix de la stratégie |
 | Direction d'impression par zone | choisit l'ondulation et attend un clic sur la pièce pour y poser une zone orientée |
@@ -111,10 +112,27 @@ Toutes ces transformations passent par la commande `transformer_modele` du
 slicer (échelle, rotation, déplacement, orientation automatique) : le
 tranchage se fait sur la pièce telle qu'elle est posée.
 
-**Sept outils affichent encore « à venir »** : hauteur de couche variable,
-couper, opérations booléennes, assembler, texte en relief, peindre les
-supports, peindre la couture. Ils demandent des fonctions que le cœur du
-slicer n'a pas (plusieurs objets, découpe de maillage, supports).
+**Six outils affichent encore « à venir »** : hauteur de couche variable,
+opérations booléennes, assembler, texte en relief, peindre les supports,
+peindre la couture. Ils demandent des fonctions que le cœur du slicer n'a
+pas (plusieurs objets, supports).
+
+## Projet, annuler, exporter
+
+- **Annuler / Refaire** (flèches en haut à gauche, Ctrl+Z et Ctrl+Y) : la
+  pose de la pièce, son échelle, les coupes, la stratégie et les zones
+  orientées. Les paramètres du procédé n'en font pas partie. L'historique
+  repart de zéro quand on change de plateau.
+- **Enregistrer le projet** (disquette, Ctrl+S, menu Fichier) : un fichier
+  `.artprint` qui garde le chemin du modèle, sa pose, les coupes, la
+  stratégie, les zones et tous les réglages. Il ne contient pas le modèle
+  lui-même : si le fichier STL est déplacé, le projet ne le retrouve plus.
+- **Ouvrir un projet**, **Nouveau projet** : menu Fichier.
+- **Exporter en STL** : le modèle tel qu'il est posé (échelle, rotation,
+  coupes), en STL binaire.
+
+Encore « à venir » dans les menus : l'export 3MF, « Trancher tous les
+plateaux », l'envoi direct à l'imprimante et la synchronisation Klipper.
 
 La stratégie se choisit avec deux cartes, « Classique » et « Ondulation »,
 qui disent chacune ce qu'elle laisserait à soutenir.

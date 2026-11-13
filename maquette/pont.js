@@ -116,6 +116,7 @@ function choisirPiece() {
 
 // Vrai : les réponses viennent d'enregistrements, pas du vrai slicer.
 export const simulation = true;
+let projetSimule = null;
 
 export async function appeler(commande, parametres = {}) {
   await charger();
@@ -141,8 +142,24 @@ export async function appeler(commande, parametres = {}) {
     case 'enregistrer_reglages':
     case 'enregistrer_gcode':
       return { ok: true };
+    case 'enregistrer_projet':
+      // Simulation : le projet est gardé en mémoire, le temps de la visite.
+      projetSimule = structuredClone(parametres.projet);
+      return { ok: true };
+    case 'charger_projet':
+      if (!projetSimule) return { ok: false, erreur: 'Simulation : aucun projet n\'a été enregistré pendant cette visite. Enregistre d\'abord un projet.' };
+      return { ok: true, projet: structuredClone(projetSimule) };
+    case 'exporter_stl':
+      if (!piece) return { ok: false, erreur: 'Aucun modèle n\'est ouvert.' };
+      return { ok: true };
+    case 'fermer_modele':
+      piece = null;
+      return { ok: true };
+    case 'couper_modele':
+      return { ok: false, erreur: 'Simulation : couper la pièce demande le vrai slicer, dans l\'application installée.' };
     case 'dialogue_ouvrir': {
       const estReglages = parametres.filtres?.[0]?.[1] === '*.txt';
+      if (parametres.filtres?.[0]?.[1] === '*.artprint') return { ok: true, chemin: 'projet.artprint' };
       return { ok: true, chemin: estReglages ? 'reglages.txt' : await choisirPiece() };
     }
     case 'dialogue_enregistrer':

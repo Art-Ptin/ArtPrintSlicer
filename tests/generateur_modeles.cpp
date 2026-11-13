@@ -990,7 +990,7 @@ int main(int argc, char** argv) {
         if (!propre) {
             return 1;
         }
-        ecrire_stl(maillage, argv[3]);
+        artprint::ecrire_stl(maillage, std::filesystem::path(argv[3]));
         // Contrôle sur le fichier lui-même, relu comme le slicer le lira : deux
         // sommets distincts mais au même endroit y sont confondus, ce qui peut
         // coller deux parois l'une à l'autre.
