@@ -1042,7 +1042,17 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
         double meilleur = surplomb_classique;
         Maillage meilleure_pose;
         Vec3 meilleur_haut{};
-        for (const Vec3& haut : candidats) {
+        const Point3 taille_pose = boite.dimensions();
+        const double diagonale = std::hypot(static_cast<double>(taille_pose.x), static_cast<double>(taille_pose.y),
+                                            static_cast<double>(taille_pose.z));
+        for (const Vec3& candidat : candidats) {
+            // Une direction de branche peut être nulle ou mal définie (branche
+            // réduite à un point) : elle ne peut pas servir de « haut ».
+            const double longueur = norme(candidat);
+            if (!std::isfinite(longueur) || longueur < 1e-6) {
+                continue;
+            }
+            const Vec3 haut = candidat * (1.0 / longueur);
             const Vec3 base = haut * hauteur_min(pose, haut);
             const double surplomb = surface_en_surplomb(pose, haut, base, options.surplomb_max, 0.3, &matiere);
             if (surplomb >= 0.8 * meilleur) {
@@ -1052,6 +1062,13 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
             repere_autour(haut, u, v);
             Maillage tourne = poser_au_centre(dans_repere(pose, {}, u, v, haut));
             const BoiteEnglobante b = calculer_boite(tourne);
+            // Garde-fou : une rotation ne change pas la taille du modèle.
+            const Point3 taille = b.dimensions();
+            const double diagonale_tournee = std::hypot(static_cast<double>(taille.x), static_cast<double>(taille.y),
+                                                        static_cast<double>(taille.z));
+            if (!(diagonale_tournee > 0.55 * diagonale && diagonale_tournee < 1.75 * diagonale)) {
+                continue;
+            }
             double rayon = 0.0;
             for (const Point3& s : tourne.sommets) {
                 rayon = std::max(rayon, std::hypot(static_cast<double>(s.x), static_cast<double>(s.y)));
