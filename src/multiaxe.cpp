@@ -2386,8 +2386,9 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
                 fautives.insert(partie);
             }
         }
-        if (!fautives.empty() && budget_depasse(options)) {
-            // Le temps accordé est dépassé : toutes les branches passent à plat.
+        if (!fautives.empty() && (budget_depasse(options) || options.replis == 1)) {
+            // Le temps accordé est dépassé, ou c'est le dernier repli permis :
+            // toutes les branches passent à plat.
             for (std::size_t p = 0; p < strategie.parties.size(); ++p) {
                 if (strategie.parties[p].couches_courbes) {
                     fautives.insert(p);

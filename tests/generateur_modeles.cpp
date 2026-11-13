@@ -32,6 +32,7 @@
 
 #include "formes_organiques.hpp"
 #include "modeles_vingt.hpp"
+#include "stl.hpp"
 
 using namespace artprint;
 using namespace essai;
@@ -990,6 +991,15 @@ int main(int argc, char** argv) {
             return 1;
         }
         ecrire_stl(maillage, argv[3]);
+        // Contrôle sur le fichier lui-même, relu comme le slicer le lira : deux
+        // sommets distincts mais au même endroit y sont confondus, ce qui peut
+        // coller deux parois l'une à l'autre.
+        const RapportFermeture relu = verifier_fermeture(lire_stl(argv[3]).maillage);
+        if (!relu.ferme || !relu.orientation_coherente) {
+            std::filesystem::remove(argv[3]);
+            std::cerr << "Fichier relu pas propre : " << relu.message << '\n';
+            return 1;
+        }
         return 0;
     }
     std::cerr << "Famille inconnue : " << famille << "\n";
