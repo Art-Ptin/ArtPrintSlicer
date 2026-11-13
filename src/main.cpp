@@ -173,7 +173,10 @@ int trancher_fichier(const std::filesystem::path& chemin_modele,
             const Strategie& choisie = strategies[static_cast<std::size_t>(strategie) - 1];
             std::cout << std::format("Stratégie : {} ({} partie(s))\n", choisie.nom,
                                      choisie.parties.size());
-            resultat = trancher_strategie(choisie, reglages);
+            // La stratégie classique passe par le même chemin que sans
+            // « --strategie » : mêmes contrôles du modèle, mêmes messages.
+            resultat = choisie.type == TypeStrategie::classique ? trancher_classique(modele.maillage, reglages)
+                                                                : trancher_strategie(choisie, reglages);
         }
         const int minutes = static_cast<int>(resultat.duree_estimee / 60.0);
         std::cout << std::format("Couches : {}\n", resultat.couches);

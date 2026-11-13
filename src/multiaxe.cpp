@@ -1,6 +1,7 @@
 // ArtPrint Slicer - licence AGPL v3
 #include "multiaxe.hpp"
 
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -2086,8 +2087,27 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
                                                const OptionsMultiaxe& options);
 }  // namespace
 
+namespace {
+// Début du tranchage en cours (le premier appel, pas ses reprises).
+thread_local int profondeur_tranchage = 0;
+thread_local std::chrono::steady_clock::time_point debut_tranchage;
+
+bool budget_depasse(const OptionsMultiaxe& options) {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - debut_tranchage).count() >
+           options.budget_reprises;
+}
+}  // namespace
+
 ResultatTranchage trancher_strategie(const Strategie& strategie, const Reglages& reglages,
                                      const OptionsMultiaxe& options) {
+    struct Niveau {
+        Niveau() {
+            if (profondeur_tranchage++ == 0) {
+                debut_tranchage = std::chrono::steady_clock::now();
+            }
+        }
+        ~Niveau() { --profondeur_tranchage; }
+    } niveau;
     ResultatTranchage resultat = trancher_strategie_avec_peau(strategie, reglages, options);
     // Peau courbe : si le fichier est refusé avec elle (la passe de peau
     // repasse dans la matière, ou sous elle), le slicer y renonce et le dit.
@@ -2149,7 +2169,7 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
         for (std::size_t p = 0; p < strategie.parties.size(); ++p) {
             const bool designee = fautive >= 1 && fautive <= strategie.parties.size() &&
                                   strategie.parties[fautive - 1].couches_courbes;
-            if (strategie.parties[p].couches_courbes && (!designee || p + 1 == fautive)) {
+            if (strategie.parties[p].couches_courbes && (!designee || p + 1 == fautive || budget_depasse(options))) {
                 choix.a_plat.push_back(strategie.parties[p].repere);
                 ++nombre;
             }
@@ -2202,7 +2222,9 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
     // branche pendant l'écriture : voir « déplacements stratégiques ».)
     const bool deja_planifie = !reglages.machine.modele_machine.empty();
     for (int essai = 1;
-         courbes && !deja_planifie && essai <= options.redressements && touche(resultat.verification); ++essai) {
+         courbes && !deja_planifie && essai <= options.redressements && touche(resultat.verification) &&
+         !budget_depasse(options);
+         ++essai) {
         // À quelle partie appartient chaque ligne du G-code.
         std::vector<std::size_t> debuts;  // ligne où commence chaque passage sur une partie
         std::vector<std::size_t> parties;
@@ -2269,7 +2291,7 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
     // (au ras du pied d'une branche, le plus souvent), ces petits bouts de
     // cordon ne sont pas imprimés : la matière y est déjà.
     OptionsMultiaxe options_reparees = options;
-    for (int tour = 0; tour < 6 && courbes && !resultat.verification.valide(); ++tour) {
+    for (int tour = 0; tour < 6 && courbes && !resultat.verification.valide() && !budget_depasse(options); ++tour) {
         const RapportVerification& v = resultat.verification;
         const bool chevauchements = std::all_of(v.erreurs.begin(), v.erreurs.end(), [](const ErreurVerification& e) {
             return e.type == TypeErreur::dans_matiere || e.type == TypeErreur::sous_matiere;
@@ -2362,6 +2384,14 @@ ResultatTranchage trancher_strategie_avec_peau(const Strategie& strategie, const
             const std::size_t partie = parties[static_cast<std::size_t>(apres - debuts.begin()) - 1];
             if (partie < strategie.parties.size() && strategie.parties[partie].couches_courbes) {
                 fautives.insert(partie);
+            }
+        }
+        if (!fautives.empty() && budget_depasse(options)) {
+            // Le temps accordé est dépassé : toutes les branches passent à plat.
+            for (std::size_t p = 0; p < strategie.parties.size(); ++p) {
+                if (strategie.parties[p].couches_courbes) {
+                    fautives.insert(p);
+                }
             }
         }
         if (!fautives.empty()) {

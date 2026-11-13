@@ -51,6 +51,10 @@ struct OptionsMultiaxe {
     // Couches courbes : nombre de fois où, faute de mieux, les branches
     // fautives sont imprimées à plat avec le tronc et le tranchage refait.
     int replis = 6;
+    // Temps accordé aux reprises, en secondes. Une fois dépassé, le slicer
+    // n'essaie plus branche par branche : toutes les branches qui restent en
+    // ondulation sont imprimées à plat d'un coup.
+    double budget_reprises = 75.0;
     std::vector<Retrait> retraits;
     double rayon_retrait = 1.3;  // rayon de la boule, en mm
 };

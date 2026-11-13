@@ -2,6 +2,7 @@
 #include "couches_courbes.hpp"
 #include <string>
 #include <map>
+#include <mutex>
 
 #include <algorithm>
 #include <array>
@@ -522,8 +523,65 @@ std::vector<std::vector<CoucheCourbe>> trancher_les_tiges(const Maillage& modele
 
 }  // namespace
 
+namespace {
+PlanBranches calculer_le_plan(const Maillage& pose, double epaisseur, double pointe, const std::vector<Vec3>& a_plat,
+                              double inclinaison_max);
+
+// Empreinte de la demande : le modèle (tous ses sommets et triangles) et les réglages.
+std::uint64_t empreinte_du_plan(const Maillage& pose, double epaisseur, double pointe, const std::vector<Vec3>& a_plat,
+                                double inclinaison_max) {
+    std::uint64_t h = 1469598103934665603ULL;
+    const auto meler = [&](const void* donnees, std::size_t taille) {
+        const auto* octets = static_cast<const unsigned char*>(donnees);
+        for (std::size_t i = 0; i < taille; ++i) {
+            h = (h ^ octets[i]) * 1099511628211ULL;
+        }
+    };
+    for (const Point3& s : pose.sommets) {
+        const float c[3] = {s.x, s.y, s.z};
+        meler(c, sizeof c);
+    }
+    for (const Triangle& t : pose.triangles) {
+        meler(t.sommets.data(), sizeof(std::uint32_t) * 3);
+    }
+    for (const Vec3& p : a_plat) {
+        const double c[3] = {p.x, p.y, p.z};
+        meler(c, sizeof c);
+    }
+    const double r[3] = {epaisseur, pointe, inclinaison_max};
+    meler(r, sizeof r);
+    return h;
+}
+}  // namespace
+
+// Le plan est long à calculer, et le tranchage le redemande plusieurs fois
+// pour le même modèle (une fois pour proposer les stratégies, puis à chaque
+// nouvel essai) : les derniers plans calculés sont gardés en mémoire.
 PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double pointe,
                                const std::vector<Vec3>& a_plat, double inclinaison_max) {
+    static std::mutex verrou;
+    static std::vector<std::pair<std::uint64_t, PlanBranches>> memoire;
+    const std::uint64_t empreinte = empreinte_du_plan(pose, epaisseur, pointe, a_plat, inclinaison_max);
+    {
+        const std::lock_guard<std::mutex> garde(verrou);
+        for (const auto& [cle, plan] : memoire) {
+            if (cle == empreinte) {
+                return plan;
+            }
+        }
+    }
+    PlanBranches plan = calculer_le_plan(pose, epaisseur, pointe, a_plat, inclinaison_max);
+    const std::lock_guard<std::mutex> garde(verrou);
+    if (memoire.size() >= 6) {
+        memoire.erase(memoire.begin());
+    }
+    memoire.emplace_back(empreinte, plan);
+    return plan;
+}
+
+namespace {
+PlanBranches calculer_le_plan(const Maillage& pose, double epaisseur, double pointe, const std::vector<Vec3>& a_plat,
+                              double inclinaison_max) {
     PlanBranches plan;
     // La matière des tiges qu'on n'a pas su découper : elle est imprimée avec le tronc.
     std::vector<std::uint8_t> avec_le_tronc;
@@ -596,5 +654,6 @@ PlanBranches preparer_branches(const Maillage& pose, double epaisseur, double po
     plan.tiges.clear();
     return plan;
 }
+}  // namespace
 
 }  // namespace artprint
