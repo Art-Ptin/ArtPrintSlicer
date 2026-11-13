@@ -128,6 +128,41 @@ double inclinaison_machine_max(const ReglagesMachine& machine) {
     return std::min(std::max(std::abs(machine.b_min), std::abs(machine.b_max)), machine.b_inclinaison_max);
 }
 
+bool encombrement_tete_connu(const ReglagesMachine& machine) {
+    return machine.tete_demi_largeur && machine.tete_hauteur && machine.distance_pivot_buse;
+}
+
+double point_bas_de_la_tete(const ReglagesMachine& machine, double inclinaison) {
+    if (!encombrement_tete_connu(machine)) {
+        return 0.0;
+    }
+    const double angle = std::abs(inclinaison) * std::acos(-1.0) / 180.0;
+    // Par prudence, toute la tête est comptée à la largeur du bloc, de la
+    // pointe de la buse au bout du bloc : ses coins les plus bas sont à
+    // hauteur de la pointe (tête peu inclinée) ou au bout du bloc (au-delà de 90°).
+    const double bout = (*machine.distance_pivot_buse + *machine.tete_hauteur) * std::cos(angle);
+    return std::min(0.0, bout) - *machine.tete_demi_largeur * std::sin(angle);
+}
+
+double inclinaison_permise(const ReglagesMachine& machine, double z_pointe) {
+    const double butee = inclinaison_machine_max(machine);
+    if (!encombrement_tete_connu(machine)) {
+        const bool haut = machine.hauteur_bascule_b && z_pointe >= *machine.hauteur_bascule_b;
+        return haut ? butee : std::min(butee, machine.b_limite_pres_plateau);
+    }
+    // Jusqu'à la limite près du plateau, rien à calculer : elle est permise
+    // partout. Au-delà, plus la tête penche, plus elle descend : on cherche la
+    // plus grande inclinaison où elle reste à la marge de sécurité du plateau.
+    double permise = std::min(butee, machine.b_limite_pres_plateau);
+    for (double essai = permise + 0.5; essai <= butee + 1e-9; essai += 0.5) {
+        if (z_pointe + point_bas_de_la_tete(machine, essai) < machine.marge_securite) {
+            break;
+        }
+        permise = essai;
+    }
+    return std::min(butee, permise);
+}
+
 double inclinaison_des_couches_max(const ReglagesMachine& machine) {
     return std::clamp(inclinaison_machine_max(machine) + 10.0, 100.0, 170.0);
 }

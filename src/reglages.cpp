@@ -291,6 +291,15 @@ std::vector<DescriptionReglage> construire() {
         "Hauteur de bascule de B", "mm",
         "Hauteur au-dessus de laquelle B peut dépasser la limite précédente. À mesurer."},
         0.0, 2000.0));
+    d.push_back(facultatif(M, &RM::tete_demi_largeur, {"tete_demi_largeur", machine,
+        "Demi-largeur du bloc de la tête", "mm",
+        "De chaque côté de l'axe de la buse, à partir du pivot. À mesurer. Avec la hauteur du bloc, "
+        "remplace la hauteur de bascule : la hauteur où B peut dépasser la limite près du plateau est calculée."},
+        0.0, 500.0));
+    d.push_back(facultatif(M, &RM::tete_hauteur, {"tete_hauteur", machine,
+        "Hauteur du bloc de la tête", "mm",
+        "Longueur du bloc au-delà du pivot, du côté opposé à la buse. À mesurer."},
+        0.0, 500.0));
     d.push_back(booleen(M, &RM::pivot_continu, {"pivot_continu", machine,
         "Pivot continu (5 axes continu)", "",
         "Sur une branche courbe, la tête pivote pendant qu'elle imprime. "

@@ -387,10 +387,8 @@ private:
     }
 
     double limite_inclinaison(double z) const {
-        const bool haut = machine_.hauteur_bascule_b && z >= *machine_.hauteur_bascule_b + 0.5;
         // (Le firmware a sa propre limite d'inclinaison : elle n'est jamais dépassée.)
-        const double butee = inclinaison_machine_max(machine_);
-        return std::min(limite_partie_, haut ? butee : std::min(butee, machine_.b_limite_pres_plateau));
+        return std::min(limite_partie_, inclinaison_permise(machine_, z - 0.5));
     }
 
     // La même direction, redressée si elle penche de plus de « maximum » degrés.
@@ -821,8 +819,7 @@ private:
         }
         // Près du plateau, l'inclinaison est limitée : la tête ne prend pas
         // d'avance sur une inclinaison qui n'est permise que plus haut.
-        const bool haut = machine_.hauteur_bascule_b && z_min_couche_ >= *machine_.hauteur_bascule_b;
-        if (!haut && std::abs(fin->b) > machine_.b_limite_pres_plateau) {
+        if (std::abs(fin->b) > inclinaison_permise(machine_, z_min_couche_) + 1e-6) {
             return;
         }
         b_debut_ = b_, c_debut_ = c_;

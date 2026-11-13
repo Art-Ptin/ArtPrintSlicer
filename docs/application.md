@@ -48,8 +48,8 @@ Les zones passent par le même vérificateur que le reste : un G-code où la
 tête toucherait la pièce, ou imprimerait dans la matière, est refusé.
 
 Limites : une zone ne dépasse pas 90° d'inclinaison pour l'instant ; près du
-plateau elle est limitée comme tout le reste (« b_limite_pres_plateau »,
-« hauteur_bascule_b ») ; si le modèle est déplacé, tourné ou mis à l'échelle,
+plateau elle est limitée comme tout le reste (limite près du plateau, puis
+encombrement de la tête ou hauteur de bascule) ; si le modèle est déplacé, tourné ou mis à l'échelle,
 les zones sont retirées (leurs points ne seraient plus au bon endroit). Avec
 des zones, les parties que le slicer trouve tout seul ne sont pas utilisées.
 

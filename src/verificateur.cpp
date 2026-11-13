@@ -527,11 +527,19 @@ private:
     // Vérifie l'inclinaison de B selon la hauteur. Renvoie vrai si une erreur
     // a été signalée.
     bool verifier_inclinaison(const PositionMachine& ici, const PoseOutil& pose) {
-        const bool haut = machine_.hauteur_bascule_b && pose.pointe.z >= *machine_.hauteur_bascule_b;
-        if (haut || std::abs(ici.b) <= machine_.b_limite_pres_plateau + 1e-6) {
+        const double permise = inclinaison_permise(machine_, pose.pointe.z);
+        if (std::abs(ici.b) <= permise + 1e-6) {
             return false;
         }
-        if (machine_.hauteur_bascule_b) {
+        if (encombrement_tete_connu(machine_)) {
+            signaler(TypeErreur::limite_b, ici,
+                     std::format("La tête est inclinée de {:.2f}° à {:.2f} mm du plateau : son bloc descendrait à "
+                                 "{:.1f} mm du plateau (marge de sécurité : {:.1f} mm). À cette hauteur, la "
+                                 "limite est de {:.1f}°.",
+                                 ici.b, pose.pointe.z, pose.pointe.z + point_bas_de_la_tete(machine_, ici.b),
+                                 machine_.marge_securite, permise),
+                     "Réduire l'inclinaison près du plateau, ou imprimer cette zone plus haut.");
+        } else if (machine_.hauteur_bascule_b) {
             signaler(TypeErreur::limite_b, ici,
                      std::format("La tête est inclinée de {:.2f}° à {:.2f} mm du plateau. "
                                  "Sous {:.2f} mm, la limite est de {:.1f}°.",

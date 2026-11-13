@@ -71,6 +71,20 @@ double angle_le_plus_proche(double angle, double reference);
 // ses butées, et la limite du firmware. Elle peut dépasser 90° : la buse
 // pointe alors vers le haut, pour imprimer par en dessous.
 double inclinaison_machine_max(const ReglagesMachine& machine);
+// Vrai si l'encombrement simplifié de la tête est renseigné (réglages
+// « tete_demi_largeur », « tete_hauteur » et « distance_pivot_buse »).
+bool encombrement_tete_connu(const ReglagesMachine& machine);
+// Hauteur du point le plus bas de la tête par rapport à la pointe de la
+// buse, pour une inclinaison donnée en degrés (négative : la tête descend
+// plus bas que la pointe). Par prudence, toute la tête est comptée à la
+// largeur du bloc, de la pointe de la buse au bout du bloc.
+double point_bas_de_la_tete(const ReglagesMachine& machine, double inclinaison);
+// Plus grande inclinaison permise quand la pointe de la buse est à la
+// hauteur « z_pointe » au-dessus du plateau. La limite près du plateau est
+// toujours permise. Au-delà : avec l'encombrement de la tête, jusqu'à
+// l'inclinaison où elle reste à la marge de sécurité du plateau ; sinon,
+// seulement au-dessus de la hauteur de bascule.
+double inclinaison_permise(const ReglagesMachine& machine, double z_pointe);
 // Plus grande inclinaison qu'une couche courbe peut demander. Un peu plus
 // que la machine : la tête, à sa limite, n'est alors pas tout à fait d'aplomb.
 double inclinaison_des_couches_max(const ReglagesMachine& machine);

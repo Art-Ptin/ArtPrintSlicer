@@ -356,6 +356,15 @@ Dans l'interface, la commande `strategies` rend la même liste, et
 - `distance_pivot_buse` : indispensable dès que la tête s'incline.
 - `hauteur_bascule_b` : tant qu'elle n'est pas renseignée, l'inclinaison
   est limitée partout à `b_limite_pres_plateau`.
+- `tete_demi_largeur`, `tete_hauteur` : l'encombrement simplifié de la tête,
+  un bloc qui part du pivot et s'étend du côté opposé à la buse. Quand ils
+  sont renseignés, la hauteur de bascule ne sert plus : pour chaque hauteur
+  de la pointe, le slicer calcule jusqu'où la tête peut s'incliner en restant
+  à la marge de sécurité du plateau (`inclinaison_permise`, dans
+  `cinematique.hpp`). Par prudence, toute la tête est comptée à la largeur du
+  bloc, de la pointe de la buse au bout du bloc. La limite près du plateau
+  reste permise partout. Ce calcul ne regarde que le plateau : la tête contre
+  la pièce déjà imprimée demande le vrai modèle de la machine.
 - `b_min`, `b_max` : inclinaisons extrêmes, comptées depuis la verticale.
 - `b_inclinaison_max` : limite du firmware (50° par défaut), jamais dépassée.
 - `c_min`, `c_max` : limites du plateau (-360° et +360° par défaut).

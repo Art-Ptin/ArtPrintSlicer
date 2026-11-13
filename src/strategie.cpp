@@ -36,9 +36,7 @@ double angle_entre(const Vec3& a, const Vec3& b) {
 // dont le point le plus bas est à la hauteur « z_bas ». Près du plateau, B
 // est limité ; plus haut, il peut aller jusqu'à sa butée.
 double inclinaison_possible(const ReglagesMachine& machine, double z_bas) {
-    const double butee = std::min({90.0, std::max(machine.b_max, -machine.b_min), machine.b_inclinaison_max});
-    const bool haut = machine.hauteur_bascule_b && z_bas >= *machine.hauteur_bascule_b;
-    return haut ? butee : std::min(butee, machine.b_limite_pres_plateau);
+    return std::min(90.0, inclinaison_permise(machine, z_bas));
 }
 
 // Redresse une direction trop penchée pour la machine, sans changer le côté
@@ -1136,7 +1134,7 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
             if (!reglages.machine.distance_pivot_buse) {
                 branches.remarques.push_back("Pour trancher cette stratégie, le réglage « distance_pivot_buse » doit être mesuré sur la machine.");
             }
-            if (!reglages.machine.hauteur_bascule_b) {
+            if (!reglages.machine.hauteur_bascule_b && !encombrement_tete_connu(reglages.machine)) {
                 branches.remarques.push_back(std::format(
                     "Le réglage « hauteur_bascule_b » n'est pas renseigné : l'inclinaison de la tête est limitée à {:.0f}° partout.",
                     reglages.machine.b_limite_pres_plateau));
@@ -1284,7 +1282,7 @@ std::vector<Strategie> proposer_strategies(const Maillage& pose, const Reglages&
                 if (!reglages.machine.distance_pivot_buse) {
                     courbes.remarques.push_back("Pour trancher cette stratégie, le réglage « distance_pivot_buse » doit être mesuré sur la machine.");
                 }
-                if (!reglages.machine.hauteur_bascule_b) {
+                if (!reglages.machine.hauteur_bascule_b && !encombrement_tete_connu(reglages.machine)) {
                     courbes.remarques.push_back(std::format(
                         "Le réglage « hauteur_bascule_b » n'est pas renseigné : l'inclinaison de la tête est limitée à {:.0f}° partout.",
                         reglages.machine.b_limite_pres_plateau));
@@ -1370,7 +1368,7 @@ Strategie strategie_par_zones(const Maillage& pose, const Reglages& reglages,
             if (zone.inclinaison > possible + 0.5) {
                 throw std::runtime_error(std::format(
                     "Zone {} : elle descend jusqu'à {:.1f} mm du plateau, et à cette hauteur la tête ne peut pas "
-                    "s'incliner de plus de {:.0f}° (réglages « b_limite_pres_plateau » et « hauteur_bascule_b »). "
+                    "s'incliner de plus de {:.0f}° sans risquer de toucher le plateau (réglages de la tête inclinable). "
                     "Solution : réduire l'inclinaison de la zone à {:.0f}° ou moins, ou choisir un point plus haut "
                     "sur le modèle.",
                     z + 1, std::max(0.0, z_bas), possible, possible));

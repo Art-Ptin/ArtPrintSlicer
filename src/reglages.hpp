@@ -69,6 +69,14 @@ struct ReglagesMachine {
     // Hauteur au-dessus de laquelle B peut dépasser la limite précédente.
     // À MESURER : tant qu'elle manque, la limite basse s'applique partout.
     std::optional<double> hauteur_bascule_b;
+    // Encombrement simplifié de la tête, pour qu'elle ne touche pas le
+    // plateau quand elle s'incline : un bloc rectangulaire qui part du pivot
+    // et s'étend du côté opposé à la buse. À MESURER sur la machine. Quand
+    // les deux valeurs (et la distance pivot-buse) sont connues, la hauteur
+    // où la tête peut dépasser la limite près du plateau est calculée
+    // d'après ce bloc : la hauteur de bascule ne sert plus.
+    std::optional<double> tete_demi_largeur;  // de chaque côté de l'axe de la buse, en mm
+    std::optional<double> tete_hauteur;       // au-delà du pivot, en mm
 
     // Butées de l'axe C, en degrés. Absentes : le plateau tourne sans limite.
     // Avant d'en atteindre une, le slicer déroule le plateau d'un tour, à

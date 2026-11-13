@@ -976,7 +976,43 @@ void test_zones_orientees() {
     VERIFIER(refuse({{{0, 0, 15}, 80.0, 0.0}}, "Solution"));
 }
 
+// Encombrement simplifié de la tête : la limite d'inclinaison dépend de la
+// hauteur, d'après le bloc qui part du pivot.
+void test_encombrement_tete() {
+    Reglages r = reglages_essai();
+    r.machine.distance_pivot_buse = 55.0;
+    r.machine.b_min = -30.0;
+    r.machine.b_max = 110.0;
+    r.machine.b_inclinaison_max = 110.0;
+    r.machine.hauteur_bascule_b.reset();
+    // Sans encombrement : l'ancienne règle (limite près du plateau partout).
+    VERIFIER(!encombrement_tete_connu(r.machine));
+    VERIFIER(proche(inclinaison_permise(r.machine, 100.0), r.machine.b_limite_pres_plateau, 1e-9));
+    r.machine.tete_demi_largeur = 10.0;
+    r.machine.tete_hauteur = 30.0;
+    VERIFIER(encombrement_tete_connu(r.machine));
+    // Tête verticale : rien ne descend sous la pointe.
+    VERIFIER(proche(point_bas_de_la_tete(r.machine, 0.0), 0.0, 1e-9));
+    // À 90° : la tête descend de sa demi-largeur.
+    VERIFIER(proche(point_bas_de_la_tete(r.machine, 90.0), -10.0, 1e-6));
+    // À 110° : le bout du bloc est le plus bas.
+    const double a = 110.0 * std::numbers::pi / 180.0;
+    VERIFIER(proche(point_bas_de_la_tete(r.machine, 110.0), 85.0 * std::cos(a) - 10.0 * std::sin(a), 1e-6));
+    // Au ras du plateau : la limite près du plateau, pas plus.
+    VERIFIER(proche(inclinaison_permise(r.machine, 0.3), r.machine.b_limite_pres_plateau, 1e-9));
+    // Plus haut, la limite grandit avec la hauteur, jusqu'à la butée.
+    const double milieu = inclinaison_permise(r.machine, 20.0);
+    VERIFIER(milieu >= 90.0 && milieu < 110.0);
+    VERIFIER(inclinaison_permise(r.machine, 30.0) > milieu);
+    VERIFIER(proche(inclinaison_permise(r.machine, 60.0), 110.0, 1e-9));
+    // Au-delà de la limite près du plateau, la tête reste à la marge de sécurité du plateau.
+    for (const double z : {13.0, 20.0, 35.0, 60.0}) {
+        VERIFIER(z + point_bas_de_la_tete(r.machine, inclinaison_permise(r.machine, z)) >= r.machine.marge_securite - 1e-9);
+    }
+}
+
 int main() {
+    test_encombrement_tete();
     test_zones_orientees();
     test_decoupe();
     test_squelette();

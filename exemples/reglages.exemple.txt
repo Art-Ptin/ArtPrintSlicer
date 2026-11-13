@@ -52,6 +52,16 @@ b_limite_pres_plateau = 55
 # Hauteur (mm) au-dessus de laquelle B peut dépasser cette limite.
 # À MESURER sur la machine. Sans ce réglage, la limite s'applique partout.
 # hauteur_bascule_b =
+# Encombrement simplifié de la tête : un bloc qui part du pivot et s'étend du
+# côté opposé à la buse. À MESURER sur la machine. Avec ces deux réglages (et
+# la distance pivot-buse), le slicer calcule lui-même jusqu'où la tête peut
+# s'incliner à chaque hauteur sans toucher le plateau : la hauteur de bascule
+# ci-dessus ne sert alors plus. Par prudence, toute la tête est comptée à la
+# largeur de ce bloc. La limite près du plateau reste permise partout.
+# Demi-largeur du bloc, de chaque côté de l'axe de la buse, en mm.
+# tete_demi_largeur =
+# Longueur du bloc au-delà du pivot, en mm.
+# tete_hauteur =
 # Pivot continu : sur une branche courbe, la tête pivote pendant qu'elle
 # imprime (1). Avec 0, elle pivote entre deux couches, sans extruder.
 pivot_continu = 1
