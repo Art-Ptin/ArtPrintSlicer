@@ -176,9 +176,14 @@ void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, dou
                 trait.type = type;
                 trait.largeur = std::clamp(somme / static_cast<double>(fin - debut), 0.5 * largeur, 1.9 * largeur);
                 for (std::size_t k = debut; k < fin; ++k) {
-                    trait.points.push_back(chaine[k].p);
+                    // (Deux points presque confondus donneraient un segment sans matière.)
+                    if (trait.points.empty() || distance(trait.points.back(), chaine[k].p) > 0.05) {
+                        trait.points.push_back(chaine[k].p);
+                    }
                 }
-                traits.push_back(std::move(trait));
+                if (trait.points.size() >= 2) {
+                    traits.push_back(std::move(trait));
+                }
             }
             debut = fin < chaine.size() ? fin - 1 : fin;
             if (fin - debut <= 1 && fin < chaine.size()) {
@@ -242,6 +247,155 @@ void ajouter_comblements(std::vector<Trait>& traits, const Polygones& libre, dou
         }
         finir();
     }
+}
+
+// Filet de sécurité des parois : coupe toute portion de cordon dont l'axe
+// tomberait dans un cordon déjà tracé (une boucle qui se pince, deux boucles
+// qui se frôlent). « rangs » : pour chaque trait à partir de « premier », son
+// rang de priorité (le plus petit est gardé en premier : les parois externes
+// passent avant les autres). L'ordre d'impression n'est pas changé.
+void retirer_les_recouvrements(std::vector<Trait>& traits, std::size_t premier, const std::vector<int>& rangs,
+                               double largeur) {
+    // Un axe est « dans » un cordon voisin à moins d'une demi-largeur, plus
+    // la finesse du contrôle (0,1 mm).
+    const double seuil = 0.5 * largeur + 0.1;
+    const double pas = 0.25 * largeur;
+    const double voisinage = 3.0 * largeur;  // le long du même trait, ses voisins immédiats ne comptent pas
+    struct Pose {
+        Point2 p;
+        std::size_t trait;
+        double abscisse;
+    };
+    const double case_grille = seuil;
+    const auto cle = [&](double x, double y) {
+        return (static_cast<std::int64_t>(std::floor(x / case_grille)) << 32) ^
+               (static_cast<std::int64_t>(std::floor(y / case_grille)) & 0xffffffffLL);
+    };
+    std::unordered_map<std::int64_t, std::vector<Pose>> poses;
+    std::vector<std::size_t> ordre(traits.size() - premier);
+    for (std::size_t k = 0; k < ordre.size(); ++k) {
+        ordre[k] = premier + k;
+    }
+    std::stable_sort(ordre.begin(), ordre.end(),
+                     [&](std::size_t a, std::size_t b) { return rangs[a - premier] < rangs[b - premier]; });
+    std::vector<std::vector<Trait>> remplacants(traits.size());
+    std::vector<bool> change(traits.size(), false);
+    struct Echantillon {
+        Point2 p;
+        std::size_t segment;  // numéro du segment d'origine
+        double abscisse;
+        bool garde;
+    };
+    for (const std::size_t numero : ordre) {
+        const Trait& trait = traits[numero];
+        const std::size_t nombre = trait.points.size();
+        if (nombre < 2) {
+            continue;
+        }
+        const std::size_t segments = trait.ferme ? nombre : nombre - 1;
+        double total = 0.0;
+        for (std::size_t i = 0; i < segments; ++i) {
+            total += distance(trait.points[i], trait.points[(i + 1) % nombre]);
+        }
+        std::vector<Echantillon> echantillons;
+        double abscisse = 0.0;
+        bool tout_garde = true;
+        for (std::size_t i = 0; i < segments; ++i) {
+            const Point2& a = trait.points[i];
+            const Point2& b = trait.points[(i + 1) % nombre];
+            const double longueur = distance(a, b);
+            const int morceaux = std::max(1, static_cast<int>(std::ceil(longueur / pas)));
+            for (int k = 0; k < morceaux; ++k) {
+                const double t = (k + 0.5) / morceaux;
+                Echantillon e{{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t}, i, abscisse + longueur * t, true};
+                for (int dx = -1; dx <= 1 && e.garde; ++dx) {
+                    for (int dy = -1; dy <= 1 && e.garde; ++dy) {
+                        const auto trouve = poses.find(cle(e.p.x + dx * case_grille, e.p.y + dy * case_grille));
+                        if (trouve == poses.end()) {
+                            continue;
+                        }
+                        for (const Pose& pose : trouve->second) {
+                            if (distance(pose.p, e.p) >= seuil) {
+                                continue;
+                            }
+                            if (pose.trait == numero) {
+                                const double ecart = std::abs(pose.abscisse - e.abscisse);
+                                if (ecart < voisinage || (trait.ferme && total - ecart < voisinage)) {
+                                    continue;
+                                }
+                            }
+                            e.garde = false;
+                            break;
+                        }
+                    }
+                }
+                if (e.garde) {
+                    poses[cle(e.p.x, e.p.y)].push_back({e.p, numero, e.abscisse});
+                } else {
+                    tout_garde = false;
+                }
+                echantillons.push_back(e);
+            }
+            abscisse += longueur;
+        }
+        if (tout_garde) {
+            continue;
+        }
+        // Le trait est refait : une suite de morceaux ouverts, là où il est gardé.
+        change[numero] = true;
+        std::size_t depart = 0;
+        if (trait.ferme) {
+            // On part d'un échantillon retiré, pour ne pas couper un morceau en deux.
+            while (depart < echantillons.size() && echantillons[depart].garde) {
+                ++depart;
+            }
+        }
+        Trait morceau;
+        morceau.type = trait.type;
+        morceau.largeur = trait.largeur;
+        const auto finir = [&]() {
+            double longueur = 0.0;
+            for (std::size_t i = 1; i < morceau.points.size(); ++i) {
+                longueur += distance(morceau.points[i - 1], morceau.points[i]);
+            }
+            if (morceau.points.size() >= 2 && longueur >= 1.5 * largeur) {
+                remplacants[numero].push_back(morceau);
+            }
+            morceau.points.clear();
+        };
+        const std::size_t tour = trait.ferme ? echantillons.size() : echantillons.size() - depart;
+        std::size_t dernier_segment = 0;
+        for (std::size_t n = 0; n < tour; ++n) {
+            const Echantillon& e = echantillons[(depart + n) % echantillons.size()];
+            if (!e.garde) {
+                finir();
+                continue;
+            }
+            if (!morceau.points.empty()) {
+                // Les sommets d'origine entre l'échantillon précédent et celui-ci.
+                for (std::size_t s = dernier_segment; s != e.segment; s = (s + 1) % segments) {
+                    morceau.points.push_back(trait.points[(s + 1) % nombre]);
+                }
+            }
+            morceau.points.push_back(e.p);
+            dernier_segment = e.segment;
+        }
+        finir();
+    }
+    if (std::none_of(change.begin(), change.end(), [](bool c) { return c; })) {
+        return;
+    }
+    std::vector<Trait> refaits(traits.begin(), traits.begin() + static_cast<std::ptrdiff_t>(premier));
+    for (std::size_t i = premier; i < traits.size(); ++i) {
+        if (!change[i]) {
+            refaits.push_back(std::move(traits[i]));
+        } else {
+            for (Trait& morceau : remplacants[i]) {
+                refaits.push_back(std::move(morceau));
+            }
+        }
+    }
+    traits = std::move(refaits);
 }
 
 // Partie d'une couche qui n'est pas recouverte par les « nombre » couches
@@ -357,8 +511,42 @@ std::vector<std::vector<Point2>> lignes_de_remplissage(const Polygones& zone, do
     const double raccord_max = 2.0 * espacement;
     const Polygones zone_raccords = decaler(zone, 0.05);
     const Polygones coeur = decaler(zone, -0.4 * espacement);
+    // Les bords de la zone, pour vérifier qu'un raccord ne les traverse pas :
+    // dans une zone qui tourne (autour d'un trou, d'une bosse), un raccord
+    // tiré tout droit couperait le coin et repasserait sur les parois.
+    struct Bord {
+        Point2 a, b;
+    };
+    std::vector<Bord> bords;
+    for (const Contour& contour : zone_raccords) {
+        for (std::size_t i = 0; i < contour.size(); ++i) {
+            bords.push_back({en_mm(contour[i]), en_mm(contour[(i + 1) % contour.size()])});
+        }
+    }
+    const auto traverse_un_bord = [&](const Point2& p, const Point2& q) {
+        const auto cote = [](const Point2& a, const Point2& b, const Point2& c) {
+            return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        };
+        const double x0 = std::min(p.x, q.x), x1 = std::max(p.x, q.x);
+        const double y0 = std::min(p.y, q.y), y1 = std::max(p.y, q.y);
+        for (const Bord& bord : bords) {
+            if (std::max(bord.a.x, bord.b.x) < x0 || std::min(bord.a.x, bord.b.x) > x1 ||
+                std::max(bord.a.y, bord.b.y) < y0 || std::min(bord.a.y, bord.b.y) > y1) {
+                continue;
+            }
+            const double c1 = cote(p, q, bord.a), c2 = cote(p, q, bord.b);
+            const double c3 = cote(bord.a, bord.b, p), c4 = cote(bord.a, bord.b, q);
+            if (((c1 > 0.0 && c2 < 0.0) || (c1 < 0.0 && c2 > 0.0)) && ((c3 > 0.0 && c4 < 0.0) || (c3 < 0.0 && c4 > 0.0))) {
+                return true;
+            }
+        }
+        return false;
+    };
     auto raccord_possible = [&](const Point2& p, const Point2& q) {
         if (distance(p, q) > raccord_max) {
+            return false;
+        }
+        if (traverse_un_bord(p, q)) {
             return false;
         }
         for (const double f : {0.25, 0.5, 0.75}) {
@@ -442,9 +630,20 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
                 }
             }
             for (int i = r.jupe_boucles - 1; i >= 0; --i) {
-                ajouter_boucles(couche.traits,
-                                decaler_arrondi(exterieurs, r.jupe_distance + i * largeur),
-                                TypeTrait::jupe, largeur);
+                // La jupe fait le tour de la pièce par l'extérieur. Entre
+                // deux parties proches (les pattes d'une pieuvre...), elle ne
+                // rentre pas dans les creux de moins de quatre largeurs : elle
+                // s'y pincerait et repasserait sur elle-même. Les boucles
+                // enfermées entre les parties ne sont pas tracées.
+                const Polygones autour = decaler_arrondi(
+                    decaler_arrondi(exterieurs, r.jupe_distance + (i + 2.0) * largeur), -2.0 * largeur);
+                Polygones tour;
+                for (const Contour& contour : autour) {
+                    if (Clipper2Lib::IsPositive(contour)) {
+                        tour.push_back(contour);
+                    }
+                }
+                ajouter_boucles(couche.traits, tour, TypeTrait::jupe, largeur);
             }
         }
 
@@ -456,12 +655,17 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
         // regonflé d'une demi-largeur. Dans ces passages étroits, un cordon
         // unique est posé au milieu (voir ajouter_comblements).
         const double jeu = 0.03 * largeur;
+        const std::size_t premiere_paroi = couche.traits.size();
+        std::vector<int> rangs;
         for (int i = r.nombre_parois - 1; i >= 0; --i) {
             const TypeTrait type = i == 0 ? TypeTrait::paroi_externe : TypeTrait::paroi_interne;
             const Polygones trace = decaler(decaler(matiere, -((1.0 + i) * largeur - jeu)), 0.5 * largeur - jeu);
             ajouter_boucles(couche.traits, trace, type, 2.0 * largeur, largeur);
+            rangs.resize(couche.traits.size() - premiere_paroi, 2 * i);
             ajouter_comblements(couche.traits, i == 0 ? matiere : decaler(matiere, -i * largeur), largeur, type);
+            rangs.resize(couche.traits.size() - premiere_paroi, 2 * i + 1);
         }
+        retirer_les_recouvrements(couche.traits, premiere_paroi, rangs, largeur);
 
         // Intérieur : ce qui reste une fois les parois posées.
         const Polygones interieur = decaler(matiere, -r.nombre_parois * largeur);

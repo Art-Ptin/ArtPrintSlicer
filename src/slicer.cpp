@@ -105,6 +105,9 @@ public:
             duree_ += r_.retraction_longueur / r_.retraction_vitesse;
         }
         const double e = longueur * e_par_mm_ * debit_du_trait_;
+        if (e < 5e-6) {
+            return;  // segment trop court pour porter de la matière : il est joint au suivant
+        }
         ligne(std::format("G1 {} E{:.5f} F{:.0f}", axes(p, z_), e, vitesse * 60.0));
         noter(position_, z_, p, z_, type_);
         filament_ += e;

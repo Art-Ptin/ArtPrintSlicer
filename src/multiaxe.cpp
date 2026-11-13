@@ -253,8 +253,8 @@ public:
 
     void extruder_vers(const Point2& p, double vitesse) {
         const double longueur = distance(position_, p);
-        if (longueur < 1e-4) {
-            return;
+        if (longueur < 1e-4 || longueur * e_par_mm_ * debit_du_trait_ < 5e-6) {
+            return;  // segment trop court pour porter de la matière : il est joint au suivant
         }
         if (surface_) {
             extruder_sur_la_surface(p, vitesse);

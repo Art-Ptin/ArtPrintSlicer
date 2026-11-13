@@ -13,6 +13,7 @@ Options :
     --limite=N             s'arrête après N modèles
     --resultats=<fichier>  fichier de résultats (par défaut <dossier>/resultats-<tirage>.jsonl)
     --generateur=<chemin>  le programme generateur_modeles (par défaut celui de build/linux)
+    --entree=commande      impose le chemin d'entrée (commande ou interface) à tous les modèles
     --garder               garde les fichiers de travail dans <dossier>/tmp (pour rejouer un cas)
 
 Le dossier de travail est celui de « preparer.py » (liste.jsonl et modeles/).
@@ -45,6 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 DEPOT = pathlib.Path(__file__).resolve().parents[2]
+FORCER = {}   # choix imposés (option --entree=commande, pour rejouer un cas)
 GARDER = []   # non vide : les fichiers de travail (STL posé, réglages, G-code) sont gardés
 GENERATEUR = [str(DEPOT / "build" / "linux" / "tests" / "generateur_modeles")]
 TYPE_STL = [("n", "<f4", 3), ("s", "<f4", (3, 3)), ("a", "<u2")]
@@ -332,6 +334,8 @@ def par_l_interface(slicer, stl, gcode, valeurs, choix, echelle, delai):
 
 def essayer(fiche, slicer, travail, base, tirage, delai):
     choix = tirer(fiche, tirage)
+    if FORCER:
+        choix.update(FORCER)
     tmp = travail / "tmp"
     stl, gcode, reglages = tmp / f"{fiche['id']}.stl", tmp / f"{fiche['id']}.gcode", tmp / f"{fiche['id']}.txt"
     ligne = {"id": fiche["id"], "source": fiche["source"], "famille": fiche["famille"], "tirage": tirage, "choix": choix}
@@ -378,6 +382,8 @@ def main():
     slicer, travail = arguments[0], pathlib.Path(arguments[1])
     tirage = int(options.get("tirage", 1))
     delai = float(options.get("delai", 240))
+    if "entree" in options:
+        FORCER["entree"] = options["entree"]
     if "--garder" in sys.argv:
         GARDER.append(True)
     if "generateur" in options:
