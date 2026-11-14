@@ -187,7 +187,7 @@ Maillage poser_au_centre(const Maillage& maillage) {
     return pose;
 }
 
-ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, bool deja_pose) {
+ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, bool deja_pose, bool verifier) {
     const ReglagesImpression& r = reglages.impression;
     const ReglagesMachine& machine = reglages.machine;
 
@@ -298,7 +298,9 @@ ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, b
     resultat.duree_estimee = ecrivain.duree();
     resultat.apercu = ecrivain.prendre_apercu();
     resultat.gcode = ecrivain.prendre_gcode();
-    resultat.verification = verifier_gcode_texte(resultat.gcode, reglages);
+    if (verifier) {
+        resultat.verification = verifier_gcode_texte(resultat.gcode, reglages);
+    }
     return resultat;
 }
 

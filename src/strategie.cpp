@@ -1311,6 +1311,43 @@ Vec3 direction_de_zone(const ZoneOrientee& zone) {
     return {std::sin(t) * std::cos(a), std::sin(t) * std::sin(a), std::cos(t)};
 }
 
+Strategie strategie_inclinee(const Maillage& pose, const Reglages& reglages, double inclinaison, double azimut,
+                             const OptionsStrategie& options) {
+    const double possible = inclinaison_possible(reglages.machine, 0.0);
+    if (!(inclinaison >= 1.0) || inclinaison > possible + 0.5) {
+        throw std::runtime_error(std::format(
+            "Toute la pièce inclinée : l'inclinaison doit être entre 1° et {:.0f}° (au ras du plateau, la tête ne "
+            "peut pas pencher davantage : réglage « b_limite_pres_plateau »). Reçu : {:.0f}°.",
+            possible, inclinaison));
+    }
+    Strategie strategie;
+    strategie.type = TypeStrategie::par_branches;
+    strategie.nom = "Ondulation, toute la pièce inclinée (5 axes)";
+    strategie.modele = pose;
+    const double pas = options.pas_voxels > 0.0 ? options.pas_voxels : pas_voxels_conseille(pose);
+    const GrilleVoxels matiere = remplir_voxels(pose, pas);
+    PartieImpression tout;
+    tout.maillage = pose;
+    tout.direction = direction_de_zone({{}, inclinaison, azimut});
+    // Le point de la pièce le plus bas le long de cette direction : la première couche part de là.
+    double plus_bas = std::numeric_limits<double>::max();
+    for (const Point3& s : pose.sommets) {
+        const double h = s.x * tout.direction.x + s.y * tout.direction.y + s.z * tout.direction.z;
+        if (h < plus_bas) {
+            plus_bas = h;
+            tout.base = {s.x, s.y, s.z};
+        }
+    }
+    mesurer(tout, options.surplomb_max, matiere);
+    strategie.surplomb = tout.surplomb;
+    strategie.description = std::format(
+        "Toute la pièce est imprimée en couches penchées de {:.0f}°, posées sur le plateau : la tête garde cette "
+        "inclinaison du début à la fin.",
+        inclinaison);
+    strategie.parties.push_back(std::move(tout));
+    return strategie;
+}
+
 Strategie strategie_par_zones(const Maillage& pose, const Reglages& reglages,
                               const std::vector<ZoneOrientee>& zones, const OptionsStrategie& options) {
     Strategie strategie;

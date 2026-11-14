@@ -515,6 +515,15 @@ private:
             controler_matiere(ici, pose, avance, dessus_signale);
 
             distance_extrusion_ += avance;
+            // Un disque de matière tous les 0,45 largeur de cordon (et au bout
+            // de chaque trait) : ils se recouvrent largement, le cordon est
+            // plein, et il y a deux à trois fois moins de disques à poser.
+            if (distance_extrusion_ - dernier_depot_ < 0.45 * largeur_) {
+                en_suspens_ = Depot{pose.pointe, pose.direction, distance_extrusion_, epaisseur_};
+                continue;
+            }
+            en_suspens_.reset();
+            dernier_depot_ = distance_extrusion_;
             attente_.push_back({pose.pointe, pose.direction, distance_extrusion_, epaisseur_});
             const double retard = 3.0 * largeur_;
             while (!attente_.empty() && attente_.front().distance < distance_extrusion_ - retard) {
@@ -527,10 +536,11 @@ private:
     // Vérifie l'inclinaison de B selon la hauteur. Renvoie vrai si une erreur
     // a été signalée.
     bool verifier_inclinaison(const PositionMachine& ici, const PoseOutil& pose) {
-        const double permise = inclinaison_permise(machine_, pose.pointe.z);
-        if (std::abs(ici.b) <= permise + 1e-6) {
+        // (Ce contrôle est fait à chaque pas de chaque mouvement : il doit être rapide.)
+        if (inclinaison_admise(machine_, pose.pointe.z, ici.b)) {
             return false;
         }
+        const double permise = inclinaison_permise(machine_, pose.pointe.z);
         if (encombrement_tete_connu(machine_)) {
             signaler(TypeErreur::limite_b, ici,
                      std::format("La tête est inclinée de {:.2f}° à {:.2f} mm du plateau : son bloc descendrait à "
@@ -650,6 +660,12 @@ private:
     }
 
     void vider_attente() {
+        // Le bout du trait, s'il n'a pas encore son disque.
+        if (en_suspens_) {
+            attente_.push_back(*en_suspens_);
+            dernier_depot_ = en_suspens_->distance;
+            en_suspens_.reset();
+        }
         for (const Depot& depot : attente_) {
             deposer(depot);
         }
@@ -696,6 +712,8 @@ private:
     int collisions_ = 0;
 
     std::deque<Depot> attente_;
+    double dernier_depot_ = -1e9;  // distance d'extrusion du dernier disque posé
+    std::optional<Depot> en_suspens_;  // le dernier point passé sans disque
     double distance_extrusion_ = 0.0;
     double longueur_dans_ = 0.0;
     double longueur_sous_ = 0.0;  // longueur parcourue avec de la matière juste au-dessus de la pointe

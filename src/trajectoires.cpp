@@ -7,6 +7,8 @@
 #include <map>
 #include <unordered_map>
 
+#include "parallele.hpp"
+
 #include "geometrie.hpp"
 
 namespace artprint {
@@ -640,13 +642,15 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
     const double retrait_lignes = largeur * (0.5 - r.recouvrement_remplissage);
 
     std::vector<CoucheTrajectoires> couches(contours.size());
-    for (std::size_t c = 0; c < contours.size(); ++c) {
+    // Chaque couche se calcule seule, à partir des contours : elles sont
+    // réparties sur tous les cœurs du processeur.
+    const auto traiter = [&](std::size_t c) {
         CoucheTrajectoires& couche = couches[c];
         couche.hauteur = c == 0 ? r.hauteur_premiere_couche : r.hauteur_couche;
         couche.z = r.hauteur_premiere_couche + static_cast<double>(c) * r.hauteur_couche;
         const Polygones& matiere = contours[c];
         if (matiere.empty()) {
-            continue;
+            return;
         }
 
         // Jupe : sur la première couche, autour de la pièce.
@@ -705,7 +709,7 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
         const Polygones interieur = decaler(matiere, -r.nombre_parois * largeur);
         if (interieur.empty()) {
             filet();
-            continue;
+            return;
         }
 
         // Zones pleines : là où la pièce n'est pas recouverte au-dessus ou
@@ -746,7 +750,8 @@ std::vector<CoucheTrajectoires> calculer_trajectoires(const std::vector<Polygone
             }
         }
         filet();
-    }
+    };
+    en_parallele(contours.size(), traiter);
     return couches;
 }
 

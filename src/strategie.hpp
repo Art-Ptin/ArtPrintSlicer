@@ -123,6 +123,14 @@ struct ZoneOrientee {
 // Direction d'impression d'une zone, longueur 1.
 Vec3 direction_de_zone(const ZoneOrientee& zone);
 
+// Stratégie « tout incliné » : la pièce entière est imprimée en couches
+// penchées, posées sur le plateau, la tête inclinée du même angle du début à
+// la fin (comme sur une imprimante à tapis roulant). Lève std::runtime_error
+// (message en français) si la machine ne peut pas prendre cette inclinaison
+// au ras du plateau.
+Strategie strategie_inclinee(const Maillage& pose, const Reglages& reglages, double inclinaison, double azimut,
+                             const OptionsStrategie& options = {});
+
 // Stratégie « par zones » : le modèle est coupé, à chaque point choisi, par
 // un plan perpendiculaire à la direction demandée. Ce qui est sous le plan
 // est imprimé d'abord ; ce qui est au-dessus est imprimé ensuite, couche par

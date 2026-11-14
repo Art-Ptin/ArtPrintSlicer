@@ -297,6 +297,8 @@ input.interrupteur {
 .ondulation .rangee { display: flex; flex-wrap: wrap; gap: var(--e-1); }
 .ondulation .rangee .bouton { flex: 1 1 auto; }
 .ondulation .bouton[aria-pressed="true"] { background: var(--c-accent-voile); border-color: var(--c-accent); color: var(--c-accent-texte); }
+.modes-ondulation { display: flex; }
+.modes-ondulation button { flex: 1 1 0; min-width: 0; height: var(--h-champ-serre); padding: 0 var(--e-1); white-space: nowrap; font-size: var(--t-12); }
 .zone-orientee { display: grid; gap: var(--e-1); padding: var(--e-2); border: var(--bord); border-radius: var(--r-2); background: var(--c-champ); }
 .zone-orientee.choisie { border-color: var(--c-accent); }
 .zone-orientee header { display: flex; align-items: center; gap: var(--e-1); font-size: var(--t-12); color: var(--c-texte); }

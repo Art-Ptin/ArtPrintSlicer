@@ -39,6 +39,7 @@ public:
 private:
     struct Etat;
     std::unique_ptr<Etat> etat_;
+    std::string executer_sous_verrou(std::string_view demande_json);
 };
 
 }  // namespace artprint

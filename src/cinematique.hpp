@@ -85,6 +85,9 @@ double point_bas_de_la_tete(const ReglagesMachine& machine, double inclinaison);
 // l'inclinaison où elle reste à la marge de sécurité du plateau ; sinon,
 // seulement au-dessus de la hauteur de bascule.
 double inclinaison_permise(const ReglagesMachine& machine, double z_pointe);
+// Vrai si l'inclinaison « b » (en degrés) est permise à cette hauteur : la
+// même règle que ci-dessus, sans rien chercher.
+bool inclinaison_admise(const ReglagesMachine& machine, double z_pointe, double b);
 // Plus grande inclinaison qu'une couche courbe peut demander. Un peu plus
 // que la machine : la tête, à sa limite, n'est alors pas tout à fait d'aplomb.
 double inclinaison_des_couches_max(const ReglagesMachine& machine);

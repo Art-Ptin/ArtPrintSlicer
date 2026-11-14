@@ -62,6 +62,9 @@ Maillage poser_au_centre(const Maillage& maillage);
 // trop grand pour la machine...).
 // « deja_pose » : vrai si le modèle est déjà à sa place sur le plateau (le
 // dessous à la hauteur zéro) ; il n'est alors pas recentré.
-ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, bool deja_pose = false);
+// « verifier » : faux pour une simple estimation (durée, filament) ; le
+// G-code n'est alors pas contrôlé et ne doit pas être utilisé.
+ResultatTranchage trancher(const Maillage& maillage, const Reglages& reglages, bool deja_pose = false,
+                           bool verifier = true);
 
 }  // namespace artprint

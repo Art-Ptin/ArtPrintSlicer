@@ -11,6 +11,10 @@
 #include <format>
 #include <fstream>
 #include <optional>
+#include <vector>
+#include <cstdint>
+#include <mutex>
+#include <chrono>
 
 #include <nlohmann/json.hpp>
 
@@ -36,6 +40,17 @@ struct Session::Etat {
     std::array<double, 2> decalage{0.0, 0.0};       // déplacement sur le plateau, en mm
     bool oriente = false;            // vrai : la pose a été choisie par le slicer
     std::optional<ResultatTranchage> resultat;
+
+    // Une commande à la fois (sauf la recherche des stratégies, voir executer).
+    std::mutex verrou;
+    // Change à chaque modification du modèle ou des réglages : ce qui a été
+    // calculé pour une version n'est plus bon pour la suivante.
+    std::uint64_t version = 0;
+    // Mémoire des calculs longs, valable pour une version.
+    std::optional<std::vector<Strategie>> strategies;
+    std::uint64_t version_strategies = 0;
+    std::optional<double> duree_classique;
+    std::uint64_t version_duree = 0;
 };
 
 namespace {
@@ -227,12 +242,81 @@ Json decrire_resultat(const ResultatTranchage& resultat) {
 Session::Session() : etat_(std::make_unique<Etat>()) {}
 Session::~Session() = default;
 
+namespace {
+// Secondes écoulées depuis « debut », arrondies au dixième.
+double secondes_depuis(std::chrono::steady_clock::time_point debut) {
+    return std::round(std::chrono::duration<double>(std::chrono::steady_clock::now() - debut).count() * 10.0) / 10.0;
+}
+}  // namespace
+
 std::string Session::executer(std::string_view demande_json) {
+    Etat& etat = *etat_;
+    // La recherche des façons d'imprimer est longue et ne change rien à la
+    // session : elle se fait sur une copie du modèle, sans retenir les autres
+    // commandes (on peut trancher en classique pendant ce temps).
+    if (demande_json.find("\"strategies\"") != std::string_view::npos) {
+        try {
+            if (Json::parse(demande_json).at("commande") == "strategies") {
+                std::unique_lock<std::mutex> garde(etat.verrou);
+                if (!etat.modele) {
+                    return Json{{"ok", false}, {"erreur", "Aucun modèle n'est ouvert."}}.dump();
+                }
+                const auto debut = std::chrono::steady_clock::now();
+                std::vector<Strategie> trouvees;
+                if (etat.strategies && etat.version_strategies == etat.version) {
+                    trouvees = *etat.strategies;
+                } else {
+                    const Maillage modele = *etat.modele;
+                    const Reglages reglages = etat.reglages;
+                    const std::uint64_t version = etat.version;
+                    garde.unlock();
+                    trouvees = proposer_strategies(modele, reglages);
+                    garde.lock();
+                    if (etat.version == version) {
+                        etat.strategies = trouvees;
+                        etat.version_strategies = version;
+                    }
+                }
+                garde.unlock();
+                Json reponse;
+                reponse["strategies"] = Json::array();
+                for (const Strategie& strategie : trouvees) {
+                    reponse["strategies"].push_back(decrire_strategie(strategie));
+                }
+                reponse["secondes"] = secondes_depuis(debut);
+                reponse["ok"] = true;
+                return reponse.dump(-1, ' ', false, Json::error_handler_t::replace);
+            }
+        } catch (const std::exception& erreur) {
+            return Json{{"ok", false}, {"erreur", erreur.what()}}.dump(-1, ' ', false, Json::error_handler_t::replace);
+        }
+    }
+    const std::lock_guard<std::mutex> garde(etat.verrou);
+    return executer_sous_verrou(demande_json);
+}
+
+std::string Session::executer_sous_verrou(std::string_view demande_json) {
     Json reponse;
     try {
         const Json demande = Json::parse(demande_json);
         const std::string commande = demande.at("commande").get<std::string>();
         Etat& etat = *etat_;
+        const auto debut_commande = std::chrono::steady_clock::now();
+        // Ces commandes changent le modèle ou les réglages : les calculs gardés en mémoire ne valent plus.
+        for (const char* nom : {"definir_reglages", "reglages_par_defaut", "charger_reglages", "charger_modele",
+                                "transformer_modele", "couper_modele", "fermer_modele"}) {
+            if (commande == nom) {
+                ++etat.version;
+            }
+        }
+        // Les façons d'imprimer le modèle ouvert, calculées une seule fois par version.
+        const auto strategies_du_modele = [&]() -> const std::vector<Strategie>& {
+            if (!etat.strategies || etat.version_strategies != etat.version) {
+                etat.strategies = proposer_strategies(*etat.modele, etat.reglages);
+                etat.version_strategies = etat.version;
+            }
+            return *etat.strategies;
+        };
 
         if (commande == "infos") {
             reponse["nom"] = "ArtPrint Slicer";
@@ -384,6 +468,20 @@ std::string Session::executer(std::string_view demande_json) {
             const std::string voulue = demande.value("strategie", std::string("classique"));
             if (voulue == "classique") {
                 etat.resultat = trancher_classique(*etat.modele, etat.reglages, true);
+                etat.duree_classique = etat.resultat->duree_estimee;
+                etat.version_duree = etat.version;
+            } else if (voulue == "couches_courbes" && demande.contains("tout_incline")) {
+                // « tout_incline » (facultatif) : toute la pièce en couches
+                // penchées, la tête inclinée du même angle du début à la fin.
+                //   "inclinaison" et "azimut", en degrés.
+                const Json& choix = demande["tout_incline"];
+                // (Pas de jupe : tracée dans le plan des couches penchées, elle passerait sous le plateau.)
+                Reglages sans_jupe = etat.reglages;
+                sans_jupe.impression.jupe_boucles = 0;
+                etat.resultat = trancher_strategie(
+                    strategie_inclinee(*etat.modele, sans_jupe, choix.value("inclinaison", 45.0),
+                                       choix.value("azimut", 0.0)),
+                    sans_jupe);
             } else if (voulue == "couches_courbes" && demande.contains("zones") && !demande["zones"].empty()) {
                 // « zones » (facultatif) : les zones orientées choisies par
                 // l'utilisateur. Chaque entrée : "point" [x, y, z] sur le
@@ -392,7 +490,7 @@ std::string Session::executer(std::string_view demande_json) {
                     strategie_par_zones(*etat.modele, etat.reglages, lire_zones(demande["zones"])), etat.reglages);
             } else {
                 const Strategie* choisie = nullptr;
-                std::vector<Strategie> strategies = proposer_strategies(*etat.modele, etat.reglages);
+                std::vector<Strategie> strategies = strategies_du_modele();
                 // « branches » (facultatif) : le choix de l'utilisateur pour
                 // certaines branches des couches courbes. Chaque entrée :
                 //   "partie" : son numéro dans la liste des parties (2, 3...) ;
@@ -497,9 +595,16 @@ std::string Session::executer(std::string_view demande_json) {
             // Pour l'ondulation : la durée du même modèle en classique, pour
             // dire ce que l'ondulation ajoute ou enlève.
             if (voulue != "classique") {
-                reponse["resultat"]["duree_classique_s"] =
-                    std::round(trancher_classique(*etat.modele, etat.reglages, true).duree_estimee);
+                if (!etat.duree_classique || etat.version_duree != etat.version) {
+                    // (Une simple estimation : ce G-code-là n'est ni vérifié ni gardé.)
+                    Reglages sans_peau = etat.reglages;
+                    sans_peau.impression.peau_courbe = false;
+                    etat.duree_classique = trancher(*etat.modele, sans_peau, true, false).duree_estimee;
+                    etat.version_duree = etat.version;
+                }
+                reponse["resultat"]["duree_classique_s"] = std::round(*etat.duree_classique);
             }
+            reponse["secondes"] = secondes_depuis(debut_commande);
         } else if (commande == "exporter_stl") {
             // Le modèle tel qu'il est posé sur le plateau, en STL binaire.
             if (!etat.modele) {
@@ -600,7 +705,7 @@ std::string Session::executer(std::string_view demande_json) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");
             }
             reponse["strategies"] = Json::array();
-            for (const Strategie& strategie : proposer_strategies(*etat.modele, etat.reglages)) {
+            for (const Strategie& strategie : strategies_du_modele()) {
                 reponse["strategies"].push_back(decrire_strategie(strategie));
             }
         } else if (commande == "enregistrer_gcode") {

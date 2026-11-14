@@ -7,7 +7,8 @@
 //   vue.surRotation(axe, degres)      un anneau a été tourné puis lâché ;
 //   vue.surRotationEnCours(axe, degres)  pendant qu'on le tourne ;
 //   vue.surGlisser(dx, dy)            une flèche a été tirée puis lâchée ;
-//   vue.surFace(normale)              une face a été choisie.
+//   vue.surFace(normale)              une face a été choisie ;
+//   la fonction donnée à vue.manipulerPlan : le plan a bougé ou tourné.
 import * as THREE from 'three';
 import { ConvexHull } from './lib/ConvexHull.js';
 
@@ -99,6 +100,8 @@ export function installerManipulateurs(vue) {
   let action = null;        // le geste en cours
   let survol = null;        // la face sous la souris
   let facesCalculees = null, facesDe = null;
+  // La poignée de plan : un point et une direction (voir vue.manipulerPlan).
+  let plan = null;
 
   const viser = (e) => {
     const cadre = vue.canvas.getBoundingClientRect();
@@ -155,6 +158,38 @@ export function installerManipulateurs(vue) {
         groupe.add(fleche, prise);
         prises.push(prise);
       });
+    } else if (mode === 'plan' && plan) {
+      const p0 = plan.point, rp = Math.max(8, 0.32 * taille());
+      // Le plan lui-même (pour une coupe) : un grand disque translucide et son bord.
+      if (plan.montrer) {
+        const etendue = 0.75 * taille();
+        const disque = new THREE.Mesh(new THREE.CircleGeometry(etendue, 64), new THREE.MeshBasicMaterial({
+          color: jeton('--c-accent', '#e4572e'), transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
+        disque.position.copy(p0);
+        disque.quaternion.setFromUnitVectors(AXES[2], plan.normale);
+        disque.renderOrder = 3;
+        const normale = new THREE.ArrowHelper(plan.normale, p0, 0.9 * rp, jeton('--c-accent', '#e4572e'), 0.22 * rp, 0.12 * rp);
+        for (const morceau of [normale.line, normale.cone]) { morceau.material.depthTest = false; morceau.renderOrder = 7; }
+        groupe.add(disque, normale);
+      }
+      AXES.forEach((axe, i) => {
+        // Une flèche par axe, pour glisser le point.
+        const fleche = new THREE.ArrowHelper(axe, p0, 1.25 * rp, COULEURS_AXES[i], 0.18 * rp, 0.09 * rp);
+        for (const morceau of [fleche.line, fleche.cone]) { morceau.material.depthTest = false; morceau.renderOrder = 8; }
+        const tige = new THREE.Mesh(new THREE.CylinderGeometry(0.07 * rp, 0.07 * rp, 0.75 * rp, 8), new THREE.MeshBasicMaterial({ visible: false }));
+        tige.position.copy(p0).addScaledVector(axe, 0.9 * rp);
+        tige.quaternion.setFromUnitVectors(AXES[1], axe);
+        tige.userData = { genre: 'plan-fleche', axe: i };
+        // Un anneau par axe, pour tourner la direction.
+        const orienter = (objet) => { objet.position.copy(p0); objet.quaternion.setFromUnitVectors(AXES[2], axe); return objet; };
+        const anneau = orienter(new THREE.Mesh(new THREE.TorusGeometry(0.72 * rp, Math.max(0.2, 0.01 * rp), 8, 96),
+          new THREE.MeshBasicMaterial({ color: COULEURS_AXES[i], depthTest: false, transparent: true, opacity: 0.9 })));
+        anneau.renderOrder = 8;
+        const prise = orienter(new THREE.Mesh(new THREE.TorusGeometry(0.72 * rp, 0.06 * rp, 6, 48), new THREE.MeshBasicMaterial({ visible: false })));
+        prise.userData = { genre: 'plan-anneau', axe: i };
+        groupe.add(fleche, tige, anneau, prise);
+        prises.push(tige, prise);
+      });
     } else if (mode === 'faces') {
       const maille = vue.modele.children[0];
       if (!maille) return;
@@ -206,6 +241,23 @@ export function installerManipulateurs(vue) {
     e.stopImmediatePropagation();
     vue.controles.enabled = false;
     vue.canvas.setPointerCapture?.(e.pointerId);
+    if (donnees.genre === 'plan-fleche') {
+      // Le geste se mesure dans le plan qui contient l'axe et fait face à la caméra.
+      const axe = AXES[donnees.axe];
+      const regard = vue.camera.getWorldDirection(new THREE.Vector3());
+      const face = new THREE.Vector3().crossVectors(axe, new THREE.Vector3().crossVectors(regard, axe)).normalize();
+      action = { genre: 'plan-fleche', axe: donnees.axe, plan: new THREE.Plane().setFromNormalAndCoplanarPoint(face, touche.point),
+        depart: touche.point.clone(), origine: plan.point.clone() };
+      return;
+    }
+    if (donnees.genre === 'plan-anneau') {
+      const axe = AXES[donnees.axe];
+      action = { genre: 'plan-anneau', axe: donnees.axe, centre: plan.point.clone(), u: AXES[(donnees.axe + 1) % 3], v: AXES[(donnees.axe + 2) % 3],
+        plan: new THREE.Plane().setFromNormalAndCoplanarPoint(axe, plan.point), origine: plan.normale.clone() };
+      action.depart = angleVise(e, action);
+      if (action.depart === null) { action = null; vue.controles.enabled = true; }
+      return;
+    }
     const c = centre();
     if (donnees.genre === 'anneau') {
       const axe = AXES[donnees.axe];
@@ -223,6 +275,27 @@ export function installerManipulateurs(vue) {
   vue.canvas.addEventListener('pointermove', (e) => {
     if (!action) {
       if (mode === 'faces' && prises.length) eclairer(viser(e).intersectObjects(prises)[0]?.object ?? null);
+      return;
+    }
+    if (action.genre === 'plan-fleche') {
+      e.stopImmediatePropagation();
+      const point = new THREE.Vector3();
+      if (!viser(e).ray.intersectPlane(action.plan, point)) return;
+      const distance = Math.round(point.sub(action.depart).dot(AXES[action.axe]) * 10) / 10;
+      plan.point.copy(action.origine).addScaledVector(AXES[action.axe], distance);
+      construire();
+      plan.surChange?.(plan.point.toArray(), plan.normale.toArray(), false);
+      return;
+    }
+    if (action.genre === 'plan-anneau') {
+      e.stopImmediatePropagation();
+      const angle = angleVise(e, action);
+      if (angle === null) return;
+      let degres = ((angle - action.depart + 540) % 360) - 180;
+      degres = e.shiftKey ? Math.round(degres / 15) * 15 : Math.round(degres);
+      plan.normale.copy(action.origine).applyAxisAngle(AXES[action.axe], degres * RAD).normalize();
+      construire();
+      plan.surChange?.(plan.point.toArray(), plan.normale.toArray(), false);
       return;
     }
     if (action.genre === 'anneau') {
@@ -261,6 +334,10 @@ export function installerManipulateurs(vue) {
     e.stopImmediatePropagation();
     vue.controles.enabled = true;
     groupe.position.set(0, 0, 0);
+    if (geste.genre === 'plan-fleche' || geste.genre === 'plan-anneau') {
+      plan?.surChange?.(plan.point.toArray(), plan.normale.toArray(), true);
+      return;
+    }
     if (geste.genre === 'anneau') {
       if (geste.degres) vue.surRotation?.(geste.axe, geste.degres);
       else vue.oublierGeste();
@@ -274,8 +351,25 @@ export function installerManipulateurs(vue) {
   // Choisit le manipulateur montré : 'tourner', 'deplacer', 'faces' ou rien.
   vue.manipuler = (nouveau) => {
     mode = nouveau || null;
+    if (mode !== 'plan') plan = null;
     if (!mode) vue.canvas.style.cursor = '';
     construire();
+  };
+  // Montre la poignée de plan : trois flèches pour glisser le point, trois
+  // anneaux pour tourner la direction. « surChange(point, normale, fini) » est
+  // appelée pendant le geste (fini : faux) puis quand il est lâché (fini : vrai).
+  // « montrer » : vrai pour dessiner aussi le plan (une coupe).
+  vue.manipulerPlan = (point, normale, surChange, montrer = false) => {
+    plan = { point: new THREE.Vector3(...point), normale: new THREE.Vector3(...normale).normalize(), surChange, montrer };
+    mode = 'plan';
+    construire();
+  };
+  // Déplace la poignée de plan sans la recréer (les champs du panneau ont changé).
+  vue.placerPlan = (point, normale) => {
+    if (!plan) return;
+    plan.point.set(...point);
+    plan.normale.set(...normale).normalize();
+    if (mode === 'plan') construire();
   };
   vue.manipulateur = () => mode;
   vue.nombreDePrises = () => prises.length;

@@ -144,6 +144,23 @@ double point_bas_de_la_tete(const ReglagesMachine& machine, double inclinaison) 
     return std::min(0.0, bout) - *machine.tete_demi_largeur * std::sin(angle);
 }
 
+bool inclinaison_admise(const ReglagesMachine& machine, double z_pointe, double b) {
+    const double inclinaison = std::abs(b);
+    const double butee = inclinaison_machine_max(machine);
+    if (inclinaison > butee + 1e-6) {
+        return false;
+    }
+    if (inclinaison <= machine.b_limite_pres_plateau + 1e-6) {
+        return true;
+    }
+    if (!encombrement_tete_connu(machine)) {
+        return machine.hauteur_bascule_b && z_pointe >= *machine.hauteur_bascule_b;
+    }
+    // (La recherche de « inclinaison_permise » avance par demi-degrés : même arrondi ici.)
+    const double essai = std::ceil(inclinaison * 2.0 - 1e-9) / 2.0;
+    return z_pointe + point_bas_de_la_tete(machine, std::min(essai, butee)) >= machine.marge_securite;
+}
+
 double inclinaison_permise(const ReglagesMachine& machine, double z_pointe) {
     const double butee = inclinaison_machine_max(machine);
     if (!encombrement_tete_connu(machine)) {

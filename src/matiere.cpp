@@ -63,7 +63,12 @@ void GrilleMatiere::deposer(const Vec3& pointe, const Vec3& direction, double la
                 if (radial2 > rayon * rayon) {
                     continue;
                 }
-                Bloc& bloc = blocs_[cle_bloc(i, j, k)];
+                const std::uint64_t cle = cle_bloc(i, j, k);
+                if (cle != cle_recente_ || !bloc_recent_) {
+                    bloc_recent_ = &blocs_[cle];  // (les blocs ne bougent pas en mémoire)
+                    cle_recente_ = cle;
+                }
+                Bloc& bloc = *bloc_recent_;
                 const unsigned position = position_dans_bloc(i, j, k);
                 const std::uint64_t bit = std::uint64_t{1} << (position & 63);
                 if (!(bloc.bits[position >> 6] & bit)) {
@@ -79,12 +84,23 @@ bool GrilleMatiere::occupe(const Vec3& point) const {
     const std::int64_t i = indice(point.x, pas_);
     const std::int64_t j = indice(point.y, pas_);
     const std::int64_t k = indice(point.z, pas_);
-    const auto trouve = blocs_.find(cle_bloc(i, j, k));
-    if (trouve == blocs_.end()) {
+    const Bloc* bloc = trouver(cle_bloc(i, j, k));
+    if (!bloc) {
         return false;
     }
     const unsigned position = position_dans_bloc(i, j, k);
-    return (trouve->second.bits[position >> 6] >> (position & 63)) & 1u;
+    return (bloc->bits[position >> 6] >> (position & 63)) & 1u;
+}
+
+GrilleMatiere::Bloc* GrilleMatiere::trouver(std::uint64_t cle) const {
+    if (cle == cle_recente_) {
+        return bloc_recent_;
+    }
+    const auto trouve = blocs_.find(cle);
+    // (Un bloc absent est retenu aussi : « rien ici » se redemande souvent.)
+    cle_recente_ = cle;
+    bloc_recent_ = trouve == blocs_.end() ? nullptr : const_cast<Bloc*>(&trouve->second);
+    return bloc_recent_;
 }
 
 }  // namespace artprint

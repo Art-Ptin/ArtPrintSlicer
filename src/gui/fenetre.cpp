@@ -257,7 +257,6 @@ void recevoir_demande(const std::wstring& message) {
         std::thread([id, texte = demande.dump()] {
             std::string reponse;
             {
-                const std::lock_guard<std::mutex> garde(application->verrou_session);
                 reponse = application->session.executer(texte);
             }
             repondre(id, reponse);

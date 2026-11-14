@@ -39,6 +39,11 @@ private:
     double pas_;
     std::size_t cubes_remplis_ = 0;
     std::unordered_map<std::uint64_t, Bloc> blocs_;
+    // Le dernier bloc touché : la buse avance de proche en proche, c'est
+    // presque toujours le même que la fois d'avant.
+    mutable std::uint64_t cle_recente_ = ~std::uint64_t{0};
+    mutable Bloc* bloc_recent_ = nullptr;
+    Bloc* trouver(std::uint64_t cle) const;
 };
 
 }  // namespace artprint

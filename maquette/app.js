@@ -49,6 +49,8 @@ const etat = {
   strategie: 'classique',
   branches: {},         // ondulation : choix de l'utilisateur par branche (numéro de partie -> choix)
   coupes: [],           // coupes faites sur le modèle ouvert ({ hauteur, garder, pose })
+  modeOndulation: 'auto', // ondulation : 'auto' (parties trouvées par le slicer), 'zones' (à la main) ou 'incline' (toute la pièce)
+  incline: { inclinaison: 45, azimut: 0 },   // ondulation « tout incliné » : l'angle de la tête et le côté vers lequel elle penche
   zones: [],            // ondulation : zones orientées choisies sur le modèle ({ point, inclinaison, azimut })
   zoneChoisie: -1,
   pointage: false,      // vrai : le prochain clic sur le modèle ajoute une zone
@@ -659,33 +661,13 @@ function afficherStrategies() {
       : proposee ? `${entier(proposee.surplomb_mm2)} mm² à soutenir`
         : (type === 'classique' ? 'couches horizontales' : 'tête et plateau inclinés');
   }
-  $('strategie').parentElement.hidden = !etat.strategies.length;
-  if (!etat.modele || !etat.strategies.length) {
-    $('strategie-detail').textContent = etat.modele && etat.calculStrategies ? 'Recherche des façons d\'imprimer cette pièce…'
-      : 'Ouvre un modèle : le slicer dira ce que chaque stratégie laisse à soutenir.';
-    afficherOndulation();
-    return;
+  // Ce que le slicer dit de chaque stratégie se lit au survol de sa carte.
+  for (const [id, type] of [['mode-3axes', 'classique'], ['mode-5axes', 'couches_courbes']]) {
+    const proposee = etat.strategies.find((st) => st.type === type);
+    $(id).title = proposee ? [proposee.description, ...proposee.remarques].join('\n')
+      : (type === 'classique' ? 'Classique : tout le modèle en couches horizontales, la tête à la verticale.'
+        : 'Ondulation : les parties inclinées sont imprimées la tête penchée et le plateau tourné, en 5 axes continu.');
   }
-  $('strategie').replaceChildren(...etat.strategies.map((s) => new Option(
-    `${s.nom} · ${entier(s.surplomb_mm2)} mm² à soutenir`, s.type, false, s.type === etat.strategie)));
-  const choisie = etat.strategies.find((s) => s.type === etat.strategie) || etat.strategies[0];
-  const detail = $('strategie-detail');
-  detail.replaceChildren(document.createTextNode(choisie.description));
-  if (choisie.type === 'couches_courbes' && etat.zones.length) {
-    // Des zones choisies à la main : ce sont elles qui décident, pas les parties trouvées par le slicer.
-    detail.replaceChildren(document.createTextNode(`Ondulation par zones : ${etat.zones.length} zone(s) choisie(s) sur la pièce. ` +
-      'Le bas est imprimé à plat, puis chaque zone dans sa direction.'));
-    afficherOndulation();
-    return;
-  }
-  if (choisie.parties.length > 1) {
-    detail.append(document.createTextNode(' Inclinaisons : '),
-      el('b', '', choisie.parties.map((p) => (p.courbe ? `jusqu'à ${fr(p.inclinaison, 0)}° (courbe)` : `${fr(p.inclinaison, 0)}°`)).join(', ')),
-      document.createTextNode('.'));
-  }
-  if (choisie.type === 'couches_courbes') {
-  }
-  for (const remarque of choisie.remarques) detail.append(el('span', 'remarque', remarque));
   afficherOndulation();
 }
 
@@ -797,7 +779,7 @@ async function poserModele(modele, garderVue = false, glissement = null) {
   }
   etat.modele.nom = etat.chemin.split(/[\\/]/).pop();
   if (glissement) vue3d.glisserModele(glissement[0], glissement[1]); else vue3d.afficherModele(modele.positions, garderVue);
-  if (glissement) vue3d.afficherZones(etat.zones, etat.zoneChoisie);
+  if (glissement) montrerOndulation();
   vue3d.rafraichirTheme();
   $('accueil').hidden = true;
   const [x, y, z] = etat.modele.dimensions;
@@ -848,7 +830,7 @@ async function transformer(parametres, message) {
 const historique = { passe: [], futur: [], courant: null, gele: false };
 const instantane = () => structuredClone({ chemin: etat.chemin, echelle: etat.echelle, orientation: etat.orientation,
   rotation: etat.rotation, decalage: etat.decalage, coupes: etat.coupes, strategie: etat.strategie,
-  branches: etat.branches, zones: etat.zones });
+  branches: etat.branches, zones: etat.zones, modeOndulation: etat.modeOndulation, incline: etat.incline });
 function boutonsHistorique() {
   $('btn-annuler').disabled = !historique.passe.length;
   $('btn-refaire').disabled = !historique.futur.length;
@@ -898,6 +880,8 @@ async function restaurer(cible) {
     etat.strategie = cible.strategie === 'couches_courbes' ? 'couches_courbes' : 'classique';
     etat.branches = structuredClone(cible.branches ?? {});
     etat.zones = structuredClone(cible.zones ?? []);
+    etat.modeOndulation = cible.modeOndulation ?? (etat.zones.length ? 'zones' : 'auto');
+    etat.incline = structuredClone(cible.incline ?? { inclinaison: 45, azimut: 0 });
     etat.zoneChoisie = -1;
     zonesChangees();
     return true;
@@ -1184,7 +1168,7 @@ function rangeeAxes(libelle, champs, unite) {
 }
 
 // Les poignées 3D suivent l'outil ouvert : elles disparaissent quand son panneau se ferme.
-new MutationObserver(() => { if ($('panneau-outil').hidden) vue3d.manipuler(null); })
+new MutationObserver(() => { if ($('panneau-outil').hidden) { vue3d.manipuler(null); montrerOndulation(); } })
   .observe($('panneau-outil'), { attributes: true, attributeFilter: ['hidden'] });
 
 // La rotation à la main part de la pose du fichier : la pose automatique est d'abord quittée.
@@ -1478,6 +1462,7 @@ function pointer(actif) {
 function ajouterZone(point, inclinaison = 30, azimut = 0) {
   etat.zones.push({ point: point.map((v) => Math.round(v * 10) / 10), inclinaison: Math.min(inclinaison, inclinaisonMaxZone()), azimut });
   etat.zoneChoisie = etat.zones.length - 1;
+  etat.modeOndulation = 'zones';
   zonesChangees();
 }
 
@@ -1488,9 +1473,51 @@ function zoneDiagonale() {
   ajouterZone([(boite.min.x + boite.max.x) / 2, (boite.min.y + boite.max.y) / 2, boite.min.z + 0.5 * (boite.max.z - boite.min.z)], 45, 0);
 }
 
+// La direction d'une zone, et l'inverse : l'inclinaison et l'azimut d'une direction.
+const directionDe = (zone) => {
+  const t = zone.inclinaison * Math.PI / 180, a = zone.azimut * Math.PI / 180;
+  return [Math.sin(t) * Math.cos(a), Math.sin(t) * Math.sin(a), Math.cos(t)];
+};
+function anglesDe(normale, max) {
+  const n = Math.hypot(...normale) || 1;
+  const inclinaison = Math.min(max, Math.round(Math.acos(Math.max(-1, Math.min(1, normale[2] / n))) * 180 / Math.PI));
+  const azimut = Math.hypot(normale[0], normale[1]) < 1e-6 ? 0 : Math.round((Math.atan2(normale[1], normale[0]) * 180 / Math.PI + 360) % 360) % 360;
+  return { inclinaison, azimut };
+}
+
+// Ce que la vue montre de l'ondulation : les zones (et la poignée de celle qui
+// est choisie), ou la direction de « tout incliné ».
+function montrerOndulation() {
+  const actif = Boolean(etat.modele) && etat.strategie === 'couches_courbes';
+  const outilOuvert = !$('panneau-outil').hidden;
+  if (!actif || etat.modeOndulation === 'auto') {
+    vue3d.afficherZones([]);
+    if (!outilOuvert && vue3d.manipulateur() === 'plan') vue3d.manipuler(null);
+    return;
+  }
+  if (etat.modeOndulation === 'incline') {
+    // Une flèche au pied de la pièce : la direction dans laquelle les couches s'empilent.
+    const boite = vue3d.boite;
+    const pied = boite ? [(boite.min.x + boite.max.x) / 2, (boite.min.y + boite.max.y) / 2, boite.min.z] : [0, 0, 0];
+    vue3d.afficherZones([{ point: pied, ...etat.incline }], 0);
+    if (!outilOuvert && vue3d.manipulateur() === 'plan') vue3d.manipuler(null);
+    return;
+  }
+  vue3d.afficherZones(etat.zones, etat.zoneChoisie);
+  if (outilOuvert) return;   // un outil de la barre a la main sur les poignées
+  const zone = etat.zones[etat.zoneChoisie];
+  if (!zone) { if (vue3d.manipulateur() === 'plan') vue3d.manipuler(null); return; }
+  vue3d.manipulerPlan(zone.point, directionDe(zone), (point, normale, fini) => {
+    zone.point = point.map((v) => Math.round(v * 10) / 10);
+    Object.assign(zone, anglesDe(normale, inclinaisonMaxZone()));
+    vue3d.afficherZones(etat.zones, etat.zoneChoisie);
+    if (fini) { vue3d.placerPlan(zone.point, directionDe(zone)); zonesChangees(); }
+  });
+}
+
 let minuterieZones = 0;
 function zonesChangees() {
-  vue3d.afficherZones(etat.zones, etat.zoneChoisie);
+  montrerOndulation();
   perimer();
   afficherStrategies();
   noterBientot();
@@ -1543,13 +1570,28 @@ function reglageZone(libelle, id, valeur, min, max, unite, surChange) {
   return ligne;
 }
 
+const MODES_ONDULATION = [
+  ['auto', 'Automatique', 'Le slicer cherche lui-même les parties à imprimer la tête inclinée.'],
+  ['zones', 'Zones', 'Tu désignes sur la pièce les endroits à imprimer dans une autre direction.'],
+  ['incline', 'Tout incliné', 'Toute la pièce est imprimée la tête penchée, du plateau jusqu\'en haut.'],
+];
+
+function choisirModeOndulation(mode) {
+  if (etat.pointage) pointer(false);
+  etat.modeOndulation = mode;
+  perimer();
+  afficherStrategies();
+  montrerOndulation();
+  noter();
+}
+
 function afficherOndulation() {
   const panneau = $('panneau-ondulation');
   const actif = Boolean(etat.modele) && etat.strategie === 'couches_courbes';
   panneau.hidden = !actif;
   if (!actif) {
     if (etat.pointage) pointer(false);
-    vue3d.afficherZones([]);
+    montrerOndulation();
     return;
   }
   // Pendant qu'on fait glisser un curseur, le panneau n'est pas reconstruit (le curseur serait lâché).
@@ -1562,57 +1604,107 @@ function afficherOndulation() {
   const strategie = etat.strategies.find((st) => st.type === 'couches_courbes');
   const max = inclinaisonMaxZone();
 
-  // 1. Les zones orientées, choisies à la main.
-  contenu.push(el('p', 'aide', 'Zones orientées : clique sur la pièce pour dire « à partir d\'ici, imprime dans une autre direction ». ' +
-    'Le bas est imprimé à plat, puis chaque zone la tête inclinée et le plateau tourné.'));
-  const rangee = el('div', 'rangee');
-  const ajouter = el('button', 'bouton fin', etat.pointage ? 'Clique sur la pièce… (annuler)' : 'Ajouter une zone en cliquant');
-  ajouter.id = 'zone-ajouter';
-  ajouter.setAttribute('aria-pressed', String(etat.pointage));
-  ajouter.addEventListener('click', () => { pointer(!etat.pointage); afficherOndulation(); });
-  const diagonale = el('button', 'bouton fin', 'Le haut en diagonale');
-  diagonale.id = 'zone-diagonale';
-  diagonale.title = 'Ajoute une zone à mi-hauteur de la pièce, inclinée de 45° : à régler ensuite.';
-  diagonale.addEventListener('click', zoneDiagonale);
-  rangee.append(ajouter, diagonale);
-  contenu.push(rangee);
+  // Les trois façons d'incliner la tête.
+  const modes = el('div', 'pilule modes-ondulation');
+  modes.setAttribute('role', 'group');
+  modes.setAttribute('aria-label', 'Façon d\'incliner la tête');
+  for (const [mode, libelle, aide] of MODES_ONDULATION) {
+    const bouton = el('button', etat.modeOndulation === mode ? 'actif' : '', libelle);
+    bouton.id = `ondulation-${mode}`;
+    bouton.title = aide;
+    bouton.setAttribute('aria-pressed', String(etat.modeOndulation === mode));
+    bouton.addEventListener('click', () => choisirModeOndulation(mode));
+    modes.append(bouton);
+  }
+  contenu.push(modes);
 
-  etat.zones.forEach((zone, i) => {
-    const carte = el('div', 'zone-orientee' + (i === etat.zoneChoisie ? ' choisie' : ''));
-    carte.id = `zone-${i + 1}`;
-    const tete = el('header');
-    const retirer = el('button', 'bouton-icone');
-    retirer.id = `zone-${i + 1}-retirer`;
-    retirer.title = 'Retirer cette zone';
-    retirer.setAttribute('aria-label', `Retirer la zone ${i + 1}`);
-    retirer.append(icone('supprimer'));
-    retirer.addEventListener('click', () => { etat.zones.splice(i, 1); etat.zoneChoisie = -1; zonesChangees(); });
-    tete.append(el('span', '', `Zone ${i + 1}`), retirer);
-    const choisir = () => { if (etat.zoneChoisie !== i) { etat.zoneChoisie = i; vue3d.afficherZones(etat.zones, i); } };
-    carte.addEventListener('pointerdown', choisir);
-    carte.addEventListener('focusin', choisir);
-    const hauteurMax = Math.max(1, Math.floor(vue3d.boite ? vue3d.boite.max.z : 260));
-    carte.append(tete,
-      reglageZone('Inclinaison', `zone-${i + 1}-inclinaison`, zone.inclinaison, 0, max, 'degrés', (v) => { zone.inclinaison = v; zonesChangees(); }),
-      reglageZone('Direction', `zone-${i + 1}-azimut`, zone.azimut, 0, 359, 'degrés', (v) => { zone.azimut = v; zonesChangees(); }),
-      reglageZone('Hauteur', `zone-${i + 1}-hauteur`, Math.round(zone.point[2]), 0, hauteurMax, 'mm', (v) => { zone.point[2] = v; zonesChangees(); }));
-    contenu.push(carte);
-  });
-  if (etat.zones.length) {
-    const note = el('p', 'aide' + (etat.apercuZones?.alerte ? ' alerte' : ''), etat.apercuZones?.texte ?? 'Calcul des parties…');
-    note.id = 'zones-apercu';
-    contenu.push(note, el('p', 'aide', `Inclinaison : 0° = tête verticale, ${fr(max, 0)}° au plus sur cette machine. Direction : le côté vers lequel ` +
-      'les couches penchent (0° vers la droite du plateau, 90° vers le fond). Le disque dans la vue montre le plan de coupe, la flèche la direction d\'impression.' +
-      (simulation ? ' (Simulation : le tranchage affiché est enregistré, il ne tient pas compte des zones.)' : '')));
+  if (etat.modeOndulation === 'incline') {
+    // --- Toute la pièce inclinée, comme sur une imprimante à tapis.
+    const limite = Math.min(max, lireNombre(moteur('b_limite_pres_plateau')) || 55);
+    etat.incline.inclinaison = Math.min(limite, Math.max(1, etat.incline.inclinaison));
+    const angles = el('div', 'rangee');
+    for (const angle of [15, 30, 45, limite].filter((v, i, t) => v <= limite && t.indexOf(v) === i)) {
+      const bouton = el('button', 'bouton fin', `${fr(angle, 0)}°`);
+      bouton.id = `incline-${angle}`;
+      bouton.setAttribute('aria-pressed', String(etat.incline.inclinaison === angle));
+      bouton.addEventListener('click', () => { etat.incline.inclinaison = angle; inclineChange(); });
+      angles.append(bouton);
+    }
+    const cotes = el('div', 'rangee');
+    for (const [libelle, azimut] of [['Vers la droite', 0], ['Vers le fond', 90], ['Vers la gauche', 180], ['Vers l\'avant', 270]]) {
+      const bouton = el('button', 'bouton fin', libelle);
+      bouton.id = `incline-cote-${azimut}`;
+      bouton.setAttribute('aria-pressed', String(etat.incline.azimut === azimut));
+      bouton.addEventListener('click', () => { etat.incline.azimut = azimut; inclineChange(); });
+      cotes.append(bouton);
+    }
+    const carte = el('div', 'zone-orientee');
+    carte.append(
+      reglageZone('Inclinaison', 'incline-inclinaison', etat.incline.inclinaison, 1, limite, 'degrés', (v) => { etat.incline.inclinaison = v; inclineChange(true); }),
+      reglageZone('Direction', 'incline-azimut', etat.incline.azimut, 0, 359, 'degrés', (v) => { etat.incline.azimut = v; inclineChange(true); }));
+    contenu.push(angles, cotes, carte,
+      el('p', 'aide', `Les couches sont penchées et partent du plateau ; la tête garde la même inclinaison du début à la fin ` +
+        `(${fr(limite, 0)}° au plus au ras du plateau sur cette machine). La flèche dans la vue montre le sens où les couches s'empilent. ` +
+        'Il n\'y a pas de jupe dans ce mode.' +
+        (simulation ? ' (Simulation : le tranchage affiché est enregistré, il ne tient pas compte de ce réglage.)' : '')));
+  } else if (etat.modeOndulation === 'zones') {
+    // --- Les zones orientées, choisies à la main.
+    const rangee = el('div', 'rangee');
+    const ajouter = el('button', 'bouton fin', etat.pointage ? 'Clique sur la pièce… (annuler)' : 'Ajouter une zone en cliquant');
+    ajouter.id = 'zone-ajouter';
+    ajouter.setAttribute('aria-pressed', String(etat.pointage));
+    ajouter.addEventListener('click', () => { pointer(!etat.pointage); afficherOndulation(); });
+    const diagonale = el('button', 'bouton fin', 'Le haut en diagonale');
+    diagonale.id = 'zone-diagonale';
+    diagonale.title = 'Ajoute une zone à mi-hauteur de la pièce, inclinée de 45° : à régler ensuite.';
+    diagonale.addEventListener('click', zoneDiagonale);
+    rangee.append(ajouter, diagonale);
+    contenu.push(rangee);
+
+    etat.zones.forEach((zone, i) => {
+      const carte = el('div', 'zone-orientee' + (i === etat.zoneChoisie ? ' choisie' : ''));
+      carte.id = `zone-${i + 1}`;
+      const tete = el('header');
+      const retirer = el('button', 'bouton-icone');
+      retirer.id = `zone-${i + 1}-retirer`;
+      retirer.title = 'Retirer cette zone';
+      retirer.setAttribute('aria-label', `Retirer la zone ${i + 1}`);
+      retirer.append(icone('supprimer'));
+      retirer.addEventListener('click', () => { etat.zones.splice(i, 1); etat.zoneChoisie = Math.min(etat.zoneChoisie, etat.zones.length - 1); zonesChangees(); });
+      tete.append(el('span', '', `Zone ${i + 1}`), retirer);
+      const choisir = () => {
+        if (etat.zoneChoisie === i) return;
+        etat.zoneChoisie = i;
+        for (const autre of panneau.querySelectorAll('.zone-orientee')) autre.classList.toggle('choisie', autre === carte);
+        montrerOndulation();
+      };
+      carte.addEventListener('pointerdown', choisir);
+      carte.addEventListener('focusin', choisir);
+      const hauteurMax = Math.max(1, Math.floor(vue3d.boite ? vue3d.boite.max.z : 260));
+      carte.append(tete,
+        reglageZone('Inclinaison', `zone-${i + 1}-inclinaison`, zone.inclinaison, 0, max, 'degrés', (v) => { zone.inclinaison = v; zonesChangees(); }),
+        reglageZone('Direction', `zone-${i + 1}-azimut`, zone.azimut, 0, 359, 'degrés', (v) => { zone.azimut = v; zonesChangees(); }),
+        reglageZone('Hauteur', `zone-${i + 1}-hauteur`, Math.round(zone.point[2]), 0, hauteurMax, 'mm', (v) => { zone.point[2] = v; zonesChangees(); }));
+      contenu.push(carte);
+    });
+    if (etat.zones.length) {
+      const note = el('p', 'aide' + (etat.apercuZones?.alerte ? ' alerte' : ''), etat.apercuZones?.texte ?? 'Calcul des parties…');
+      note.id = 'zones-apercu';
+      contenu.push(note, el('p', 'aide', 'La zone choisie (cadre orange) a ses poignées dans la vue : tire une flèche pour la déplacer, ' +
+        `un anneau pour l'orienter. Inclinaison : 0° = tête verticale, ${fr(max, 0)}° au plus sur cette machine.` +
+        (simulation ? ' (Simulation : le tranchage affiché est enregistré, il ne tient pas compte des zones.)' : '')));
+    } else {
+      contenu.push(el('p', 'aide', 'Clique sur « Ajouter une zone en cliquant », puis sur la pièce : à partir de ce point, elle sera imprimée ' +
+        'dans une autre direction. Tu peux en poser plusieurs, puis les déplacer et les orienter dans la vue.'));
+    }
   } else if (etat.calculStrategies) {
     contenu.push(el('p', 'aide', 'Recherche des parties que le slicer sait incliner tout seul…'));
   } else if (!strategie || strategie.parties.length < 2) {
-    // 2. Pas de zone, et rien que le slicer sache incliner tout seul.
-    contenu.push(el('p', 'aide', 'Sans zone, ce modèle sera imprimé comme en classique : le slicer n\'y trouve aucune partie à imprimer la tête inclinée.'));
+    contenu.push(el('p', 'aide', 'Le slicer ne trouve aucune partie à incliner sur cette pièce : en automatique, elle sera imprimée comme en classique. ' +
+      'Choisis « Zones » ou « Tout incliné » pour décider toi-même.'));
   } else {
-    // 3. Pas de zone : les parties trouvées par le slicer, à régler une par une.
-    contenu.push(el('p', 'aide', `Sans zone, le slicer imprime tout seul ${strategie.parties.length - 1} partie(s) dans une autre direction. ` +
-      'Choisis pour chacune la façon de l\'imprimer :'));
+    // --- Automatique : les parties trouvées par le slicer, à régler une par une.
+    contenu.push(el('p', 'aide', `${strategie.parties.length - 1} partie(s) à imprimer dans une autre direction :`));
     strategie.parties.forEach((partie, i) => {
       if (i === 0) return;
       const etiquette = el('label', '', `Partie ${i + 1} · ${fr(partie.volume_cm3, 1)} cm³ · inclinée de ${fr(partie.inclinaison, 0)}°` +
@@ -1632,10 +1724,15 @@ function afficherOndulation() {
     });
     if (simulation) contenu.push(el('p', 'aide', '(Simulation : le tranchage affiché est enregistré, il ne tient pas compte de ces choix.)'));
   }
-  if (etat.zones.length && strategie && strategie.parties.length > 1) {
-    contenu.push(el('p', 'aide', 'Avec des zones, les parties que le slicer trouve tout seul ne sont pas utilisées : seules tes zones comptent.'));
-  }
   panneau.replaceChildren(...contenu);
+}
+
+// Le réglage « tout incliné » a changé.
+function inclineChange(curseur = false) {
+  perimer();
+  montrerOndulation();
+  if (!curseur) afficherOndulation();
+  noterBientot();
 }
 
 function montrerRemarques() {
@@ -1709,8 +1806,10 @@ async function trancher() {
   const demande = { strategie: etat.strategie };
   if (etat.strategie === 'couches_courbes') {
     if (etat.pointage) pointer(false);
-    if (etat.zones.length) demande.zones = etat.zones;
-    const branches = etat.zones.length ? [] : Object.entries(etat.branches).map(([partie, choix]) => (
+    const parZones = etat.modeOndulation === 'zones' && etat.zones.length > 0;
+    if (etat.modeOndulation === 'incline') demande.tout_incline = { ...etat.incline };
+    else if (parZones) demande.zones = etat.zones;
+    const branches = etat.modeOndulation !== 'auto' ? [] : Object.entries(etat.branches).map(([partie, choix]) => (
       choix === 'a_plat' ? { partie: Number(partie), mode: 'a_plat' }
         : { partie: Number(partie), mode: 'courbes', inclinaison_max: choix === 'incline60' ? 60 : 45 }));
     if (branches.length) demande.branches = branches;
@@ -1904,7 +2003,7 @@ function dessinerOutils() {
           if (replier.getAttribute('aria-expanded') !== 'true') replier.click();
           if ($('btn-cote').getAttribute('aria-expanded') === 'false') $('btn-cote').click();
           $('bloc-strategie').scrollIntoView({ block: 'start' });
-          $('strategie').focus();
+          $('mode-3axes').focus();
           dire('La stratégie se choisit ici, à gauche : « Classique » (3 axes) ou « Ondulation » (5 axes).', { info: true });
         });
       } else if (OUTILS_BRANCHES[nom]) {
@@ -2092,7 +2191,6 @@ for (const bouton of document.querySelectorAll('.replier')) {
 }
 $('btn-retablir-tout').addEventListener('click', () => choisirProfil(etat.profil));
 $('profil-procede').addEventListener('change', (e) => choisirProfil(e.target.value));
-$('strategie').addEventListener('change', (e) => { etat.strategie = e.target.value; afficherStrategies(); perimer(); noter(); });
 // La pastille « 3 axes | 5 axes » choisit la stratégie correspondante.
 function choisirMode(cinqAxes) {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle : le 5 axes dépend de sa forme.', { info: true }); return; }
