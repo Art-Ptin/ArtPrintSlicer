@@ -3,6 +3,7 @@
 // d'outils, aperçu avec trajectoires repliables, ligne d'état.
 import { appeler, simulation } from './pont.js';
 import { Vue3D, couleursTrajectoires } from './vue3d.js';
+import { composerRotation, rotationPourPoser, COULEURS_AXES } from './manipulateurs.js';
 import { icone } from './icones.js';
 import { ONGLETS, PARAMETRES, PROFILS, MATIERES, BOBINES_EXEMPLE, PROFIL_MACHINE } from './catalogue.js';
 import { ouvrirMenu } from './menu.js';
@@ -644,6 +645,7 @@ const STRATEGIES_5_AXES = ['couches_courbes'];
 // Liste des façons d'imprimer le modèle ouvert, avec ce qu'il resterait à soutenir.
 function afficherStrategies() {
   const cinqAxes = STRATEGIES_5_AXES.includes(etat.strategie);
+  dessinerRepere();
   for (const [id, actif] of [['mode-3axes', !cinqAxes], ['mode-5axes', cinqAxes]]) {
     $(id).classList.toggle('actif', actif);
     $(id).setAttribute('aria-pressed', String(actif));
@@ -653,12 +655,14 @@ function afficherStrategies() {
   // Les deux cartes : ce que chaque stratégie laisserait à soutenir.
   for (const [id, type] of [['mode-3axes', 'classique'], ['mode-5axes', 'couches_courbes']]) {
     const proposee = etat.strategies.find((st) => st.type === type);
-    $(id).querySelector('.carte-note').textContent = proposee ? `${entier(proposee.surplomb_mm2)} mm² à soutenir`
-      : (type === 'classique' ? 'couches horizontales' : 'tête et plateau inclinés');
+    $(id).querySelector('.carte-note').textContent = etat.calculStrategies ? 'calcul…'
+      : proposee ? `${entier(proposee.surplomb_mm2)} mm² à soutenir`
+        : (type === 'classique' ? 'couches horizontales' : 'tête et plateau inclinés');
   }
   $('strategie').parentElement.hidden = !etat.strategies.length;
   if (!etat.modele || !etat.strategies.length) {
-    $('strategie-detail').textContent = 'Ouvre un modèle : le slicer dira ce que chaque stratégie laisse à soutenir.';
+    $('strategie-detail').textContent = etat.modele && etat.calculStrategies ? 'Recherche des façons d\'imprimer cette pièce…'
+      : 'Ouvre un modèle : le slicer dira ce que chaque stratégie laisse à soutenir.';
     afficherOndulation();
     return;
   }
@@ -744,17 +748,56 @@ async function chargerModele(chemin) {
   return true;
 }
 
+// --- Calculs en arrière-plan ---------------------------------------------------------
+// Les façons d'imprimer la pièce sont cherchées sans bloquer l'écran. Tant que
+// ce n'est pas fini, les anciennes restent affichées avec la mention « calcul… ».
+
+let generationStrategies = 0, minuterieStrategies = 0;
+function signalerCalcul(enCours) {
+  etat.calculStrategies = enCours;
+  document.body.dataset.calcul = enCours ? '1' : '0';
+  $('calcul').hidden = !enCours;
+}
+function chercherStrategies(delai = 0) {
+  const generation = ++generationStrategies;
+  signalerCalcul(true);
+  clearTimeout(minuterieStrategies);
+  minuterieStrategies = setTimeout(async () => {
+    const proposees = await appeler('strategies');
+    if (generation !== generationStrategies) return;   // la pièce a encore changé entre-temps
+    etat.strategies = proposees.ok ? proposees.strategies : [];
+    if (!etat.strategies.some((st) => st.type === etat.strategie)) etat.strategie = 'classique';
+    signalerCalcul(false);
+    afficherStrategies();
+  }, delai);
+}
+// Les demandes au slicer partent l'une après l'autre, dans l'ordre des gestes.
+let fileMoteur = Promise.resolve();
+function enFile(action) {
+  const suite = fileMoteur.then(action, action);
+  fileMoteur = suite.catch(() => {});
+  return suite;
+}
+
 // Met en place le modèle rendu par le slicer (après ouverture, mise à l'échelle ou orientation).
-async function poserModele(modele, garderVue = false) {
+// « glissement » [dx, dy] : la pièce a seulement glissé sur le plateau ; rien n'est à recalculer.
+async function poserModele(modele, garderVue = false, glissement = null) {
   etat.modele = modele;
   etat.plateaux[etat.plateau].positions = modele.positions;   // pour le dessiner quand un autre plateau est choisi
   etat.resultat = null;
-  etat.branches = {};
-  // (Le modèle a changé de place ou de taille : les points choisis ne sont plus les bons.)
-  const zonesPerdues = etat.zones.length;
-  oublierZones();
+  let zonesPerdues = 0;
+  if (glissement) {
+    // Les zones suivent la pièce.
+    for (const zone of etat.zones) { zone.point[0] += glissement[0]; zone.point[1] += glissement[1]; }
+  } else {
+    etat.branches = {};
+    // (Le modèle a changé de forme ou de pose : les points choisis ne sont plus les bons.)
+    zonesPerdues = etat.zones.length;
+    oublierZones();
+  }
   etat.modele.nom = etat.chemin.split(/[\\/]/).pop();
-  vue3d.afficherModele(modele.positions, garderVue);
+  if (glissement) vue3d.glisserModele(glissement[0], glissement[1]); else vue3d.afficherModele(modele.positions, garderVue);
+  if (glissement) vue3d.afficherZones(etat.zones, etat.zoneChoisie);
   vue3d.rafraichirTheme();
   $('accueil').hidden = true;
   const [x, y, z] = etat.modele.dimensions;
@@ -762,11 +805,7 @@ async function poserModele(modele, garderVue = false) {
   $('r-dimensions').textContent = `${fr(x)} × ${fr(y)} × ${fr(z)} mm · ${entier(etat.modele.triangles)} triangles` +
     (etat.echelle !== 1 ? ` · échelle ${fr(etat.echelle * 100, 0)} %` : '');
   $('titre-document').textContent = etat.modele.nom.replace(/\.[^.]+$/, '');
-  occuper('Recherche des façons d\'imprimer ce modèle…');
-  const proposees = await demander('strategies');
-  liberer();
-  etat.strategies = proposees?.strategies ?? [];
-  if (!etat.strategies.some((st) => st.type === etat.strategie)) etat.strategie = 'classique';
+  if (!glissement) chercherStrategies(garderVue ? 500 : 0);
   afficherStrategies();
   if (!etat.modele.ferme) dire(etat.modele.message_fermeture);
   else if (zonesPerdues) dire('Le modèle a changé : les zones orientées ont été retirées. Remets-les sur la pièce.', { info: true });
@@ -781,17 +820,23 @@ async function poserModele(modele, garderVue = false) {
 // Applique une échelle ou une orientation au modèle ouvert.
 async function transformer(parametres, message) {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
-  occuper('Mise à jour du modèle…');
-  const reponse = await demander('transformer_modele', parametres);
-  liberer();
-  if (!reponse) return;
+  // Un simple déplacement : la pièce glisse tout de suite à l'écran, le slicer suit en arrière-plan.
+  const cles = Object.keys(parametres);
+  const depart = [...etat.decalage];
+  const glisse = cles.length === 1 && cles[0] === 'decalage';
+  if (glisse) vue3d.glisserProvisoire(parametres.decalage[0] - depart[0], parametres.decalage[1] - depart[1]);
+  $('calcul').hidden = false;
+  const reponse = await enFile(() => demander('transformer_modele', parametres));
+  if (!etat.calculStrategies) $('calcul').hidden = true;
+  if (!reponse) { if (glisse) vue3d.glisserProvisoire(0, 0); return; }
+  const glissement = glisse ? [reponse.decalage[0] - depart[0], reponse.decalage[1] - depart[1]] : null;
   etat.echelle = reponse.echelle ?? etat.echelle;
   etat.orientation = reponse.orientation ?? etat.orientation;
   etat.rotation = reponse.rotation ?? etat.rotation;
   etat.decalage = reponse.decalage ?? etat.decalage;
   etat.plateaux[etat.plateau] = { chemin: etat.chemin, echelle: etat.echelle, orientation: etat.orientation,
     rotation: etat.rotation, decalage: etat.decalage, positions: etat.plateaux[etat.plateau]?.positions };
-  await poserModele(reponse.modele, true);
+  await poserModele(reponse.modele, true, glissement);
   dire(((parametres.orientation || parametres.rotation) && reponse.note) || message, { info: true });
   noter();
 }
@@ -849,7 +894,8 @@ async function restaurer(cible) {
       }
     }
     await transformer(poseDe(cible), 'Pièce remise en place.');
-    etat.strategie = etat.strategies.some((st) => st.type === cible.strategie) ? cible.strategie : 'classique';
+    // (Les stratégies arrivent en arrière-plan : si celle-ci n'est finalement pas proposée, le classique reprend la main.)
+    etat.strategie = cible.strategie === 'couches_courbes' ? 'couches_courbes' : 'classique';
     etat.branches = structuredClone(cible.branches ?? {});
     etat.zones = structuredClone(cible.zones ?? []);
     etat.zoneChoisie = -1;
@@ -1115,11 +1161,46 @@ function champNombre(id, libelle, valeur) {
   return [etiquette, champ];
 }
 
+// Une rangée de champs, un par axe, avec la lettre de l'axe dans sa couleur.
+function rangeeAxes(libelle, champs, unite) {
+  const rangee = el('div', 'rangee-axes');
+  rangee.append(el('span', 'rangee-libelle', libelle));
+  for (const [axe, id, valeur, titre] of champs) {
+    const etiquette = el('label', 'champ-axe');
+    etiquette.title = titre;
+    const lettre = el('b', '', 'XYZ'[axe]);
+    lettre.style.color = COULEURS_AXES[axe];
+    const champ = el('input');
+    champ.type = 'text';
+    champ.id = id;
+    champ.inputMode = 'decimal';
+    champ.value = ecrire(valeur);
+    champ.setAttribute('aria-label', titre);
+    etiquette.append(lettre, champ);
+    rangee.append(etiquette);
+  }
+  rangee.append(el('span', 'rangee-unite', unite));
+  return rangee;
+}
+
+// Les poignées 3D suivent l'outil ouvert : elles disparaissent quand son panneau se ferme.
+new MutationObserver(() => { if ($('panneau-outil').hidden) vue3d.manipuler(null); })
+  .observe($('panneau-outil'), { attributes: true, attributeFilter: ['hidden'] });
+
+// La rotation à la main part de la pose du fichier : la pose automatique est d'abord quittée.
+async function quitterPoseAutomatique() {
+  if (etat.orientation !== 'auto') return;
+  await transformer({ orientation: 'origine' }, 'Pose du fichier rétablie.');
+  dire('La pose automatique a été quittée : la pièce repart de la pose du fichier.', { info: true });
+}
+
 async function outilDeplacer() {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
-  const [ex, cx] = champNombre('deplacer-x', 'Vers la droite (X), en mm depuis le centre du plateau', etat.decalage[0]);
-  const [ey, cy] = champNombre('deplacer-y', 'Vers l\'arrière (Y), en mm depuis le centre du plateau', etat.decalage[1]);
-  const aide = el('p', 'aide', '0 et 0 remettent la pièce au centre. Le slicer refuse le tranchage si la pièce dépasse du plateau.');
+  const rangee = rangeeAxes('Position', [
+    [0, 'deplacer-x', etat.decalage[0], 'Vers la droite (X), en mm depuis le centre du plateau'],
+    [1, 'deplacer-y', etat.decalage[1], 'Vers l\'arrière (Y), en mm depuis le centre du plateau']], 'mm');
+  const aide = el('p', 'aide', 'Tire une flèche pour glisser le long d\'un axe, ou attrape la pièce pour la glisser librement. ' +
+    '0 et 0 la remettent au centre.');
   const pousser = (dx, dy) => async () => {
     await transformer({ decalage: [etat.decalage[0] + dx, etat.decalage[1] + dy] }, 'Pièce déplacée.');
     outilDeplacer();
@@ -1127,10 +1208,10 @@ async function outilDeplacer() {
   const fleches = [['← 10', 'deplacer-gauche', pousser(-10, 0)], ['→ 10', 'deplacer-droite', pousser(10, 0)],
     ['↑ 10', 'deplacer-arriere', pousser(0, 10)], ['↓ 10', 'deplacer-avant', pousser(0, -10)],
     ['Au centre', 'deplacer-centre', async () => { await transformer({ decalage: [0, 0] }, 'Pièce remise au centre.'); outilDeplacer(); }]];
-  aide.textContent = 'Tu peux aussi attraper la pièce à la souris et la faire glisser sur le plateau. ' + aide.textContent;
-  if (!(await fenetreOptions('Déplacer', [ex, ey, aide], 'Appliquer', 'deplacer-appliquer',
-    { panneau: true, raccourcis: fleches }))) return;
-  const x = lireNombre(cx.value), y = lireNombre(cy.value);
+  const ouverture = fenetreOptions('Déplacer', [rangee, aide], 'Appliquer', 'deplacer-appliquer', { panneau: true, raccourcis: fleches });
+  vue3d.manipuler('deplacer');
+  if (!(await ouverture)) return;
+  const x = lireNombre($('deplacer-x')?.value ?? rangee.querySelector('#deplacer-x').value), y = lireNombre(rangee.querySelector('#deplacer-y').value);
   if (!Number.isFinite(x) || !Number.isFinite(y)) { dire('Les deux distances doivent être des nombres.'); return; }
   await transformer({ decalage: [x, y] }, `Pièce placée à ${fr(x)} mm en X et ${fr(y)} mm en Y du centre.`);
   outilDeplacer();
@@ -1138,29 +1219,43 @@ async function outilDeplacer() {
 
 async function outilTourner() {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
-  const [ex, cx] = champNombre('tourner-x', 'Autour de X (bascule vers l\'avant ou l\'arrière), en degrés', etat.rotation[0]);
-  const [ey, cy] = champNombre('tourner-y', 'Autour de Y (bascule à gauche ou à droite), en degrés', etat.rotation[1]);
-  const [ez, cz] = champNombre('tourner-z', 'Autour de Z (tourne à plat sur le plateau), en degrés', etat.rotation[2]);
-  const aide = el('p', 'aide', 'Les angles sont comptés depuis la pose d\'origine du fichier. La pièce est ensuite reposée sur le plateau.');
+  await quitterPoseAutomatique();
+  const rangee = rangeeAxes('Rotation', [
+    [0, 'tourner-x', etat.rotation[0], 'Autour de X (bascule vers l\'avant ou l\'arrière), en degrés'],
+    [1, 'tourner-y', etat.rotation[1], 'Autour de Y (bascule à gauche ou à droite), en degrés'],
+    [2, 'tourner-z', etat.rotation[2], 'Autour de Z (tourne à plat sur le plateau), en degrés']], '°');
+  const geste = el('p', 'aide', '');
+  geste.id = 'tourner-geste';
+  const aide = el('p', 'aide', 'Tire un anneau pour tourner la pièce : rouge autour de X, vert autour de Y, bleu autour de Z ' +
+    '(touche Maj : par pas de 15°). Les angles sont comptés depuis la pose du fichier ; la pièce est ensuite reposée sur le plateau.');
   const pivoter = (axe, angle) => async () => {
-    const angles = [...etat.rotation];
-    angles[axe] = ((angles[axe] + angle + 540) % 360) - 180;
-    await transformer({ rotation: angles }, 'Pièce tournée.');
+    await transformer({ rotation: composerRotation(etat.rotation, axe, angle) }, 'Pièce tournée.');
     outilTourner();
   };
   const quarts = [['X +90°', 'tourner-x-plus', pivoter(0, 90)], ['X −90°', 'tourner-x-moins', pivoter(0, -90)],
     ['Y +90°', 'tourner-y-plus', pivoter(1, 90)], ['Y −90°', 'tourner-y-moins', pivoter(1, -90)],
     ['Z +45°', 'tourner-z-plus', pivoter(2, 45)], ['Z −45°', 'tourner-z-moins', pivoter(2, -45)],
     ['Pose du fichier', 'tourner-origine', async () => { await transformer({ rotation: [0, 0, 0] }, 'Pose du fichier rétablie.'); outilTourner(); }]];
-  if (!(await fenetreOptions('Tourner', [ex, ey, ez, aide], 'Appliquer', 'tourner-appliquer',
-    { panneau: true, raccourcis: quarts }))) return;
-  const angles = [cx, cy, cz].map((c) => lireNombre(c.value));
+  const ouverture = fenetreOptions('Tourner', [rangee, geste, aide], 'Appliquer', 'tourner-appliquer', { panneau: true, raccourcis: quarts });
+  vue3d.manipuler('tourner');
+  if (!(await ouverture)) return;
+  const angles = ['tourner-x', 'tourner-y', 'tourner-z'].map((id) => lireNombre(rangee.querySelector('#' + id).value));
   if (angles.some((a) => !Number.isFinite(a))) { dire('Les trois angles doivent être des nombres.'); return; }
   await transformer({ rotation: angles }, `Pièce tournée de ${angles.map((a) => fr(a, 0) + '°').join(', ')}.`);
   outilTourner();
 }
+// Un anneau est tourné à la souris : l'angle s'affiche, puis la pièce est tournée pour de bon.
+vue3d.surRotationEnCours = (axe, degres) => {
+  const geste = $('tourner-geste');
+  if (geste) geste.textContent = `Autour de ${'XYZ'[axe]} : ${degres > 0 ? '+' : ''}${degres}°`;
+};
+vue3d.surRotation = async (axe, degres) => {
+  await transformer({ rotation: composerRotation(etat.rotation, axe, degres) }, `Pièce tournée de ${degres}° autour de ${'XYZ'[axe]}.`);
+  if (!$('panneau-outil').hidden && $('tourner-x')) outilTourner();
+};
 
-// Poser sur une face : laquelle des six faces de la pièce va contre le plateau.
+// Poser sur une face : les faces planes de l'enveloppe de la pièce sont grisées
+// dans la vue ; un clic sur l'une d'elles la pose contre le plateau.
 const FACES = [
   ['origine', 'Le dessous (comme dans le fichier)', [0, 0, 0]],
   ['dessus', 'Le dessus (pièce retournée)', [180, 0, 0]],
@@ -1173,20 +1268,86 @@ const FACES = [
 
 async function outilPoserFace() {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
+  await quitterPoseAutomatique();
+  const aide = el('p', 'aide', 'Clique dans la vue sur une des faces grisées : la pièce est tournée pour la poser contre le plateau. ' +
+    'Ce sont les faces planes de son contour, celles sur lesquelles elle tiendrait posée sur une table.');
   const choix = el('select');
   choix.id = 'face-choix';
   for (const [valeur, texte] of FACES) choix.append(new Option(texte, valeur));
-  const etiquette = el('label', '', 'Face posée contre le plateau');
+  const etiquette = el('label', '', 'Ou choisir un côté de la pièce');
   etiquette.append(choix);
   const poser = (face) => async () => {
     if (face[2]) await transformer({ rotation: face[2] }, `Pièce posée sur : ${face[1].toLowerCase()}.`);
     else await outilOrienter();
   };
-  const boutons = FACES.map((face) => [face[0] === 'auto' ? 'Automatique' : face[1].replace(/ \(.*/, ''), `face-${face[0]}`, poser(face)]);
-  if (!(await fenetreOptions('Poser sur une face', [etiquette], 'Poser', 'face-appliquer',
-    { panneau: true, raccourcis: boutons }))) return;
+  const boutons = [['Automatique', 'face-auto', poser(FACES.find((f) => f[0] === 'auto'))],
+    ['Pose du fichier', 'face-origine', poser(FACES[0])]];
+  const ouverture = fenetreOptions('Poser sur une face', [aide, etiquette], 'Poser', 'face-appliquer', { panneau: true, raccourcis: boutons });
+  vue3d.manipuler('faces');
+  if (!(await ouverture)) return;
   await poser(FACES.find((f) => f[0] === choix.value))();
 }
+vue3d.surFace = async (normale) => {
+  await transformer({ rotation: rotationPourPoser(etat.rotation, normale) }, 'Pièce posée sur la face choisie.');
+  if (!$('panneau-outil').hidden && $('face-choix')) vue3d.manipuler('faces');
+};
+
+// --- Le repère des axes, dans le coin de la vue -----------------------------------
+// X, Y, Z comme sur la machine ; en ondulation, les deux rotations s'ajoutent :
+// B (la tête s'incline) et C (le plateau tourne).
+
+function dessinerRepere() {
+  const svg = $('repere');
+  if (!svg || !vue3d.versEcran) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  const L = 30;   // longueur d'un axe, en unités du dessin
+  const trait = (points, couleur, pointille) => {
+    const ligne = document.createElementNS(NS, 'polyline');
+    ligne.setAttribute('points', points.map(([x, y]) => `${(x * L).toFixed(1)},${(-y * L).toFixed(1)}`).join(' '));
+    ligne.setAttribute('stroke', couleur);
+    if (pointille) ligne.setAttribute('stroke-dasharray', '2 2');
+    return ligne;
+  };
+  const lettre = (texte, [x, y], couleur) => {
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', (x * L).toFixed(1));
+    t.setAttribute('y', (-y * L).toFixed(1));
+    t.setAttribute('fill', couleur);
+    t.textContent = texte;
+    return t;
+  };
+  const morceaux = [];   // [profondeur, élément] : le plus loin est dessiné d'abord
+  const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  axes.forEach((axe, i) => {
+    const bout = vue3d.versEcran(...axe);
+    morceaux.push([bout[2] / 2, trait([[0, 0], bout], COULEURS_AXES[i])]);
+    morceaux.push([bout[2], lettre('XYZ'[i], [bout[0] * 1.28, bout[1] * 1.28], COULEURS_AXES[i])]);
+  });
+  if (etat.strategie === 'couches_courbes' && etat.modele) {
+    // C : le plateau tourne autour de Z. B : la tête s'incline autour de son pivot (X ou Y, d'après les réglages).
+    const pivotX = String(moteur('axe_pivot_b')).toUpperCase() === 'X';
+    const arc = (point, de, vers) => Array.from({ length: 25 }, (_, k) => vue3d.versEcran(...point((de + (vers - de) * k / 24) * Math.PI / 180)));
+    const arcs = [
+      ['C', arc((t) => [0.62 * Math.cos(t), 0.62 * Math.sin(t), 0.72], 20, 300), COULEURS_AXES[2]],
+      ['B', arc((t) => (pivotX ? [0.72, 0.62 * Math.sin(t), 0.62 * Math.cos(t)] : [0.62 * Math.sin(t), 0.72, 0.62 * Math.cos(t)]), -70, 70),
+        COULEURS_AXES[pivotX ? 0 : 1]]];
+    for (const [nom, points, couleur] of arcs) {
+      const profondeur = points.reduce((somme, q) => somme + q[2], 0) / points.length;
+      morceaux.push([profondeur, trait(points, couleur, true)]);
+      const fin = points[points.length - 1], avant = points[points.length - 4];
+      const dx = fin[0] - avant[0], dy = fin[1] - avant[1], n = Math.hypot(dx, dy) || 1;
+      // (La pointe de la flèche, au bout de l'arc.)
+      morceaux.push([profondeur, trait([[fin[0] - 0.16 * (dx / n) - 0.09 * (dy / n), fin[1] - 0.16 * (dy / n) + 0.09 * (dx / n)], fin,
+        [fin[0] - 0.16 * (dx / n) + 0.09 * (dy / n), fin[1] - 0.16 * (dy / n) - 0.09 * (dx / n)]], couleur)]);
+      morceaux.push([profondeur + 0.01, lettre(nom, [fin[0] + 0.2 * (dx / n), fin[1] + 0.2 * (dy / n)], couleur)]);
+    }
+  }
+  morceaux.sort((p, q) => p[0] - q[0]);
+  svg.replaceChildren(...morceaux.map((m) => m[1]));
+  svg.setAttribute('aria-label', etat.strategie === 'couches_courbes' && etat.modele
+    ? 'Repère des axes X, Y, Z et des rotations B (tête) et C (plateau)' : 'Repère des axes X, Y, Z');
+}
+vue3d.surVue = dessinerRepere;
 
 function outilMesurer() {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
@@ -1443,6 +1604,8 @@ function afficherOndulation() {
     contenu.push(note, el('p', 'aide', `Inclinaison : 0° = tête verticale, ${fr(max, 0)}° au plus sur cette machine. Direction : le côté vers lequel ` +
       'les couches penchent (0° vers la droite du plateau, 90° vers le fond). Le disque dans la vue montre le plan de coupe, la flèche la direction d\'impression.' +
       (simulation ? ' (Simulation : le tranchage affiché est enregistré, il ne tient pas compte des zones.)' : '')));
+  } else if (etat.calculStrategies) {
+    contenu.push(el('p', 'aide', 'Recherche des parties que le slicer sait incliner tout seul…'));
   } else if (!strategie || strategie.parties.length < 2) {
     // 2. Pas de zone, et rien que le slicer sache incliner tout seul.
     contenu.push(el('p', 'aide', 'Sans zone, ce modèle sera imprimé comme en classique : le slicer n\'y trouve aucune partie à imprimer la tête inclinée.'));
@@ -1552,6 +1715,7 @@ async function trancher() {
         : { partie: Number(partie), mode: 'courbes', inclinaison_max: choix === 'incline60' ? 60 : 45 }));
     if (branches.length) demande.branches = branches;
   }
+  await fileMoteur;
   occuper('Tranchage et vérification en cours…');
   definirEtat('', 'Tranchage en cours', 'Calcul des trajectoires et vérification.');
   $('barre-progression').removeAttribute('value');   // barre animée : durée inconnue d'avance
@@ -1665,6 +1829,11 @@ async function exporter() {
   if (!(await demander('enregistrer_gcode', { chemin: choix.chemin }))) return;
   const b = bobineMontee();
   const grammes = Math.round(etat.grammes || 0);
+  // Le fichier est noté pour la page Imprimante > Fichiers.
+  etat.exports = [{ nom: choix.chemin.split(/[\\/]/).pop(), chemin: choix.chemin, date: new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
+    duree: duree(etat.resultat.duree_s), grammes, strategie: etat.strategie === 'couches_courbes' ? 'ondulation' : 'classique' },
+  ...etat.exports.filter((f) => f.chemin !== choix.chemin)].slice(0, 40);
+  memoire.ecrire('exports', etat.exports);
   if (!b || !grammes) { dire(`G-code enregistré : ${choix.chemin}`, { info: true }); return; }
   dire(`G-code enregistré : ${choix.chemin}.`, { info: true, tenir: true, actions: [
     { libelle: `Déduire ${grammes} g de « ${b.nom} »`, action: () => {
@@ -1854,8 +2023,15 @@ $('btn-recherche').addEventListener('click', () => {
   afficherProcede();
 });
 
+etat.exports = memoire.lire('exports', []);
 pages = brancherPages({ etat, dire, moteur, lireNombre, bobineMontee, monterBobine, ouvrirBibliotheque, nouvelleBobine,
-  enregistrerBobines, afficherBobine });
+  enregistrerBobines, afficherBobine, ouvrirMachine,
+  exports: () => etat.exports,
+  retirerExport: (rang) => { etat.exports.splice(rang, 1); memoire.ecrire('exports', etat.exports); },
+  version: () => $('version').textContent || '?',
+  profilMachine: () => PROFIL_MACHINE.version,
+  libelle: (cle) => etat.moteur.find((r) => r.cle === cle)?.libelle ?? cle,
+  allerAuxParametres: () => { choisirVue('preparer'); dire('La rétraction est dans les paramètres du procédé, onglet « Autres ».', { info: true }); } });
 $('btn-fichier').addEventListener('click', menuFichier);
 $('btn-trancher-menu').addEventListener('click', menuTrancher);
 $('btn-sortie-menu').addEventListener('click', menuSortie);
@@ -1920,7 +2096,7 @@ $('strategie').addEventListener('change', (e) => { etat.strategie = e.target.val
 // La pastille « 3 axes | 5 axes » choisit la stratégie correspondante.
 function choisirMode(cinqAxes) {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle : le 5 axes dépend de sa forme.', { info: true }); return; }
-  if (cinqAxes && !etat.strategies.some((s) => s.type === 'couches_courbes')) {
+  if (cinqAxes && !etat.calculStrategies && !etat.strategies.some((s) => s.type === 'couches_courbes')) {
     dire('L\'ondulation n\'est pas proposée pour ce modèle : il reste en 3 axes.', { info: true });
     return;
   }

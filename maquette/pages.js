@@ -136,9 +136,77 @@ function brancherImprimante(app) {
   for (const id of ['btn-camera', 'btn-camera-2', 'btn-camera-plein', 'btn-camera-reglages']) {
     $(id).addEventListener('click', () => app.dire('Caméra : à venir. Aucune caméra n\'est encore reliée au slicer.', { info: true }));
   }
-  for (const [id, nom] of [['menu-fichiers', 'Fichiers de l\'imprimante'], ['menu-maj', 'Mise à jour de l\'imprimante']]) {
-    $(id).addEventListener('click', () => app.dire(`${nom} : à venir.`, { info: true }));
+  // Menu de gauche : État, Fichiers, Mise à jour.
+  const SOUS_PAGES = { 'menu-etat': null, 'menu-fichiers': 'imprimante-fichiers', 'menu-maj': 'imprimante-maj' };
+  function choisirSousPage(menu) {
+    for (const [id, section] of Object.entries(SOUS_PAGES)) {
+      $(id).classList.toggle('actif', id === menu);
+      if (section) $(section).hidden = id !== menu;
+    }
+    const etat = menu === 'menu-etat';
+    document.querySelector('#page-imprimante .camera-zone').hidden = !etat;
+    document.querySelector('#page-imprimante .controle').hidden = !etat;
+    if (menu === 'menu-fichiers') afficherFichiers();
+    if (menu === 'menu-maj') afficherMiseAJour();
   }
+  for (const id of Object.keys(SOUS_PAGES)) $(id).addEventListener('click', () => choisirSousPage(id));
+
+  // Fichiers : les G-code exportés depuis ce slicer. (Ceux de la mémoire de
+  // l'imprimante s'ajouteront quand elle sera reliée.)
+  function afficherFichiers() {
+    const exports = app.exports();
+    $('fichiers-etat').textContent = 'Imprimante non connectée';
+    $('fichiers-aide').textContent = exports.length
+      ? 'Les G-code exportés depuis ce slicer, du plus récent au plus ancien. L\'envoi à l\'imprimante et la liste de sa mémoire demandent la liaison avec la machine, pas encore branchée.'
+      : 'Aucun G-code exporté pour l\'instant. Tranche une pièce puis clique sur « Exporter le G-code » : le fichier apparaîtra ici. La liste de la mémoire de l\'imprimante demande la liaison avec la machine, pas encore branchée.';
+    const table = $('fichiers-table');
+    table.replaceChildren();
+    if (!exports.length) return;
+    const tete = el('div', 'fichier tete');
+    tete.append(el('span', '', 'Fichier'), el('span', 'secondaire', 'Impression'), el('span', 'secondaire', 'Exporté le'), el('span', '', ''));
+    table.append(tete);
+    exports.forEach((f, rang) => {
+      const ligne = el('div', 'fichier');
+      ligne.id = `fichier-${rang + 1}`;
+      const nom = el('span');
+      nom.append(el('b', '', f.nom), el('small', '', f.chemin));
+      nom.title = f.chemin;
+      const actions = el('span', 'actions');
+      const envoyer = el('button', 'bouton fin', 'Envoyer');
+      envoyer.title = 'Envoyer à l\'imprimante (liaison pas encore branchée)';
+      envoyer.addEventListener('click', () => app.dire('Envoi à l\'imprimante : la liaison avec la machine n\'est pas encore branchée. Le fichier est sur ton ordinateur, au chemin indiqué.', { info: true }));
+      const retirer = el('button', 'bouton-icone');
+      retirer.title = 'Retirer de la liste (le fichier n\'est pas supprimé)';
+      retirer.setAttribute('aria-label', `Retirer ${f.nom} de la liste`);
+      retirer.append(icone('supprimer'));
+      retirer.addEventListener('click', () => { app.retirerExport(rang); afficherFichiers(); });
+      actions.append(envoyer, retirer);
+      ligne.append(nom, el('span', 'secondaire', `${f.duree} · ${f.grammes} g · ${f.strategie}`), el('span', 'secondaire', f.date), actions);
+      table.append(ligne);
+    });
+  }
+
+  // Mise à jour : la version du slicer, et celle de l'imprimante quand elle sera reliée.
+  function afficherMiseAJour() {
+    const carte = (titre, valeur, detail, libelle, action) => {
+      const c = el('div', 'carte-maj');
+      c.append(el('b', '', titre), el('span', 'valeur', valeur), el('span', 'aide', detail));
+      if (libelle) {
+        const bouton = el('button', 'bouton', libelle);
+        bouton.addEventListener('click', action);
+        c.append(bouton);
+      }
+      return c;
+    };
+    $('cartes-maj').replaceChildren(
+      carte('ArtPrint Slicer', `Version ${app.version()}`, 'La version installée sur cet ordinateur.', 'Chercher une mise à jour',
+        () => app.dire('La recherche de mise à jour en ligne n\'est pas encore branchée. La dernière version est celle que tu as installée à la main.', { info: true })),
+      carte('Firmware de l\'imprimante', 'Inconnu', 'Imprimante non connectée : sa version (Klipper) s\'affichera ici.', 'Mettre à jour',
+        () => app.dire('Mise à jour du firmware : il faut d\'abord la liaison avec l\'imprimante, pas encore branchée.', { info: true })),
+      carte('Profil de la machine', app.profilMachine(), 'Les valeurs d\'usine posées par le slicer (pivot, hauteur, butées de B).', 'Voir les réglages', () => app.ouvrirMachine()));
+    $('maj-aide').textContent = 'Rien n\'est téléchargé ni envoyé depuis cette page pour l\'instant.';
+  }
+  brancherCalibration(app, { butees, machine });
   for (const bouton of document.querySelectorAll('[data-a-venir]')) {
     bouton.addEventListener('click', () => app.dire(`${bouton.dataset.aVenir} : à venir.`, { info: true }));
   }
@@ -149,6 +217,129 @@ function brancherImprimante(app) {
   $('progression-vignette').replaceChildren(vignette);
 
   return { afficher };
+}
+
+// --- Calibration --------------------------------------------------------------------
+
+// Les mesures à faire sur la machine. « cles » : les réglages du slicer où les reporter.
+const CALIBRATIONS = [
+  { titre: 'Distance pivot – buse', cles: ['distance_pivot_buse'], etapes: [
+    'Mets la tête à la verticale.',
+    'Mesure la distance entre l\'axe du pivot de la tête et la pointe de la buse.',
+    'Reporte-la dans « Distance pivot – buse ».'] },
+  { titre: 'Encombrement de la tête', cles: ['tete_demi_largeur', 'tete_hauteur'], etapes: [
+    'Mesure la demi-largeur du bloc de la tête, de chaque côté de l\'axe de la buse.',
+    'Mesure sa longueur au-delà du pivot, du côté opposé à la buse.',
+    'Reporte les deux valeurs : le slicer calcule alors jusqu\'où la tête peut pencher à chaque hauteur.'] },
+  { titre: 'Butées de la tête (B)', cles: ['b_min', 'b_max', 'b_inclinaison_max'], etapes: [
+    'Incline doucement la tête d\'un côté jusqu\'à sa limite, puis de l\'autre.',
+    'Note les deux angles, comptés depuis la verticale.',
+    'Reporte-les dans les butées de B, et la limite du firmware dans « Inclinaison maximale ».'] },
+  { titre: 'Sens des axes B et C', cles: ['sens_b', 'sens_c', 'axe_pivot_b'], etapes: [
+    'Demande un petit mouvement B+ puis C+ (mode développeur).',
+    'Regarde de quel côté la tête penche et dans quel sens le plateau tourne.',
+    'Si c\'est l\'inverse de ce que montre le slicer, change le sens (1 ou -1).'] },
+  { titre: 'Courses des axes X, Y, Z', cles: ['course_x_min', 'course_x_max', 'course_y_min', 'course_y_max', 'course_z_min', 'course_z_max'], etapes: [
+    'Après la mise à zéro, déplace chaque axe jusqu\'à ses deux limites.',
+    'Note les positions affichées.',
+    'Reporte-les : sans elles, le slicer ne vérifie pas les courses.'] },
+  { titre: 'Rétraction', cles: ['retraction_longueur'], etapes: [
+    'Imprime deux petites tours espacées.',
+    'S\'il y a des fils entre elles, augmente la rétraction par pas de 0,2 mm.',
+    'Reporte la valeur dans les paramètres (onglet Autres).'] },
+];
+
+function brancherCalibration(app, { butees, machine }) {
+  function afficherCartes() {
+    $('calibration-cartes').replaceChildren(...CALIBRATIONS.map((c) => {
+      const carte = el('div', 'carte-calibration');
+      const liste = el('ol');
+      for (const etape of c.etapes) liste.append(el('li', '', etape));
+      const valeurs = c.cles.map((cle) => [app.libelle(cle), String(app.moteur(cle) ?? '').trim()]);
+      const manque = valeurs.filter(([, v]) => v === '').length;
+      const etat = el('span', 'etat-reglage' + (manque ? ' manque' : ''),
+        manque === valeurs.length ? 'Pas encore renseigné.'
+          : valeurs.map(([nom, v]) => `${nom} : ${v === '' ? 'à mesurer' : v}`).join(' · '));
+      const bouton = el('button', 'bouton fin', 'Ouvrir les réglages');
+      bouton.addEventListener('click', () => (c.cles[0] === 'retraction_longueur' ? app.allerAuxParametres() : app.ouvrirMachine()));
+      carte.append(el('b', '', c.titre), liste, etat, bouton);
+      return carte;
+    }));
+  }
+
+  // Mode développeur : déplacements et commandes G-code. Tant que l'imprimante
+  // n'est pas reliée, rien n'est envoyé : le journal montre ce qui partirait.
+  const pas = { lineaire: 10, angle: 10 };
+  const journal = (classe, texte) => {
+    const ligne = el('div', classe, texte);
+    $('dev-journal').append(ligne);
+    $('dev-journal').scrollTop = $('dev-journal').scrollHeight;
+  };
+  function envoyer(commande) {
+    journal('envoi', `> ${commande}`);
+    journal('retour', '  (simulation : imprimante non connectée, rien n\'est envoyé)');
+  }
+  function afficherAxes() {
+    $('dev-etat').textContent = 'Simulation · imprimante non connectée';
+    $('dev-axes').replaceChildren(...AXES.map(([axe, unite]) => {
+      const bloc = el('div', 'dev-axe');
+      const lineaire = unite === 'mm';
+      const bouger = (sens) => () => {
+        const distance = sens * (lineaire ? pas.lineaire : pas.angle);
+        const [mini, maxi] = butees(axe);
+        const cible = Math.min(maxi, Math.max(mini, machine[axe] + distance));
+        if (cible === machine[axe]) { app.dire(`Butée de l'axe ${axe.toUpperCase()} atteinte.`, { info: true }); return; }
+        const reel = Math.round((cible - machine[axe]) * 100) / 100;
+        machine[axe] = cible;
+        envoyer(`G91\n> G1 ${axe.toUpperCase()}${reel} F${lineaire ? 3000 : 600}\n> G90`);
+        afficherAxes();
+      };
+      const plus = el('button', 'touche', `${axe.toUpperCase()}+`), moins = el('button', 'touche', `${axe.toUpperCase()}−`);
+      plus.id = `dev-${axe}-plus`; moins.id = `dev-${axe}-moins`;
+      plus.addEventListener('click', bouger(1)); moins.addEventListener('click', bouger(-1));
+      const valeur = el('output', '', `${fr(machine[axe], 1)} ${unite}`);
+      valeur.id = `dev-${axe}-valeur`;
+      bloc.append(plus, valeur, moins);
+      return bloc;
+    }));
+    for (const [id, valeurs, unite, cle] of [['dev-pas-lineaire', [0.1, 1, 10, 50], ' mm', 'lineaire'], ['dev-pas-angle', [1, 5, 10, 45], '°', 'angle']]) {
+      $(id).replaceChildren(...valeurs.map((v) => {
+        const bouton = el('button', pas[cle] === v ? 'actif' : '', `${String(v).replace('.', ',')}${unite}`);
+        bouton.addEventListener('click', () => { pas[cle] = v; afficherAxes(); });
+        return bouton;
+      }));
+    }
+  }
+  const ACTIONS = [
+    ['Mise à zéro (G28)', 'dev-g28', () => { Object.assign(machine, { x: 0, y: 0, z: 0, b: B_VERTICAL, c: 0, aZero: true }); envoyer('G28'); afficherAxes(); }],
+    ['Libérer les moteurs (M84)', 'dev-m84', () => { machine.aZero = false; envoyer('M84'); }],
+    ['Éteindre la chauffe', 'dev-froid', () => envoyer('M104 S0\n> M140 S0')],
+    ['Position actuelle (M114)', 'dev-m114', () => { envoyer('M114'); journal('retour', `  X:${machine.x} Y:${machine.y} Z:${machine.z} B:${machine.b} C:${machine.c}`); }],
+    ['Vider le journal', 'dev-vider', () => $('dev-journal').replaceChildren()],
+  ];
+  $('dev-actions').replaceChildren(...ACTIONS.map(([libelle, id, action]) => {
+    const bouton = el('button', 'bouton fin', libelle);
+    bouton.id = id;
+    bouton.addEventListener('click', action);
+    return bouton;
+  }));
+  $('dev-saisie').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const commande = $('dev-commande').value.trim();
+    if (!commande) return;
+    envoyer(commande);
+    $('dev-commande').value = '';
+  });
+  $('mode-developpeur').addEventListener('change', (e) => {
+    $('developpeur').hidden = !e.target.checked;
+    if (e.target.checked) {
+      afficherAxes();
+      if (!$('dev-journal').childElementCount) journal('retour', 'Mode développeur : les commandes s\'affichent ici. L\'imprimante n\'est pas encore reliée au slicer.');
+      $('developpeur').scrollIntoView({ block: 'nearest' });
+    }
+  });
+  $('vue-calibration').addEventListener('click', afficherCartes);
+  afficherCartes();
 }
 
 // --- Gestionnaire de bobines ------------------------------------------------------

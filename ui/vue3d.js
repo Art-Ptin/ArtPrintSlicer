@@ -6,6 +6,7 @@ import { OrbitControls } from './lib/OrbitControls.js';
 import { LineSegments2 } from './lib/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from './lib/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from './lib/lines/LineMaterial.js';
+import { installerManipulateurs } from './manipulateurs.js';
 
 // Couleur de chaque type de trajectoire (même ordre que dans le slicer) :
 // jupe, paroi interne, paroi externe, remplissage plein, remplissage, déplacement.
@@ -93,7 +94,7 @@ export class Vue3D {
     this.camera.position.set(300, -420, 300);
     this.controles = new OrbitControls(this.camera, canvas);
     this.controles.target.set(0, 0, 40);
-    this.controles.addEventListener('change', () => this.demanderRendu());
+    this.controles.addEventListener('change', () => { this.demanderRendu(); this.surVue?.(); });
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x777788, 1.6));
     const soleil = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -131,6 +132,7 @@ export class Vue3D {
     this.fantomes = [];
     this.definirVolume(this.rayon, this.hauteur);
     this.brancherClics();
+    installerManipulateurs(this);
     new ResizeObserver(() => this.redimensionner()).observe(canvas.parentElement);
     this.redimensionner();
   }
@@ -428,6 +430,27 @@ export class Vue3D {
     this.demanderRendu();
   }
 
+  // La pièce glisse à l'écran en attendant la réponse du slicer.
+  glisserProvisoire(dx, dy) {
+    this.modele.position.set(dx, dy, 0);
+    if (this.zones) this.zones.position.set(dx, dy, 0);
+    this.demanderRendu();
+  }
+
+  // La pièce a glissé de (dx, dy) sur le plateau : sa géométrie est déplacée, sans être reconstruite.
+  glisserModele(dx, dy) {
+    for (const objet of this.modele.children) {
+      objet.geometry.translate(dx, dy, 0);
+      objet.geometry.computeBoundingBox();
+      this.boite = objet.geometry.boundingBox.clone();
+    }
+    this.modele.position.set(0, 0, 0);
+    if (this.zones) this.zones.position.set(0, 0, 0);
+    this.viderApercu();
+    this.rafraichirManipulateurs?.();
+    this.demanderRendu();
+  }
+
   // Montre que la pièce est sélectionnée (elle prend la couleur de sélection).
   selectionner(choisie) {
     this.selection = choisie;
@@ -443,6 +466,8 @@ export class Vue3D {
   afficherModele(positions, garderVue = false) {
     this.vider(this.modele);
     this.modele.position.set(0, 0, 0);
+    this.modele.quaternion.identity();
+    if (this.zones) this.zones.position.set(0, 0, 0);
     this.selection = false;
     this.viderApercu();
     const geometrie = new THREE.BufferGeometry();
@@ -456,6 +481,7 @@ export class Vue3D {
       color: this.jeton('--c-piece', '#2aa57b'), roughness: 0.55, metalness: 0.05 })));
     this.montrer('preparer');
     if (!garderVue) this.pointDeVue('iso');
+    this.rafraichirManipulateurs?.();
     this.demanderRendu();
   }
 
@@ -608,6 +634,7 @@ export class Vue3D {
     this.modele.visible = vue === 'preparer';
     if (this.zones) this.zones.visible = vue === 'preparer';
     this.apercu.visible = vue === 'apercu';
+    this.rafraichirManipulateurs?.();
     this.demanderRendu();
   }
 }

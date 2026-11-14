@@ -158,6 +158,7 @@
     <div class="palette barre-outils" id="outils" role="toolbar" aria-label="Outils"></div>
     <div class="palette panneau-outil" id="panneau-outil" role="group" aria-label="Paramètres de l'outil" hidden></div>
 
+    <svg class="repere" id="repere" viewBox="-44 -44 88 88" role="img" aria-label="Repère des axes X, Y, Z"></svg>
     <div class="palette points-de-vue" role="toolbar" aria-label="Point de vue">
       <button id="cam-iso">3D</button><button id="cam-dessus">Dessus</button><button id="cam-face">Face</button><button id="cam-droite">Droite</button><button id="cam-cadrer" title="Recadrer sur la pièce" aria-label="Recadrer sur la pièce" data-icone="echelle"></button>
     </div>
@@ -236,8 +237,8 @@
     <div class="connexion" id="connexion">Simulation · non connectée</div>
     <div class="appareil" data-icone="imprimante"><span>ArtPrint 5 axes</span></div>
     <button class="actif" id="menu-etat"><span>État</span><span class="chevron" data-icone="chevron-droite"></span></button>
-    <button id="menu-fichiers" aria-disabled="true"><span>Fichiers</span><span class="chevron" data-icone="chevron-droite"></span></button>
-    <button id="menu-maj" aria-disabled="true"><span>Mise à jour</span><span class="chevron" data-icone="chevron-droite"></span></button>
+    <button id="menu-fichiers"><span>Fichiers</span><span class="chevron" data-icone="chevron-droite"></span></button>
+    <button id="menu-maj"><span>Mise à jour</span><span class="chevron" data-icone="chevron-droite"></span></button>
   </nav>
   <section class="camera-zone" aria-label="Caméra et progression">
     <header class="page-bandeau"><span>Caméra</span><span class="ressort"></span>
@@ -318,6 +319,20 @@
       </div>
     </div>
   </section>
+  <section class="sous-page" id="imprimante-fichiers" aria-label="Fichiers" hidden>
+    <header class="page-bandeau"><span>Fichiers</span><span class="ressort"></span><span class="note-colonnes" id="fichiers-etat"></span></header>
+    <div class="sous-page-corps">
+      <p class="aide" id="fichiers-aide"></p>
+      <div class="fichiers-table" id="fichiers-table"></div>
+    </div>
+  </section>
+  <section class="sous-page" id="imprimante-maj" aria-label="Mise à jour" hidden>
+    <header class="page-bandeau"><span>Mise à jour</span></header>
+    <div class="sous-page-corps">
+      <div class="cartes-maj" id="cartes-maj"></div>
+      <p class="aide" id="maj-aide"></p>
+    </div>
+  </section>
 </div>
 
 <div class="page page-vide" id="page-projet" hidden>
@@ -329,13 +344,36 @@
   </div>
 </div>
 
-<div class="page page-vide" id="page-calibration" hidden>
-  <div class="accueil-carte">
-    <span class="grande-icone" data-icone-24="calibration"></span>
-    <strong>Calibration</strong>
-    <span>Assistants de réglage : débit, température, distance pivot-buse, axes B et C.</span>
-    <span class="note-colonnes">Page à venir.</span>
-  </div>
+<div class="page page-calibration" id="page-calibration" hidden>
+  <header class="calibration-tete">
+    <div>
+      <strong>Calibration</strong>
+      <span class="aide">Les mesures à faire sur la machine, et où les reporter dans le slicer.</span>
+    </div>
+    <span class="ressort"></span>
+    <label class="interrupteur-libelle" for="mode-developpeur" title="Accès direct à l'imprimante : déplacements et commandes G-code">Mode développeur<input type="checkbox" class="interrupteur" id="mode-developpeur"></label>
+  </header>
+  <div class="calibration-cartes" id="calibration-cartes"></div>
+  <section class="developpeur" id="developpeur" aria-label="Accès direct à l'imprimante" hidden>
+    <header class="page-bandeau"><span>Accès direct à l'imprimante</span><span class="ressort"></span><span class="note-colonnes" id="dev-etat"></span></header>
+    <div class="developpeur-corps">
+      <div class="dev-bloc">
+        <h4>Déplacements</h4>
+        <div class="dev-axes" id="dev-axes"></div>
+        <div class="pas" id="dev-pas-lineaire" role="group" aria-label="Pas des axes X, Y et Z"></div>
+        <div class="pas" id="dev-pas-angle" role="group" aria-label="Pas des axes B et C"></div>
+        <div class="dev-actions" id="dev-actions"></div>
+      </div>
+      <div class="dev-bloc dev-console">
+        <h4>Commandes G-code</h4>
+        <div class="dev-journal" id="dev-journal" role="log" aria-live="polite"></div>
+        <form class="dev-saisie" id="dev-saisie">
+          <input class="champ" id="dev-commande" type="text" placeholder="Une commande, par exemple G28" aria-label="Commande G-code" autocomplete="off" spellcheck="false">
+          <button class="bouton plein" id="dev-envoyer" type="submit">Envoyer</button>
+        </form>
+      </div>
+    </div>
+  </section>
 </div>
 
 <div class="page page-gestionnaire" id="page-gestionnaire" hidden>
@@ -355,7 +393,7 @@
 
 <footer class="etat" aria-label="État">
   <span class="etat-modele"><b id="r-modele">Aucun modèle</b><span id="r-dimensions"></span></span>
-  <span class="etat-verification" id="releve-etat"><span class="etat-icone" id="etat-icone"></span><b id="r-etat">En attente</b><progress id="barre-progression" max="100" value="0" aria-label="Avancement du tranchage"></progress><span id="r-etat-detail">Ouvre un modèle pour commencer.</span></span>
+  <span class="etat-verification" id="releve-etat"><span class="etat-icone" id="etat-icone"></span><b id="r-etat">En attente</b><progress id="barre-progression" max="100" value="0" aria-label="Avancement du tranchage"></progress><span class="calcul" id="calcul" title="Calcul en arrière-plan : tu peux continuer" hidden></span><span id="r-etat-detail">Ouvre un modèle pour commencer.</span></span>
   <button class="etat-messages" id="btn-messages" hidden><span class="etat-icone" data-icone="info"></span><span id="messages-compte"></span></button>
 </footer>
 

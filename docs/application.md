@@ -117,6 +117,52 @@ opérations booléennes, assembler, texte en relief, peindre les supports,
 peindre la couture. Ils demandent des fonctions que le cœur du slicer n'a
 pas (plusieurs objets, supports).
 
+## Fluidité : les calculs en arrière-plan
+
+Déplacer, tourner ou mettre à l'échelle la pièce n'affiche plus d'attente.
+Un déplacement est montré tout de suite (la pièce glisse à l'écran, le slicer
+suit) et ne recalcule rien. Après une rotation ou une mise à l'échelle, les
+façons d'imprimer la pièce sont cherchées en arrière-plan : les cartes
+« Classique » et « Ondulation » affichent « calcul… » et un petit point
+clignote dans la ligne d'état. On peut continuer à travailler pendant ce
+temps ; le tranchage attend que les gestes en cours soient pris en compte.
+
+## Les poignées dans la vue 3D
+
+- **Déplacer** : deux flèches au pied de la pièce (rouge pour X, verte pour
+  Y) ; on en tire une pour glisser le long de cet axe. On peut toujours
+  attraper la pièce elle-même pour la glisser librement.
+- **Tourner** : trois anneaux (rouge autour de X, vert autour de Y, bleu
+  autour de Z). On en tire un pour tourner la pièce ; l'angle s'affiche
+  pendant le geste (touche Maj : par pas de 15°). Les rotations se composent
+  autour des axes du plateau.
+- **Poser sur une face** : les faces planes du contour de la pièce (son
+  enveloppe convexe) sont grisées ; un clic sur l'une d'elles la pose contre
+  le plateau.
+- Chaque panneau d'outil a ses champs sur une rangée, un par axe, avec la
+  lettre de l'axe dans sa couleur.
+- **Le repère des axes**, en bas à gauche, suit la vue : X, Y, Z, et en
+  ondulation les deux rotations de la machine, B (la tête s'incline) et C (le
+  plateau tourne).
+
+(`ui/manipulateurs.js` ; l'enveloppe convexe vient de three.js.)
+
+## Imprimante et calibration
+
+- **Imprimante › Fichiers** : la liste des G-code exportés depuis le slicer
+  (nom, durée, poids, date, chemin).
+- **Imprimante › Mise à jour** : la version du slicer, celle du firmware
+  quand l'imprimante sera reliée, et le profil de la machine.
+- **Calibration** : six fiches, une par mesure à faire sur la machine
+  (distance pivot-buse, encombrement de la tête, butées de B, sens de B et
+  C, courses, rétraction), avec les valeurs déjà renseignées.
+- **Mode développeur** (interrupteur de la page Calibration) : déplacements
+  des cinq axes et commandes G-code, avec un journal.
+
+**L'imprimante n'est pas encore reliée au slicer.** Rien n'est envoyé à la
+machine : le journal du mode développeur montre les commandes qui
+partiraient, et l'envoi d'un fichier dit qu'il faut d'abord cette liaison.
+
 ## Projet, annuler, exporter
 
 - **Annuler / Refaire** (flèches en haut à gauche, Ctrl+Z et Ctrl+Y) : la

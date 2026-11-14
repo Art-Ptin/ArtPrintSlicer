@@ -441,7 +441,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int affichage) {
     classe.lpfnWndProc = procedure_fenetre;
     classe.hInstance = instance;
     classe.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    classe.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    // L'icône du logiciel (ressource numéro 1, voir ressources.rc).
+    classe.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
+    classe.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                                   GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     classe.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     classe.lpszClassName = L"ArtPrintSlicerFenetre";
     if (!RegisterClassExW(&classe)) {

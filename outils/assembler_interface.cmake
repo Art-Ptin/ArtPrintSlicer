@@ -24,8 +24,13 @@ foreach(fichier ${fichiers})
 endforeach()
 file(COPY "${SOURCE}/maquette/polices" DESTINATION "${DEST}")
 file(COPY "${SOURCE}/ui/lib" DESTINATION "${DEST}")
-file(COPY "${SOURCE}/ui/vue3d.js" DESTINATION "${DEST}")
+file(COPY "${SOURCE}/ui/vue3d.js" "${SOURCE}/ui/manipulateurs.js" DESTINATION "${DEST}")
 file(COPY_FILE "${SOURCE}/maquette/pont-reel.js" "${DEST}/pont.js")
+# L'image de la machine (dossier privé, absent du dépôt public) : embarquée
+# seulement si elle est là. Sans elle, l'interface montre une icône.
+if(EXISTS "${SOURCE}/maquette/prive/imprimante.png")
+    file(COPY "${SOURCE}/maquette/prive/imprimante.png" DESTINATION "${DEST}/prive")
+endif()
 
 # La page : le contenu de la maquette dans un document complet. Le logiciel
 # fonctionne sans Internet : le lien vers les polices en ligne est retiré

@@ -38,6 +38,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "Licence GNU AGPL v3"
 
 !define MUI_ABORTWARNING
+; L'icône de l'installateur et du désinstallateur : celle du logiciel.
+!define MUI_ICON "${__FILEDIR__}\artprint.ico"
+!define MUI_UNICON "${__FILEDIR__}\artprint.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\ArtPrintSlicer.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Lancer ${NOM}"
 

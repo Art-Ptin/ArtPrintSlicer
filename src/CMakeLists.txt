@@ -44,8 +44,10 @@ endif()
 if(WIN32)
     set(WEBVIEW2_DIR ${PROJECT_SOURCE_DIR}/third_party/webview2)
     add_executable(ArtPrintSlicer WIN32
-        gui/fenetre.cpp)
-    target_include_directories(ArtPrintSlicer PRIVATE ${WEBVIEW2_DIR}/include)
+        gui/fenetre.cpp
+        gui/ressources.rc)
+    # (L'icône du programme est dans le dossier de l'installateur.)
+    target_include_directories(ArtPrintSlicer PRIVATE ${WEBVIEW2_DIR}/include ${PROJECT_SOURCE_DIR}/installateur)
     target_link_libraries(ArtPrintSlicer PRIVATE artprint_core ole32 shell32 comdlg32 uuid)
     if(MINGW)
         target_include_directories(ArtPrintSlicer PRIVATE ${WEBVIEW2_DIR}/mingw)
