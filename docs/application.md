@@ -20,49 +20,43 @@ modèle fermé, même quand elle n'apporte rien : une remarque le dit, et la
 durée est comparée à celle du classique après le tranchage.
 
 Quand la carte « Ondulation » est choisie, un panneau **Ondulation · 5 axes**
-s'ouvre dans la colonne de gauche, sous les deux cartes. Il n'y a plus de
-fenêtre au moment de trancher : tout se règle là.
+s'ouvre dans la colonne de gauche, sous les deux cartes. Il n'y a ni menu
+déroulant ni paragraphe sous les cartes : ce que le slicer dit de chaque
+stratégie se lit au survol de sa carte. Le panneau a trois modes.
 
-### Les zones orientées
+### Automatique
 
-Une zone dit : « à partir de ce point de la pièce, imprime dans une autre
-direction ». Le bas de la pièce est imprimé à plat ; ce qui est au-dessus du
-plan de coupe est imprimé ensuite, couche par couche le long de la direction
-choisie, la tête inclinée et le plateau tourné.
-
-- **Ajouter une zone en cliquant** : le bouton met la souris en attente, puis
-  un clic sur la pièce pose la zone à cet endroit. L'outil « Direction
-  d'impression par zone » de la barre fait la même chose.
-- **Le haut en diagonale** : pose une zone à mi-hauteur, inclinée de 45°.
-- Chaque zone a trois réglages (un curseur et un champ) : l'**inclinaison**
-  (0° = tête verticale), la **direction** (le côté vers lequel les couches
-  penchent : 0° vers la droite du plateau, 90° vers le fond) et la
-  **hauteur** du point de coupe.
-- Dans la vue, un disque montre le plan de coupe et une flèche la direction
-  d'impression.
-- Sous les zones, le slicer dit ce qu'elles donnent sans attendre le
-  tranchage : le nombre de parties, leur volume, ce qui reste à soutenir, ou
-  pourquoi une zone ne peut pas être imprimée (avec une solution).
-
-Les zones passent par le même vérificateur que le reste : un G-code où la
-tête toucherait la pièce, ou imprimerait dans la matière, est refusé.
-
-Limites : une zone ne dépasse pas 90° d'inclinaison pour l'instant ; près du
-plateau elle est limitée comme tout le reste (limite près du plateau, puis
-encombrement de la tête ou hauteur de bascule) ; si le modèle est déplacé, tourné ou mis à l'échelle,
-les zones sont retirées (leurs points ne seraient plus au bon endroit). Avec
-des zones, les parties que le slicer trouve tout seul ne sont pas utilisées.
-
-### Sans zone : les parties trouvées par le slicer
-
-Sans zone, le panneau liste les parties que le slicer sait incliner tout
-seul, avec un choix pour chacune :
+Le slicer cherche lui-même les parties à imprimer la tête inclinée, et le
+panneau en donne la liste, avec un choix pour chacune :
 
 - ondulation, tête d'aplomb sur les couches (d'office) ;
 - ondulation, tête moins inclinée (60° ou 45° au plus) ;
 - à plat, avec le corps de la pièce (couches horizontales).
 
-La jonction avec le reste de la pièce est refaite toute seule.
+### Zones
+
+Une zone dit : « à partir de ce point de la pièce, imprime dans une autre
+direction ». Le bas de la pièce est imprimé à plat ; ce qui est au-dessus du
+plan de coupe est imprimé ensuite le long de la direction choisie.
+
+- **Ajouter une zone en cliquant** : un clic sur la pièce pose la zone à cet
+  endroit, penchée vers l'extérieur de la pièce. On peut en poser plusieurs.
+- **La zone choisie** (cadre orange) a ses poignées dans la vue : trois
+  flèches pour la déplacer, trois anneaux pour l'orienter.
+- Trois curseurs par zone : inclinaison, direction, hauteur.
+- Sous les zones, le slicer dit ce qu'elles donnent sans attendre le
+  tranchage, ou pourquoi une zone ne peut pas être imprimée.
+
+Une zone ne dépasse pas 90° pour l'instant ; si la pièce est tournée ou mise
+à l'échelle, les zones sont retirées (un simple déplacement les emporte).
+
+### Tout incliné
+
+Toute la pièce est imprimée en couches penchées qui partent du plateau, la
+tête au même angle du début à la fin, comme sur une imprimante à tapis
+roulant. Des angles tout prêts (15°, 30°, 45° et le maximum permis au ras du
+plateau), quatre directions, et deux curseurs pour régler finement. Il n'y a
+pas de jupe dans ce mode.
 
 Le slicer ne refuse pas un modèle que le classique sait imprimer : une
 partie qu'il ne sait pas imprimer en ondulation est imprimée à plat, et une
@@ -100,9 +94,9 @@ d'avancement, et tout à droite le bouton des **messages** du tranchage.
 | Agencer les objets | remet l'objet au centre du plateau |
 | Déplacer | place la pièce à une distance donnée du centre, en X et en Y |
 | Tourner | trois angles, autour de X, de Y et de Z, depuis la pose du fichier |
-| Mettre à l'échelle | échelle en pour cent de la taille d'origine |
+| Mettre à l'échelle | deux rangées X, Y, Z : l'échelle en pour cent et la taille en mm (proportions liées) |
 | Poser sur une face | choisit laquelle des six faces va contre le plateau, ou la pose automatique |
-| Couper | coupe la pièce à plat, à une hauteur donnée, et garde le bas ou le haut |
+| Couper | coupe la pièce par un plan qu'on déplace et qu'on incline dans la vue ; garde un des deux morceaux, peut le poser sur sa face de coupe et y ajouter des connecteurs |
 | Mesurer | dimensions, volume, poids plein, position, surface à soutenir |
 | Stratégie de tranchage | mène au choix de la stratégie |
 | Direction d'impression par zone | choisit l'ondulation et attend un clic sur la pièce pour y poser une zone orientée |
@@ -162,6 +156,33 @@ temps ; le tranchage attend que les gestes en cours soient pris en compte.
 **L'imprimante n'est pas encore reliée au slicer.** Rien n'est envoyé à la
 machine : le journal du mode développeur montre les commandes qui
 partiraient, et l'envoi d'un fichier dit qu'il faut d'abord cette liaison.
+
+## Couper et assembler
+
+L'outil Couper montre un plan dans la vue : trois flèches le déplacent, trois
+anneaux l'inclinent ; les champs du panneau disent la même chose (position,
+inclinaison, direction). Un seul morceau est gardé, puisqu'il n'y a qu'un
+objet par plateau : pour avoir les deux moitiés, on coupe deux fois.
+
+**Connecteurs**, posés sur la face de coupe, aux mêmes endroits pour les deux
+moitiés d'une même coupe :
+
+- des **trous** pour de petites tiges (goupilles) ;
+- des **tenons**, qui entrent dans les trous de l'autre moitié ;
+- une **queue d'aronde** : une rainure d'un côté, un rail de l'autre.
+
+Nombre, diamètre (ou largeur), profondeur et jeu se règlent. Si la face est
+trop petite, le slicer en pose moins et le dit. Un connecteur est un petit
+volume ajouté au modèle, en plein ou en creux (`src/connecteurs.hpp`) ; le
+tranchage classique en tient compte. L'ondulation n'a pas été essayée sur
+une pièce qui porte des connecteurs.
+
+## Vitesse
+
+Le calcul des couches utilise tous les cœurs du processeur. La recherche des
+façons d'imprimer se fait en arrière-plan sans retenir le tranchage, et ce
+qui a déjà été calculé pour une pièce (stratégies, durée du classique) est
+gardé tant que ni la pièce ni les réglages ne changent.
 
 ## Projet, annuler, exporter
 

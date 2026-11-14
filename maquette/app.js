@@ -872,7 +872,9 @@ async function restaurer(cible) {
       // Les coupes sont refaites dans l'ordre, chacune dans la pose où elle avait été faite.
       for (const coupe of cible.coupes ?? []) {
         await transformer(coupe.pose, 'Pièce remise en place.');
-        if (!(await couper(coupe.hauteur, coupe.garder))) return false;
+        // (Un projet d'avant garde ses coupes sous l'ancienne forme : une hauteur.)
+        const ancienne = coupe.point ? coupe : { point: [0, 0, coupe.hauteur], normale: [0, 0, 1], garder: coupe.garder, poser: false };
+        if (!(await couper(ancienne))) return false;
       }
     }
     await transformer(poseDe(cible), 'Pièce remise en place.');
@@ -913,13 +915,18 @@ async function refaire() {
 // --- Couper la pièce ---------------------------------------------------------------
 
 // Coupe la pièce posée par un plan horizontal et garde le bas ou le haut. Rend faux en cas d'échec.
-async function couper(hauteur, garder) {
+// Coupe la pièce posée par un plan et garde un des deux morceaux. « coupe » :
+// { point, normale, garder, poser, connecteurs }. Rend faux en cas d'échec.
+async function couper(coupe) {
   const pose = poseDe(etat);
   occuper('Coupe de la pièce…');
-  const reponse = await demander('couper_modele', { hauteur, garder });
+  await fileMoteur;
+  const demande = { point: coupe.point, normale: coupe.normale, garder: coupe.garder, poser_sur_coupe: Boolean(coupe.poser) };
+  if (coupe.connecteurs && coupe.connecteurs.type !== 'aucun') demande.connecteurs = coupe.connecteurs;
+  const reponse = await demander('couper_modele', demande);
   liberer();
   if (!reponse) return false;
-  etat.coupes = [...etat.coupes, { hauteur, garder, pose }];
+  etat.coupes = [...etat.coupes, { ...structuredClone(coupe), pose }];
   etat.echelle = reponse.echelle;
   etat.orientation = reponse.orientation;
   etat.rotation = reponse.rotation;
@@ -927,32 +934,136 @@ async function couper(hauteur, garder) {
   etat.plateaux[etat.plateau] = { ...etat.plateaux[etat.plateau], echelle: etat.echelle, orientation: etat.orientation,
     rotation: etat.rotation, decalage: etat.decalage };
   await poserModele(reponse.modele, true);
+  etat.noteCoupe = reponse.note || '';
   return true;
 }
 
+const CONNECTEURS = [
+  ['aucun', 'Aucun'],
+  ['trous', 'Trous pour goupilles (petites tiges)'],
+  ['tenons', 'Tenons (entrent dans les trous de l\'autre moitié)'],
+  ['aronde_femelle', 'Queue d\'aronde : la rainure'],
+  ['aronde_male', 'Queue d\'aronde : le rail'],
+];
+// Les réglages de la dernière coupe, gardés d'une ouverture de l'outil à l'autre.
+const coupeEnCours = { garder: 'bas', poser: true, connecteurs: { type: 'aucun', nombre: 2, diametre: 5, profondeur: 6, jeu: 0.2 } };
+
 async function outilCouper() {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
-  const haut = etat.modele.dimensions[2];
-  const champ = el('input');
-  champ.type = 'text';
-  champ.id = 'coupe-hauteur';
-  champ.inputMode = 'decimal';
-  champ.value = ecrire(Math.round(haut * 5) / 10);
-  const etiquette = el('label', '', 'Hauteur de la coupe, depuis le plateau (mm)');
-  etiquette.append(champ);
-  const choix = el('select');
-  choix.id = 'coupe-garder';
-  choix.append(new Option('Garder le bas', 'bas'), new Option('Garder le haut', 'haut'));
-  const etiquetteChoix = el('label', '', 'Morceau gardé');
-  etiquetteChoix.append(choix);
-  const aide = el('p', 'aide', `La pièce fait ${fr(haut)} mm de haut. Elle est coupée à plat à cette hauteur ; le morceau gardé ` +
-    'est reposé sur le plateau, l\'autre est retiré. « Annuler » (en haut à gauche) revient à la pièce entière.' +
+  const boite = vue3d.boite;
+  const milieu = boite ? [(boite.min.x + boite.max.x) / 2, (boite.min.y + boite.max.y) / 2, (boite.min.z + boite.max.z) / 2] : [0, 0, etat.modele.dimensions[2] / 2];
+  const plan = { point: milieu.map((v) => Math.round(v * 10) / 10), inclinaison: 0, azimut: 0 };
+  const normale = () => directionDe(plan);
+
+  const position = rangeeAxes('Position', [
+    [0, 'coupe-x', plan.point[0], 'Position du plan en X, en mm'],
+    [1, 'coupe-y', plan.point[1], 'Position du plan en Y, en mm'],
+    [2, 'coupe-hauteur', plan.point[2], 'Hauteur du plan (Z), en mm depuis le plateau']], 'mm');
+  const [eInclinaison, cInclinaison] = champNombre('coupe-inclinaison', 'Inclinaison (0° à plat, 90° debout)', 0);
+  const [eDirection, cDirection] = champNombre('coupe-direction', 'Direction (0° droite, 90° fond)', 0);
+  const angles = el('div', 'rangee-deux');
+  angles.append(eInclinaison, eDirection);
+  const lire = () => {
+    for (const [i, id] of [[0, 'coupe-x'], [1, 'coupe-y'], [2, 'coupe-hauteur']]) {
+      const v = lireNombre(position.querySelector('#' + id).value);
+      if (Number.isFinite(v)) plan.point[i] = v;
+    }
+    const inclinaison = lireNombre(cInclinaison.value), direction = lireNombre(cDirection.value);
+    if (Number.isFinite(inclinaison)) plan.inclinaison = Math.min(180, Math.max(0, inclinaison));
+    if (Number.isFinite(direction)) plan.azimut = ((direction % 360) + 360) % 360;
+  };
+  const ecrireChamps = () => {
+    position.querySelector('#coupe-x').value = ecrire(plan.point[0]);
+    position.querySelector('#coupe-y').value = ecrire(plan.point[1]);
+    position.querySelector('#coupe-hauteur').value = ecrire(plan.point[2]);
+    cInclinaison.value = ecrire(plan.inclinaison);
+    cDirection.value = ecrire(plan.azimut);
+  };
+  for (const champ of [...position.querySelectorAll('input'), cInclinaison, cDirection]) {
+    champ.addEventListener('change', () => { lire(); ecrireChamps(); vue3d.placerPlan(plan.point, normale()); });
+  }
+
+  const garder = el('select');
+  garder.id = 'coupe-garder';
+  garder.append(new Option('Le dessous du plan (côté opposé à la flèche)', 'bas'), new Option('Le dessus du plan (côté de la flèche)', 'haut'));
+  garder.value = coupeEnCours.garder;
+  const eGarder = el('label', '', 'Morceau gardé');
+  eGarder.append(garder);
+  const poser = el('input');
+  poser.type = 'checkbox';
+  poser.id = 'coupe-poser';
+  poser.checked = coupeEnCours.poser;
+  const ePoser = el('label', 'case', '');
+  ePoser.append(poser, document.createTextNode(' Poser le morceau sur sa face de coupe'));
+
+  // Connecteurs.
+  const c = coupeEnCours.connecteurs;
+  const type = el('select');
+  type.id = 'coupe-connecteurs';
+  for (const [valeur, texte] of CONNECTEURS) type.append(new Option(texte, valeur));
+  type.value = c.type;
+  const eType = el('label', '', 'Connecteurs sur la face de coupe');
+  eType.append(type);
+  const [eNombre, cNombre] = champNombre('connecteur-nombre', 'Nombre', c.nombre);
+  const [eDiametre, cDiametre] = champNombre('connecteur-diametre', 'Diamètre ou largeur (mm)', c.diametre);
+  const [eProfondeur, cProfondeur] = champNombre('connecteur-profondeur', 'Profondeur (mm)', c.profondeur);
+  const [eJeu, cJeu] = champNombre('connecteur-jeu', 'Jeu (mm)', c.jeu);
+  const reglages = el('div', 'rangee-deux');
+  reglages.append(eNombre, eDiametre, eProfondeur, eJeu);
+  const aideConnecteurs = el('p', 'aide', '');
+  const montrerConnecteurs = () => {
+    reglages.hidden = type.value === 'aucun';
+    eNombre.hidden = type.value.startsWith('aronde');
+    aideConnecteurs.textContent = {
+      aucun: '',
+      trous: 'Coupe la pièce deux fois (une fois en gardant le dessous, une fois le dessus) avec des trous des deux côtés : ils tombent aux mêmes endroits, et des tiges du bon diamètre les relient.',
+      tenons: 'Les tenons entrent dans les trous de l\'autre moitié : garde ce morceau avec « Tenons » et l\'autre avec « Trous », même nombre et même diamètre.',
+      aronde_femelle: 'La rainure traverse la face de coupe ; le rail de l\'autre moitié y coulisse par le côté.',
+      aronde_male: 'Le rail dépasse de la face de coupe ; il coulisse dans la rainure de l\'autre moitié.',
+    }[type.value];
+  };
+  type.addEventListener('change', montrerConnecteurs);
+  montrerConnecteurs();
+
+  const aide = el('p', 'aide', 'Dans la vue : une flèche déplace le plan, un anneau l\'incline. Un seul morceau est gardé ; « Annuler » revient à la pièce entière.' +
     (simulation ? ' (Simulation : la coupe demande le vrai slicer, dans l\'application.)' : ''));
-  if (!(await fenetreOptions('Couper la pièce', [etiquette, etiquetteChoix, aide], 'Couper', 'coupe-appliquer', { panneau: true }))) return;
-  const hauteur = lireNombre(champ.value);
-  if (!(hauteur > 0 && hauteur < haut)) { dire(`La hauteur de coupe doit être entre 0 et ${fr(haut)} mm.`); return; }
-  if (await couper(hauteur, choix.value)) {
-    dire(`Pièce coupée à ${fr(hauteur)} mm : le ${choix.value === 'bas' ? 'bas' : 'haut'} est gardé.`, { info: true });
+  const raccourcis = [
+    ['À plat', 'coupe-plat', () => { plan.inclinaison = 0; plan.azimut = 0; rouvrir(); }],
+    ['Debout, face à X', 'coupe-debout-x', () => { plan.inclinaison = 90; plan.azimut = 0; rouvrir(); }],
+    ['Debout, face à Y', 'coupe-debout-y', () => { plan.inclinaison = 90; plan.azimut = 90; rouvrir(); }],
+    ['Au milieu', 'coupe-milieu', () => { plan.point = milieu.map((v) => Math.round(v * 10) / 10); rouvrir(); }]];
+  // (Un raccourci ferme le panneau : on le rouvre avec le plan dans sa nouvelle position.)
+  let reprise = null;
+  const rouvrir = () => { reprise = { ...plan, point: [...plan.point] }; };
+  const noterReglages = () => {
+    coupeEnCours.garder = garder.value;
+    coupeEnCours.poser = poser.checked;
+    Object.assign(c, { type: type.value, nombre: Math.round(lireNombre(cNombre.value)) || 2, diametre: lireNombre(cDiametre.value) || 5,
+      profondeur: lireNombre(cProfondeur.value) || 6, jeu: Number.isFinite(lireNombre(cJeu.value)) ? lireNombre(cJeu.value) : 0.2 });
+  };
+
+  for (;;) {
+    ecrireChamps();
+    const ouverture = fenetreOptions('Couper la pièce', [position, angles, eGarder, ePoser, eType, reglages, aideConnecteurs, aide],
+      'Couper', 'coupe-appliquer', { panneau: true, raccourcis });
+    vue3d.manipulerPlan(plan.point, normale(), (point, n) => {
+      plan.point = point.map((v) => Math.round(v * 10) / 10);
+      Object.assign(plan, anglesDe(n, 180));
+      ecrireChamps();
+    }, true);
+    const valide = await ouverture;
+    noterReglages();
+    if (reprise) { Object.assign(plan, reprise); reprise = null; continue; }
+    if (!valide) return;
+    lire();
+    break;
+  }
+  const coupe = { point: [...plan.point], normale: normale().map((v) => Math.round(v * 1e6) / 1e6), garder: coupeEnCours.garder,
+    poser: coupeEnCours.poser, connecteurs: { ...c } };
+  if (await couper(coupe)) {
+    const nomType = CONNECTEURS.find(([valeur]) => valeur === c.type)[1].replace(/ \(.*/, '').toLowerCase();
+    dire(`Pièce coupée : ${coupe.garder === 'bas' ? 'le dessous' : 'le dessus'} du plan est gardé` +
+      (c.type !== 'aucun' ? `, avec : ${nomType}.` : '.') + (etat.noteCoupe ? ' ' + etat.noteCoupe : ''), { info: !etat.noteCoupe });
     noter();
   }
 }
@@ -1106,20 +1217,33 @@ function fenetreOptions(titre, contenu, libelleAction, idAction, { panneau = fal
 
 async function outilEchelle() {
   if (!etat.modele) { dire('Ouvre d\'abord un modèle.', { info: true }); return; }
-  const champ = el('input');
-  champ.type = 'text';
-  champ.id = 'echelle-valeur';
-  champ.inputMode = 'decimal';
-  champ.value = ecrire(etat.echelle * 100);
-  const [x, y, z] = etat.modele.dimensions;
-  const etiquette = el('label', '', 'Échelle, en pour cent de la taille d\'origine');
-  etiquette.append(champ);
-  const aide = el('p', 'aide', `Taille actuelle : ${fr(x)} × ${fr(y)} × ${fr(z)} mm. 100 % redonne la taille d'origine.`);
+  const dimensions = etat.modele.dimensions;
+  const pourCent = etat.echelle * 100;
+  // Deux rangées : l'échelle en pour cent et la taille en millimètres. Les
+  // proportions sont liées : changer une valeur change les autres.
+  const echelle = rangeeAxes('Échelle', [0, 1, 2].map((i) => [i, i === 0 ? 'echelle-valeur' : `echelle-${'xyz'[i]}`, pourCent,
+    `Échelle en ${'XYZ'[i]}, en pour cent de la taille d'origine`]), '%');
+  const taille = rangeeAxes('Taille', [0, 1, 2].map((i) => [i, `taille-${'xyz'[i]}`, Math.round(dimensions[i] * 100) / 100,
+    `Taille en ${'XYZ'[i]}, en mm`]), 'mm');
+  const champsEchelle = [...echelle.querySelectorAll('input')], champsTaille = [...taille.querySelectorAll('input')];
+  let voulue = pourCent;
+  const poser = (pc) => {
+    voulue = pc;
+    for (const champ of champsEchelle) champ.value = ecrire(Math.round(pc * 100) / 100);
+    champsTaille.forEach((champ, i) => { champ.value = ecrire(Math.round(dimensions[i] * (pc / pourCent) * 100) / 100); });
+  };
+  for (const champ of champsEchelle) champ.addEventListener('input', () => { const v = lireNombre(champ.value); if (v > 0) { const garde = champ.value; poser(v); champ.value = garde; } });
+  champsTaille.forEach((champ, i) => champ.addEventListener('input', () => {
+    const v = lireNombre(champ.value);
+    if (v > 0 && dimensions[i] > 0) { const garde = champ.value; poser(pourCent * v / dimensions[i]); champ.value = garde; }
+  }));
+  const aide = el('p', 'aide', 'Les proportions sont liées : la pièce grandit ou rétrécit de la même façon dans les trois directions. 100 % redonne la taille d\'origine.');
   const tailles = [50, 100, 150, 200].map((pc) => [`${pc} %`, `echelle-${pc}`,
     async () => { await transformer({ echelle: pc / 100 }, `Modèle mis à l'échelle : ${pc} %.`); outilEchelle(); }]);
-  if (!(await fenetreOptions('Mettre à l\'échelle', [etiquette, aide], 'Appliquer', 'echelle-appliquer',
+  if (!(await fenetreOptions('Mettre à l\'échelle', [echelle, taille, aide], 'Appliquer', 'echelle-appliquer',
     { panneau: true, raccourcis: tailles }))) return;
-  const pourcent = lireNombre(champ.value);
+  const saisie = lireNombre(champsEchelle[0].value);
+  const pourcent = Number.isFinite(saisie) && Math.abs(saisie - voulue) > 1e-6 ? saisie : voulue;
   if (!(pourcent >= 1 && pourcent <= 10000)) { dire('L\'échelle doit être un nombre entre 1 et 10 000 %.'); return; }
   await transformer({ echelle: pourcent / 100 }, `Modèle mis à l'échelle : ${fr(pourcent, 0)} %.`);
   outilEchelle();
@@ -1305,7 +1429,13 @@ function dessinerRepere() {
   axes.forEach((axe, i) => {
     const bout = vue3d.versEcran(...axe);
     morceaux.push([bout[2] / 2, trait([[0, 0], bout], COULEURS_AXES[i])]);
-    morceaux.push([bout[2], lettre('XYZ'[i], [bout[0] * 1.28, bout[1] * 1.28], COULEURS_AXES[i])]);
+    let place = [bout[0] * 1.28, bout[1] * 1.28];
+    if (i === 1) {
+      // Vue de face, Y part droit vers le fond, derrière Z : sa lettre est décalée pour rester lisible.
+      const z = vue3d.versEcran(0, 0, 1);
+      if (Math.hypot(place[0] - z[0] * 1.28, place[1] - z[1] * 1.28) < 0.45) place = [place[0] + 0.42, place[1] - 0.12];
+    }
+    morceaux.push([bout[2], lettre('XYZ'[i], place, COULEURS_AXES[i])]);
   });
   if (etat.strategie === 'couches_courbes' && etat.modele) {
     // C : le plateau tourne autour de Z. B : la tête s'incline autour de son pivot (X ou Y, d'après les réglages).
@@ -1313,8 +1443,14 @@ function dessinerRepere() {
     const arc = (point, de, vers) => Array.from({ length: 25 }, (_, k) => vue3d.versEcran(...point((de + (vers - de) * k / 24) * Math.PI / 180)));
     const arcs = [
       ['C', arc((t) => [0.62 * Math.cos(t), 0.62 * Math.sin(t), 0.72], 20, 300), COULEURS_AXES[2]],
-      ['B', arc((t) => (pivotX ? [0.72, 0.62 * Math.sin(t), 0.62 * Math.cos(t)] : [0.62 * Math.sin(t), 0.72, 0.62 * Math.cos(t)]), -70, 70),
+      // (L'arc de B est dessiné du côté de l'axe qui vient vers nous, pour qu'il se voie bien.)
+      ['B', arc((t) => (pivotX ? [0.72, 0.5 * Math.sin(t), 0.5 * Math.cos(t)] : [0.5 * Math.sin(t), -0.72, 0.5 * Math.cos(t)]), -75, 75),
         COULEURS_AXES[pivotX ? 0 : 1]]];
+    if (!pivotX) {
+      // L'axe Y prolongé vers l'avant, en pointillé : c'est autour de lui que la tête s'incline.
+      const avant = vue3d.versEcran(0, -1, 0);
+      morceaux.push([avant[2] / 2, trait([[0, 0], avant], COULEURS_AXES[1], true)]);
+    }
     for (const [nom, points, couleur] of arcs) {
       const profondeur = points.reduce((somme, q) => somme + q[2], 0) / points.length;
       morceaux.push([profondeur, trait(points, couleur, true)]);

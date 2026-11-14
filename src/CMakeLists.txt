@@ -16,6 +16,7 @@ add_library(artprint_core
     champ_distance.cpp
     collisions.cpp
     decoupe.cpp
+    connecteurs.cpp
     squelette.cpp
     champ_couches.cpp
     couches_courbes.cpp

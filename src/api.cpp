@@ -1,6 +1,7 @@
 // ArtPrint Slicer - licence AGPL v3
 #include "api.hpp"
 #include "decoupe.hpp"
+#include "connecteurs.hpp"
 
 #include <cstdlib>
 #include <cmath>
@@ -51,6 +52,11 @@ struct Session::Etat {
     std::uint64_t version_strategies = 0;
     std::optional<double> duree_classique;
     std::uint64_t version_duree = 0;
+    // Les premiers sommets du modèle sont ceux de la matière ; les suivants,
+    // s'il y en a, sont ceux des connecteurs « en creux » (trous, rainure),
+    // qui dépassent un peu de la pièce sans en faire partie : ils ne comptent
+    // ni pour la poser sur le plateau ni pour ses dimensions. 0 : tous comptent.
+    std::size_t sommets_solides = 0;
 };
 
 namespace {
@@ -101,8 +107,34 @@ Json liste_reglages(const Reglages& reglages) {
     return liste;
 }
 
-Json decrire_modele(const Maillage& modele) {
-    const BoiteEnglobante boite = calculer_boite(modele);
+// La boîte de la matière : celle des « solides » premiers sommets (0 : tous).
+BoiteEnglobante boite_solide(const Maillage& modele, std::size_t solides) {
+    if (solides == 0 || solides >= modele.sommets.size()) {
+        return calculer_boite(modele);
+    }
+    BoiteEnglobante boite{modele.sommets.front(), modele.sommets.front()};
+    for (std::size_t i = 1; i < solides; ++i) {
+        const Point3& s = modele.sommets[i];
+        boite.min = {std::min(boite.min.x, s.x), std::min(boite.min.y, s.y), std::min(boite.min.z, s.z)};
+        boite.max = {std::max(boite.max.x, s.x), std::max(boite.max.y, s.y), std::max(boite.max.z, s.z)};
+    }
+    return boite;
+}
+
+// Pose le modèle au centre du plateau, d'après la boîte de sa matière.
+Maillage poser_solide(const Maillage& modele, std::size_t solides) {
+    const BoiteEnglobante boite = boite_solide(modele, solides);
+    Maillage pose = modele;
+    for (Point3& sommet : pose.sommets) {
+        sommet.x -= (boite.min.x + boite.max.x) / 2.0f;
+        sommet.y -= (boite.min.y + boite.max.y) / 2.0f;
+        sommet.z -= boite.min.z;
+    }
+    return pose;
+}
+
+Json decrire_modele(const Maillage& modele, std::size_t solides = 0) {
+    const BoiteEnglobante boite = boite_solide(modele, solides);
     const Point3 taille = boite.dimensions();
     const RapportFermeture fermeture = verifier_fermeture(modele);
 
@@ -356,6 +388,7 @@ std::string Session::executer_sous_verrou(std::string_view demande_json) {
             }
         } else if (commande == "charger_modele") {
             const ModeleStl modele = lire_stl(chemin_depuis_json(demande));
+            etat.sommets_solides = 0;
             etat.modele = poser_au_centre(modele.maillage);
             etat.origine = etat.modele;
             etat.echelle = 1.0;
@@ -363,7 +396,7 @@ std::string Session::executer_sous_verrou(std::string_view demande_json) {
             etat.rotation = {0.0, 0.0, 0.0};
             etat.decalage = {0.0, 0.0};
             etat.resultat.reset();
-            reponse["modele"] = decrire_modele(*etat.modele);
+            reponse["modele"] = decrire_modele(*etat.modele, etat.sommets_solides);
             reponse["modele"]["format"] = nom_format(modele.format);
         } else if (commande == "transformer_modele") {
             // Met le modèle à l'échelle et choisit sa pose. On repart toujours
@@ -447,13 +480,13 @@ std::string Session::executer_sous_verrou(std::string_view demande_json) {
                     sommet.z = static_cast<decltype(sommet.z)>(sommet.z * etat.echelle);
                 }
             }
-            etat.modele = poser_au_centre(modele);
+            etat.modele = poser_solide(modele, etat.sommets_solides);
             for (Point3& p : etat.modele->sommets) {
                 p.x = static_cast<decltype(p.x)>(p.x + etat.decalage[0]);
                 p.y = static_cast<decltype(p.y)>(p.y + etat.decalage[1]);
             }
             etat.resultat.reset();
-            reponse["modele"] = decrire_modele(*etat.modele);
+            reponse["modele"] = decrire_modele(*etat.modele, etat.sommets_solides);
             reponse["rotation"] = etat.rotation;
             reponse["decalage"] = etat.decalage;
             reponse["echelle"] = etat.echelle;
@@ -613,45 +646,108 @@ std::string Session::executer_sous_verrou(std::string_view demande_json) {
             ecrire_stl(*etat.modele, chemin_depuis_json(demande));
             reponse["triangles"] = etat.modele->triangles.size();
         } else if (commande == "couper_modele") {
-            // Coupe le modèle posé par un plan horizontal, à « hauteur » mm du
-            // plateau, et garde le bas ("bas") ou le haut ("haut"). Le morceau
-            // gardé devient le modèle : il est reposé sur le plateau, et
-            // l'échelle et la rotation repartent de zéro.
+            // Coupe le modèle posé par un plan et garde un des deux morceaux.
+            //   "point" [x, y, z] et "normale" [x, y, z] : le plan de coupe
+            //       (ou "hauteur" : un plan horizontal à cette hauteur) ;
+            //   "garder" : "bas" (le côté opposé à la normale) ou "haut" ;
+            //   "poser_sur_coupe" : vrai pour tourner le morceau, sa face de
+            //       coupe contre le plateau (ou vers le haut s'il porte des
+            //       tenons ou un rail, qui dépassent de cette face) ;
+            //   "connecteurs" : {"type": "trous" | "tenons" | "aronde_male" |
+            //       "aronde_femelle", "nombre", "diametre", "profondeur", "jeu"}.
+            // Le morceau gardé devient le modèle : il est reposé sur le
+            // plateau, et l'échelle et la rotation repartent de zéro.
             if (!etat.modele) {
                 throw std::runtime_error("Aucun modèle n'est ouvert.");
             }
-            const double hauteur = demande.at("hauteur").get<double>();
             const std::string garder = demande.value("garder", std::string("bas"));
             if (garder != "bas" && garder != "haut") {
                 throw std::runtime_error("Couper : « garder » attend « bas » ou « haut ».");
             }
-            const BoiteEnglobante boite = calculer_boite(*etat.modele);
-            if (!(hauteur > boite.min.z + 0.05 && hauteur < boite.max.z - 0.05)) {
-                throw std::runtime_error(std::format(
-                    "La hauteur de coupe doit être à l'intérieur de la pièce : entre 0,1 et {:.1f} mm.",
-                    boite.max.z - boite.min.z - 0.1));
+            Plan plan{{0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}};
+            if (demande.contains("point")) {
+                const std::vector<double> p = demande.at("point").get<std::vector<double>>();
+                const std::vector<double> n = demande.value("normale", std::vector<double>{0.0, 0.0, 1.0});
+                if (p.size() != 3 || n.size() != 3 || norme(Vec3{n[0], n[1], n[2]}) < 1e-9) {
+                    throw std::runtime_error("Couper : « point » et « normale » attendent trois nombres chacun.");
+                }
+                plan = {{p[0], p[1], p[2]}, normaliser(Vec3{n[0], n[1], n[2]})};
+            } else {
+                plan.point.z = demande.at("hauteur").get<double>();
             }
-            // Tous les morceaux au-dessus du plan sont détachés : une graine
-            // par sommet situé au-dessus (un échantillon suffit).
+            // Tous les morceaux du côté de la normale sont détachés : une
+            // graine par sommet situé de ce côté (un échantillon suffit).
             std::vector<Vec3> graines;
             const std::size_t pas = std::max<std::size_t>(1, etat.modele->sommets.size() / 300);
             for (std::size_t i = 0; i < etat.modele->sommets.size(); i += pas) {
                 const Point3& s = etat.modele->sommets[i];
-                if (s.z > hauteur + 0.05) {
+                if (produit_scalaire(Vec3{s.x, s.y, s.z} - plan.point, plan.normale) > 0.05) {
                     graines.push_back({s.x, s.y, s.z});
                 }
             }
-            const auto coupe = couper_par_plan(*etat.modele, {{0.0, 0.0, hauteur}, {0.0, 0.0, 1.0}}, graines);
+            const auto coupe = graines.empty() ? std::nullopt : couper_par_plan(*etat.modele, plan, graines);
             if (!coupe) {
-                throw std::runtime_error("La pièce n'a pas pu être coupée proprement à cette hauteur. "
-                                         "Solution : essayer une hauteur un peu différente.");
+                throw std::runtime_error(
+                    "Le plan de coupe ne traverse pas la pièce, ou ne la coupe pas proprement. Solution : déplacer le "
+                    "plan à l'intérieur de la pièce, ou l'incliner un peu autrement.");
             }
-            const Maillage& morceau = garder == "bas" ? coupe->reste : coupe->partie;
+            Maillage morceau = garder == "bas" ? coupe->reste : coupe->partie;
             if (!verifier_fermeture(morceau).ferme || volume_maillage(morceau) < 1.0) {
                 throw std::runtime_error("Le morceau gardé ne serait pas un volume fermé. "
-                                         "Solution : essayer une hauteur un peu différente.");
+                                         "Solution : déplacer un peu le plan de coupe.");
             }
-            etat.origine = poser_au_centre(morceau);
+            // La direction qui sort du morceau gardé, à travers sa face de coupe.
+            const Vec3 sortante = garder == "bas" ? plan.normale : plan.normale * -1.0;
+            OptionsConnecteurs connecteurs;
+            std::string remarque;
+            int poses = 0;
+            const std::size_t sommets_piece = morceau.sommets.size();
+            if (demande.contains("connecteurs") && demande["connecteurs"].is_object()) {
+                const Json& c = demande["connecteurs"];
+                const std::string type = c.value("type", std::string("aucun"));
+                connecteurs.type = type == "trous" ? TypeConnecteur::trous
+                                   : type == "tenons" ? TypeConnecteur::tenons
+                                   : type == "aronde_male" ? TypeConnecteur::aronde_male
+                                   : type == "aronde_femelle" ? TypeConnecteur::aronde_femelle
+                                   : TypeConnecteur::aucun;
+                if (connecteurs.type == TypeConnecteur::aucun && type != "aucun") {
+                    throw std::runtime_error(std::format("Type de connecteur inconnu : « {} ».", type));
+                }
+                connecteurs.nombre = c.value("nombre", 2);
+                connecteurs.diametre = c.value("diametre", 5.0);
+                connecteurs.profondeur = c.value("profondeur", 6.0);
+                connecteurs.jeu = c.value("jeu", 0.2);
+                poses = ajouter_connecteurs(morceau, coupe->centre_coupe, sortante, connecteurs, remarque);
+            }
+            if (demande.value("poser_sur_coupe", false)) {
+                // La face de coupe va contre le plateau ; si des tenons ou un
+                // rail en dépassent, elle va vers le haut.
+                const bool depasse = poses > 0 && (connecteurs.type == TypeConnecteur::tenons ||
+                                                   connecteurs.type == TypeConnecteur::aronde_male);
+                const Vec3 cible{0.0, 0.0, depasse ? 1.0 : -1.0};
+                // Rotation qui amène « sortante » sur « cible » (formule de Rodrigues).
+                Vec3 axe = produit_vectoriel(sortante, cible);
+                const double sinus = norme(axe), cosinus = produit_scalaire(sortante, cible);
+                if (sinus < 1e-9) {
+                    axe = {1.0, 0.0, 0.0};  // déjà dans l'axe, ou à l'opposé : demi-tour autour de X
+                } else {
+                    axe = axe * (1.0 / sinus);
+                }
+                const double angle = std::atan2(sinus, cosinus);
+                if (std::abs(angle) > 1e-9) {
+                    const double c = std::cos(angle), s = std::sin(angle);
+                    for (Point3& sommet : morceau.sommets) {
+                        const Vec3 p{sommet.x, sommet.y, sommet.z};
+                        const Vec3 q = p * c + produit_vectoriel(axe, p) * s + axe * (produit_scalaire(axe, p) * (1.0 - c));
+                        sommet = {static_cast<decltype(sommet.x)>(q.x), static_cast<decltype(sommet.y)>(q.y),
+                                  static_cast<decltype(sommet.z)>(q.z)};
+                    }
+                }
+            }
+            // Un tenon ou un rail fait partie de la matière ; un trou ou une rainure, non.
+            etat.sommets_solides = connecteurs.type == TypeConnecteur::trous || connecteurs.type == TypeConnecteur::aronde_femelle
+                                       ? sommets_piece : 0;
+            etat.origine = poser_solide(morceau, etat.sommets_solides);
             etat.echelle = 1.0;
             etat.rotation = {0.0, 0.0, 0.0};
             etat.oriente = false;
@@ -661,11 +757,13 @@ std::string Session::executer_sous_verrou(std::string_view demande_json) {
                 sommet.y = static_cast<decltype(sommet.y)>(sommet.y + etat.decalage[1]);
             }
             etat.resultat.reset();
-            reponse["modele"] = decrire_modele(*etat.modele);
+            reponse["modele"] = decrire_modele(*etat.modele, etat.sommets_solides);
             reponse["rotation"] = etat.rotation;
             reponse["decalage"] = etat.decalage;
             reponse["echelle"] = etat.echelle;
             reponse["orientation"] = "origine";
+            reponse["connecteurs_poses"] = poses;
+            reponse["note"] = remarque;
         } else if (commande == "fermer_modele") {
             etat.modele.reset();
             etat.origine.reset();

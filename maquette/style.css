@@ -373,6 +373,10 @@ input.interrupteur {
 .repere polyline { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .repere text { font-size: 11px; font-weight: var(--g-fort); text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--c-fenetre); stroke-width: 3px; }
 /* Panneaux d'outils : une rangée de champs par axe */
+.rangee-deux { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--e-2); }
+.rangee-deux[hidden], .rangee-deux label[hidden] { display: none; }
+.options-liste label.case { display: flex; align-items: center; gap: var(--e-1); }
+.panneau-outil { width: min(400px, calc(100% - var(--e-6))); max-height: calc(100% - var(--l-outil) - var(--e-8) - var(--h-champ)); }
 .rangee-axes { display: flex; align-items: center; gap: var(--e-2); font-size: var(--t-12); }
 .rangee-axes .rangee-libelle { flex: none; min-width: 4.5em; color: var(--c-texte-2); }
 .rangee-axes .rangee-unite { flex: none; color: var(--c-texte-2); }
