@@ -35,6 +35,10 @@ public:
 // Lève ErreurStl si le fichier est absent ou invalide.
 ModeleStl lire_stl(const std::filesystem::path& chemin);
 
+// Écrit le maillage dans un fichier STL binaire. Lève ErreurStl si le
+// fichier ne peut pas être écrit.
+void ecrire_stl(const Maillage& maillage, const std::filesystem::path& chemin);
+
 // Lit un STL déjà chargé en mémoire (utile pour les tests).
 ModeleStl lire_stl_memoire(std::string_view donnees);
 

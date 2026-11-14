@@ -310,4 +310,39 @@ ModeleStl lire_stl(const std::filesystem::path& chemin) {
     return lire_stl_memoire(donnees);
 }
 
+void ecrire_stl(const Maillage& maillage, const std::filesystem::path& chemin) {
+    std::ofstream fichier(chemin, std::ios::binary);
+    char entete[80] = "ArtPrint Slicer";
+    fichier.write(entete, sizeof entete);
+    const auto nombre = static_cast<std::uint32_t>(maillage.triangles.size());
+    fichier.write(reinterpret_cast<const char*>(&nombre), 4);
+    for (const Triangle& triangle : maillage.triangles) {
+        float valeurs[12];
+        const Point3& a = maillage.sommets[triangle.sommets[0]];
+        const Point3& b = maillage.sommets[triangle.sommets[1]];
+        const Point3& c = maillage.sommets[triangle.sommets[2]];
+        // Normale de la face (longueur 1, ou nulle pour un triangle plat).
+        const double ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+        const double vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+        double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const double longueur = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (longueur > 0.0) {
+            nx /= longueur, ny /= longueur, nz /= longueur;
+        }
+        valeurs[0] = static_cast<float>(nx), valeurs[1] = static_cast<float>(ny), valeurs[2] = static_cast<float>(nz);
+        const Point3* sommets[3] = {&a, &b, &c};
+        for (int i = 0; i < 3; ++i) {
+            valeurs[3 + 3 * i] = static_cast<float>(sommets[i]->x);
+            valeurs[4 + 3 * i] = static_cast<float>(sommets[i]->y);
+            valeurs[5 + 3 * i] = static_cast<float>(sommets[i]->z);
+        }
+        fichier.write(reinterpret_cast<const char*>(valeurs), sizeof valeurs);
+        const std::uint16_t attribut = 0;
+        fichier.write(reinterpret_cast<const char*>(&attribut), 2);
+    }
+    if (!fichier) {
+        throw ErreurStl(std::format("Impossible d'écrire le fichier « {} ».", chemin_en_texte(chemin)));
+    }
+}
+
 }  // namespace artprint

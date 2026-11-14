@@ -1,0 +1,4 @@
+// ArtPrint Slicer - licence AGPL v3
+// Ressources du programme avec fenêtre : son icône (le numéro 1 est celle que
+// Windows montre pour le fichier, les raccourcis et la barre des tâches).
+1 ICON "artprint.ico"

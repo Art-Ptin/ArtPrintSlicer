@@ -1,0 +1,1042 @@
+// ArtPrint Slicer - licence AGPL v3
+// Tests du 5 axes : découpe d'un modèle par un plan, squelette (tronc et
+// branches), stratégies proposées, et G-code multi-directions relu par le
+// vérificateur. Les modèles et les réglages de machine sont inventés ici.
+#include <algorithm>
+#include <cmath>
+#include <vector>
+#include <cstdlib>
+#include <iostream>
+#include <set>
+#include <sstream>
+#include <string>
+
+#include "cinematique.hpp"
+#include "decoupe.hpp"
+#include "formes_organiques.hpp"
+#include "champ_couches.hpp"
+#include "couches_courbes.hpp"
+#include "modeles_essai.hpp"
+#include "modeles_vingt.hpp"
+#include "multiaxe.hpp"
+#include "slicer.hpp"
+#include "squelette.hpp"
+#include "strategie.hpp"
+#include "verificateur.hpp"
+
+// Les essais portent aussi sur les anciennes stratégies à couches orientées,
+// que le slicer ne propose plus d'ordinaire.
+static std::vector<artprint::Strategie> toutes_les_strategies(const artprint::Maillage& pose,
+                                                              const artprint::Reglages& reglages) {
+    artprint::OptionsStrategie options;
+    options.couches_orientees = true;
+    return artprint::proposer_strategies(pose, reglages, options);
+}
+
+using namespace artprint;
+
+namespace {
+
+int echecs = 0;
+
+#define VERIFIER(condition)                                                     \
+    do {                                                                        \
+        if (!(condition)) {                                                     \
+            std::cerr << "ÉCHEC (ligne " << __LINE__ << ") : " #condition "\n"; \
+            ++echecs;                                                           \
+        }                                                                       \
+    } while (0)
+
+#define VERIFIER_ACCEPTE(rapport)                       \
+    do {                                                \
+        VERIFIER((rapport).valide());                   \
+        for (const auto& erreur_ : (rapport).erreurs) { \
+            std::cerr << decrire(erreur_);              \
+        }                                               \
+    } while (0)
+
+bool proche(double a, double b, double tolerance) { return std::abs(a - b) <= tolerance; }
+
+bool ferme(const Maillage& m) {
+    const RapportFermeture f = verifier_fermeture(m);
+    return f.ferme && f.orientation_coherente;
+}
+
+// Réglages d'une machine d'essai (valeurs inventées).
+Reglages reglages_essai() {
+    Reglages r;
+    r.machine.distance_pivot_buse = 37.5;
+    r.machine.hauteur_bascule_b = 10.0;
+    // Ces essais portent sur les trajectoires : la tête y va jusqu'à 90° et
+    // le plateau tourne sans butée. Les limites du firmware (50°, un tour
+    // dans chaque sens) ont leurs propres essais (« contrat du G-code »).
+    r.machine.b_inclinaison_max = 90.0;
+    r.machine.c_min.reset();
+    r.machine.c_max.reset();
+    r.machine.contrat_gcode = 0;  // ancien format : les lignes donnent la position des axes
+    return r;
+}
+
+const Strategie* trouver(const std::vector<Strategie>& strategies, TypeStrategie type) {
+    for (const Strategie& s : strategies) {
+        if (s.type == type) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+void test_decoupe() {
+    // Un cylindre vertical de 40 mm coupé à 15 mm de haut.
+    ConstructeurMaillage c;
+    essai::ajouter_cylindre(c, {0, 0, 0}, {0, 0, 40}, 10.0, 64);
+    const Maillage cylindre = c.terminer();
+    VERIFIER(ferme(cylindre));
+    const double volume = volume_maillage(cylindre);
+    VERIFIER(proche(volume, std::numbers::pi * 100.0 * 40.0, 60.0));
+
+    const auto coupe = couper_par_plan(cylindre, {{0, 0, 15}, {0, 0, 1}}, {{0, 0, 30}});
+    VERIFIER(coupe.has_value());
+    if (coupe) {
+        VERIFIER(ferme(coupe->partie) && ferme(coupe->reste));
+        VERIFIER(proche(volume_maillage(coupe->partie), volume * 25.0 / 40.0, 1.0));
+        VERIFIER(proche(volume_maillage(coupe->reste), volume * 15.0 / 40.0, 1.0));
+        VERIFIER(proche(coupe->surface_coupe, std::numbers::pi * 100.0, 2.0));
+        VERIFIER(coupe->boucles == 1 && proche(coupe->centre_coupe.z, 15.0, 1e-6));
+    }
+    // Coupe de biais : les deux morceaux restent fermés et leur volume s'ajoute.
+    const auto biais = couper_par_plan(cylindre, {{0, 0, 20}, essai::direction(40.0, 30.0)}, {{0, 0, 38}});
+    VERIFIER(biais.has_value());
+    if (biais) {
+        VERIFIER(ferme(biais->partie) && ferme(biais->reste));
+        VERIFIER(proche(volume_maillage(biais->partie) + volume_maillage(biais->reste), volume, 1.0));
+    }
+    // Un plan qui ne touche pas le modèle : rien à séparer.
+    VERIFIER(!couper_par_plan(cylindre, {{0, 0, 50}, {0, 0, 1}}, {{0, 0, 60}}).has_value());
+
+    VERIFIER(proche(distance_point_triangle({0.2, 0.2, 3}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}), 3.0, 1e-12));
+    VERIFIER(proche(distance_point_triangle({2, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}), 1.0, 1e-12));
+}
+
+void test_squelette() {
+    const Squelette s = calculer_squelette(poser_au_centre(essai::arbre()));
+    VERIFIER(!s.boucles && s.voxels > 10000);
+    // Un tronc en trois morceaux et deux branches de côté.
+    VERIFIER(s.branches.size() == 5);
+    int penchees = 0;
+    for (const BrancheSquelette& b : s.branches) {
+        const double inclinaison = en_degres(std::acos(b.direction.z));
+        if (inclinaison > 45.0) {
+            ++penchees;
+            VERIFIER(proche(inclinaison, 60.0, 4.0) || proche(inclinaison, 75.0, 4.0));
+            VERIFIER(b.parent >= 0 && b.enfants.empty());
+            VERIFIER(proche(b.tranches[b.tranches.size() / 2].rayon, 3.25, 0.6));
+        } else {
+            VERIFIER(inclinaison < 12.0);
+        }
+    }
+    VERIFIER(penchees == 2);
+    VERIFIER(s.branches.front().parent == -1);
+    VERIFIER(proche(s.branches.front().volume_total, static_cast<double>(s.voxels) * s.pas * s.pas * s.pas, 1.0));
+
+    // Un simple cylindre : une seule branche, verticale.
+    ConstructeurMaillage c;
+    essai::ajouter_cylindre(c, {0, 0, 0}, {0, 0, 30}, 5.0);
+    const Squelette simple = calculer_squelette(c.terminer());
+    VERIFIER(simple.branches.size() == 1 && simple.branches.front().direction.z > 0.99);
+}
+
+void test_strategies(const Maillage& modele, const char* nom) {
+    const Reglages r = reglages_essai();
+    const Maillage pose = poser_au_centre(modele);
+    const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
+    VERIFIER(!strategies.empty() && strategies.front().type == TypeStrategie::classique);
+    const Strategie& classique = strategies.front();
+    const Strategie* branches = trouver(strategies, TypeStrategie::par_branches);
+    VERIFIER(branches != nullptr);
+    if (!branches) {
+        std::cerr << "(" << nom << ")\n";
+        return;
+    }
+    // Le tronc puis les deux branches ; presque plus rien à soutenir.
+    VERIFIER(branches->parties.size() == 3);
+    VERIFIER(classique.surplomb > 100.0);
+    VERIFIER(branches->surplomb < 0.35 * classique.surplomb);
+    double volume = 0.0;
+    for (std::size_t p = 0; p < branches->parties.size(); ++p) {
+        const PartieImpression& partie = branches->parties[p];
+        VERIFIER(ferme(partie.maillage));
+        VERIFIER((p == 0) == (partie.parent < 0));
+        VERIFIER(p == 0 ? partie.inclinaison < 0.01 : partie.inclinaison > 50.0);
+        volume += partie.volume;
+    }
+    // La découpe ne crée ni ne perd de matière.
+    VERIFIER(proche(volume, volume_maillage(pose), 0.01 * volume));
+    // Les branches sont imprimées de la plus basse à la plus haute.
+    if (branches->parties.size() == 3) {
+        VERIFIER(branches->parties[1].base.z < branches->parties[2].base.z);
+    }
+
+    // Le G-code multi-directions respecte toutes les règles du vérificateur.
+    const ResultatTranchage resultat = trancher_strategie(*branches, r);
+    VERIFIER_ACCEPTE(resultat.verification);
+    VERIFIER(resultat.couches > 100 && resultat.longueur_filament > 100.0);
+    VERIFIER(resultat.gcode.find(";PARTIE:3") != std::string::npos);
+    VERIFIER(resultat.apercu.size() == resultat.couches);
+    VERIFIER(resultat.verification.retractions > 3);
+
+    // La stratégie classique passe par le slicer 3 axes.
+    const ResultatTranchage simple = trancher_strategie(classique, r);
+    VERIFIER_ACCEPTE(simple.verification);
+    VERIFIER(simple.gcode.find(";PARTIE") == std::string::npos);
+
+    // Faute provoquée : une branche imprimée deux fois est refusée.
+    Strategie deux_fois = *branches;
+    deux_fois.parties.push_back(deux_fois.parties[1]);
+    const ResultatTranchage faute = trancher_strategie(deux_fois, r);
+    VERIFIER(!faute.verification.valide());
+    VERIFIER(faute.verification.contient(TypeErreur::dans_matiere) ||
+             faute.verification.contient(TypeErreur::sous_matiere));
+
+    // Sans hauteur de bascule, B est limité à 55° partout : la découpe faite
+    // pour 60° et 75° est refusée, mais la stratégie recalculée s'y adapte.
+    Reglages sans_bascule = r;
+    sans_bascule.machine.hauteur_bascule_b.reset();
+    VERIFIER(trancher_strategie(*branches, sans_bascule).verification.contient(TypeErreur::limite_b));
+    const std::vector<Strategie> prudentes = toutes_les_strategies(pose, sans_bascule);
+    const Strategie* prudente = trouver(prudentes, TypeStrategie::par_branches);
+    VERIFIER(prudente != nullptr);
+    if (prudente) {
+        for (const PartieImpression& partie : prudente->parties) {
+            VERIFIER(partie.inclinaison <= 55.0 + 1e-6);
+        }
+        VERIFIER_ACCEPTE(trancher_strategie(*prudente, sans_bascule).verification);
+    }
+
+    // Sans la distance pivot-buse, une partie penchée ne peut pas être tranchée.
+    Reglages sans_pivot = r;
+    sans_pivot.machine.distance_pivot_buse.reset();
+    bool refuse = false;
+    try {
+        trancher_strategie(*branches, sans_pivot);
+    } catch (const std::exception&) {
+        refuse = true;
+    }
+    VERIFIER(refuse);
+}
+
+void test_b_vertical() {
+    // Sur certaines machines, B ne vaut pas 0 quand la buse est verticale.
+    Reglages r = reglages_essai();
+    r.machine.b_vertical = -90.0;
+    const Maillage pose = poser_au_centre(essai::arbre());
+    const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
+    const Strategie* branches = trouver(strategies, TypeStrategie::par_branches);
+    VERIFIER(branches != nullptr);
+    if (branches) {
+        const ResultatTranchage resultat = trancher_strategie(*branches, r);
+        VERIFIER_ACCEPTE(resultat.verification);
+        VERIFIER(resultat.gcode.find(" B-90.000 ") != std::string::npos);  // buse verticale
+        VERIFIER(resultat.gcode.find(" B0.000 ") == std::string::npos);
+    }
+    const ResultatTranchage simple = trancher(pose, r);
+    VERIFIER_ACCEPTE(simple.verification);
+    VERIFIER(simple.gcode.find(" B-90.000 C0.000 ") != std::string::npos);
+}
+
+void test_cinematique() {
+    // La position calculée pour une pointe et des angles donnés ramène bien
+    // la buse à cet endroit de la pièce.
+    const ReglagesMachine machine = reglages_essai().machine;
+    const Vec3 pointe{12.0, -7.0, 33.0};
+    for (const double b : {0.0, 25.0, -60.0}) {
+        for (const double c : {0.0, 75.0, -200.0}) {
+            const PositionMachine m = position_avec_angles(machine, pointe, b, c);
+            const PoseOutil pose = pose_dans_piece(machine, m);
+            VERIFIER(norme(pose.pointe - pointe) < 1e-9);
+            VERIFIER(proche(en_degres(std::acos(pose.direction.z)), std::abs(b), 1e-9));
+        }
+    }
+    // Une même orientation s'obtient en penchant la tête d'un côté ou de
+    // l'autre : les deux solutions amènent la buse au même endroit, avec B
+    // de signe opposé et le plateau tourné d'un demi-tour.
+    const PoseOutil voulue{pointe, essai::direction(40.0, 25.0)};
+    const auto d_un_cote = position_machine(machine, voulue, 0.0, +1);
+    const auto de_l_autre = position_machine(machine, voulue, 0.0, -1);
+    VERIFIER(d_un_cote.has_value() && de_l_autre.has_value());
+    if (d_un_cote && de_l_autre) {
+        VERIFIER(proche(d_un_cote->b, 40.0, 1e-9) && proche(de_l_autre->b, -40.0, 1e-9));
+        VERIFIER(proche(std::abs(angle_le_plus_proche(d_un_cote->c - de_l_autre->c, 180.0)), 180.0, 1e-9));
+        for (const auto& solution : {*d_un_cote, *de_l_autre}) {
+            const PoseOutil pose = pose_dans_piece(machine, solution);
+            VERIFIER(norme(pose.pointe - pointe) < 1e-9);
+            VERIFIER(norme(pose.direction - voulue.direction) < 1e-9);
+        }
+    }
+}
+
+// Couches qui pivotent : un tube courbe posé sur le plateau, qui part à la
+// verticale et se couche jusqu'à 70°. Ses couches suivent sa courbe.
+void test_couches_pivotantes() {
+    const Reglages r = reglages_essai();
+    const auto partie_pour = [](const essai::TubeCourbe& tube) {
+        const Maillage brut = tube.maillage();
+        const BoiteEnglobante boite = calculer_boite(brut);
+        const Vec3 decalage{(boite.min.x + boite.max.x) / 2.0, (boite.min.y + boite.max.y) / 2.0, boite.min.z};
+        PartieImpression partie;
+        partie.maillage = poser_au_centre(brut);
+        partie.guide.push_back({Vec3{-decalage.x, -decalage.y, 0.0}, {0, 0, 1}});
+        for (double angle = 0.0; angle <= tube.inclinaison_finale + 1e-9; angle += 2.5) {
+            partie.guide.push_back({tube.point(angle) - decalage, tube.direction(angle)});
+        }
+        return partie;
+    };
+    const essai::TubeCourbe tube;
+    Strategie courbe;
+    courbe.type = TypeStrategie::par_branches;
+    courbe.parties.push_back(partie_pour(tube));
+    VERIFIER(ferme(courbe.parties.front().maillage));
+    VERIFIER(couches_pivotantes_possibles(courbe.parties.front(), r.impression));
+
+    const ResultatTranchage resultat = trancher_strategie(courbe, r);
+    VERIFIER_ACCEPTE(resultat.verification);
+    // La tête s'incline un peu à chaque couche : beaucoup de valeurs de B, de 0° à 70°.
+    std::set<std::string> valeurs_b;
+    std::istringstream lignes(resultat.gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        const auto ou = ligne.find(" B");
+        if (ou != std::string::npos) {
+            valeurs_b.insert(ligne.substr(ou + 2, ligne.find(' ', ou + 2) - ou - 2));
+        }
+    }
+    VERIFIER(valeurs_b.size() > 150);
+    VERIFIER(valeurs_b.count("0.000") == 1 && valeurs_b.count("70.000") == 1);
+
+    // 5 axes continu : la tête pivote pendant l'extrusion, très peu à chaque
+    // ligne (0,25° au plus), et chaque couche finit dans l'orientation de la
+    // suivante.
+    VERIFIER(resultat.verification.extrusions_en_rotation > 1000);
+    {
+        double b = 0.0, plus_grand_pas = 0.0;
+        std::istringstream relecture(resultat.gcode);
+        for (std::string ligne; std::getline(relecture, ligne);) {
+            const auto ou = ligne.find(" B");
+            if (ou == std::string::npos || !ligne.starts_with("G")) {
+                continue;
+            }
+            const double valeur = std::stod(ligne.substr(ou + 2));
+            if (ligne.starts_with("G1") && ligne.find(" E") != std::string::npos) {
+                plus_grand_pas = std::max(plus_grand_pas, std::abs(valeur - b));
+            }
+            b = valeur;
+        }
+        VERIFIER(plus_grand_pas > 0.0 && plus_grand_pas < 0.2515);
+    }
+    // Sans le pivot continu, la tête pivote entre les couches : même pièce,
+    // aucune extrusion pendant une rotation.
+    OptionsMultiaxe entre_les_couches;
+    entre_les_couches.pivot_continu = false;
+    const ResultatTranchage a_l_arret = trancher_strategie(courbe, r, entre_les_couches);
+    VERIFIER_ACCEPTE(a_l_arret.verification);
+    VERIFIER(a_l_arret.verification.extrusions_en_rotation == 0);
+    VERIFIER(a_l_arret.couches == resultat.couches);
+    // Le réglage « pivot_continu » de la machine fait la même chose.
+    Reglages sans_pivot = r;
+    sans_pivot.machine.pivot_continu = false;
+    VERIFIER(trancher_strategie(courbe, sans_pivot).verification.extrusions_en_rotation == 0);
+    VERIFIER(std::abs(a_l_arret.longueur_filament - resultat.longueur_filament) < 0.01 * resultat.longueur_filament);
+    // Aucune paroi n'est imprimée dans le vide ; en 3 axes, il y en a.
+    VERIFIER(resultat.verification.longueur_dans_le_vide < 1.0);
+    VERIFIER(trancher(courbe.parties.front().maillage, r).verification.longueur_dans_le_vide > 3.0);
+
+    // Une courbe trop serrée pour l'épaisseur du tube est reconnue et refusée.
+    essai::TubeCourbe serre;
+    serre.rayon_courbure = 8.0;
+    VERIFIER(!couches_pivotantes_possibles(partie_pour(serre), r.impression));
+}
+
+// Objets organiques d'une seule pièce : la stratégie par branches est
+// proposée, son G-code est accepté, et il laisse moins de parois dans le vide.
+void test_objets_organiques() {
+    const Reglages r = reglages_essai();
+    for (const auto& fabriquer : {essai::arbre_organique, essai::chassis_drone, essai::tuyau_en_y,
+                                  essai::arbre_double, essai::buisson}) {
+        const Maillage pose = poser_au_centre(fabriquer());
+        VERIFIER(ferme(pose));
+        const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
+        const Strategie* branches = trouver(strategies, TypeStrategie::par_branches);
+        VERIFIER(branches != nullptr);
+        if (!branches) {
+            continue;
+        }
+        VERIFIER(branches->parties.size() >= 3);
+        VERIFIER(branches->surplomb < 0.5 * strategies.front().surplomb);
+        const ResultatTranchage par_branches = trancher_strategie(*branches, r);
+        VERIFIER_ACCEPTE(par_branches.verification);
+        const ResultatTranchage classique = trancher_strategie(strategies.front(), r);
+        VERIFIER_ACCEPTE(classique.verification);
+        VERIFIER(par_branches.verification.longueur_dans_le_vide <=
+                 classique.verification.longueur_dans_le_vide + 1.0);
+    }
+    // Une branche qui porte elle-même une branche : la petite est rattachée à la
+    // grosse (pas au tronc) et elle est imprimée après elle.
+    const std::vector<Strategie> double_niveau = toutes_les_strategies(poser_au_centre(essai::arbre_double()), r);
+    if (const Strategie* branches = trouver(double_niveau, TypeStrategie::par_branches)) {
+        bool portee_par_une_branche = false;
+        for (std::size_t i = 0; i < branches->parties.size(); ++i) {
+            const int parent = branches->parties[i].parent;
+            VERIFIER(parent < static_cast<int>(i));
+            portee_par_une_branche = portee_par_une_branche || parent > 0;
+        }
+        VERIFIER(portee_par_une_branche);
+    }
+    // Un buisson : six branches autour du tronc, chacune a sa propre partie.
+    const std::vector<Strategie> buisson = toutes_les_strategies(poser_au_centre(essai::buisson()), r);
+    if (const Strategie* branches = trouver(buisson, TypeStrategie::par_branches)) {
+        VERIFIER(branches->parties.size() == 7);
+    }
+    // Un champignon n'a pas de branche : pas de stratégie par branches, mais
+    // une autre pose (retourné) qui demande moins de supports.
+    const std::vector<Strategie> champignon = toutes_les_strategies(poser_au_centre(essai::champignon()), r);
+    VERIFIER(trouver(champignon, TypeStrategie::par_branches) == nullptr);
+    VERIFIER(trouver(champignon, TypeStrategie::autre_pose) != nullptr);
+}
+
+// Course des axes : si un axe n'a pas assez de course pour l'inclinaison
+// voulue, la stratégie proposée s'adapte (inclinaison réduite, ou branche
+// gardée avec le tronc) et son G-code reste accepté.
+void test_courses() {
+    Reglages r = reglages_essai();
+    const Maillage pose = poser_au_centre(essai::arbre_plat());
+    const std::vector<Strategie> libres = toutes_les_strategies(pose, r);
+    const Strategie* libre = trouver(libres, TypeStrategie::par_branches);
+    VERIFIER(libre != nullptr);
+    if (!libre) {
+        return;
+    }
+    const ResultatTranchage sans_limite = trancher_strategie(*libre, r);
+    VERIFIER_ACCEPTE(sans_limite.verification);
+    // Plus grande valeur de X demandée à la machine, d'un côté ou de l'autre.
+    double x_max = 0.0;
+    std::istringstream lignes(sans_limite.gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        const auto ou = ligne.find(" X");
+        if (ligne.starts_with("G") && ou != std::string::npos) {
+            x_max = std::max(x_max, std::abs(std::stod(ligne.substr(ou + 2))));
+        }
+    }
+    VERIFIER(x_max > 10.0);
+    // La course en X est raccourcie de 3 mm de chaque côté.
+    r.machine.course_x_min = -(x_max - 3.0);
+    r.machine.course_x_max = x_max - 3.0;
+    // La stratégie d'avant enverrait la machine en butée : le vérificateur la refuse.
+    VERIFIER(!trancher_strategie(*libre, r).verification.valide());
+    // Celle qui est proposée maintenant tient compte de la course.
+    const std::vector<Strategie> serrees = toutes_les_strategies(pose, r);
+    const auto plus_forte = [](const Strategie& strategie) {
+        double inclinaison = 0.0;
+        for (const PartieImpression& partie : strategie.parties) {
+            inclinaison = std::max(inclinaison, partie.inclinaison);
+        }
+        return inclinaison;
+    };
+    const Strategie* adaptee = trouver(serrees, TypeStrategie::par_branches);
+    VERIFIER(adaptee != nullptr);
+    if (adaptee) {
+        VERIFIER_ACCEPTE(trancher_strategie(*adaptee, r).verification);
+        VERIFIER(plus_forte(*adaptee) < plus_forte(*libre) - 1.0);
+    }
+}
+
+// Couches courbes : le tronc d'abord, lisse ; puis les branches, imprimées
+// contre lui en couches qui épousent sa surface.
+void test_couches_courbes() {
+    const Reglages r = reglages_essai();
+    const Maillage brut = essai::arbre();
+    const Maillage pose = poser_au_centre(brut);
+    // Le modèle est recentré sur le plateau : l'axe du tronc, lui, est ici.
+    const BoiteEnglobante boite = calculer_boite(brut);
+    const Vec3 axe{-(boite.min.x + boite.max.x) / 2.0, -(boite.min.y + boite.max.y) / 2.0, 0.0};
+
+    // L'analyse sépare le tronc (ce qui tient debout tout seul) des deux branches.
+    const AnalyseBranches analyse = analyser_branches(pose);
+    VERIFIER(analyse.nombre_tiges() == 2);
+    VERIFIER(analyse.meres.size() == 2 && analyse.meres[0] == -1 && analyse.meres[1] == -1);
+    VERIFIER(analyse.tige_en(axe + Vec3{0.0, 0.0, 30.0}) == -1);
+    VERIFIER(analyse.zone_a(5.0).empty());
+    VERIFIER(!analyse.zone_a(30.0).empty());
+    // Dans une branche : la distance au tronc augmente d'environ 1 mm par mm.
+    const Vec3 dans_la_branche = axe + Vec3{0, 0, 22} + essai::direction(60.0, 0.0) * 16.0;
+    double distance = 0.0, pente = 0.0;
+    Vec3 normale;
+    VERIFIER(analyse.champ.valeur(dans_la_branche, distance) && distance > 3.0);
+    VERIFIER(analyse.champ.gradient(dans_la_branche, normale, pente) && pente > 0.8 && pente < 1.25);
+    VERIFIER(analyse.tige_en(dans_la_branche) >= 0);
+
+    // Les couches d'une branche : la première épouse le tronc (elle est
+    // presque verticale), elles ne sont pas planes, puis elles se redressent
+    // en travers de la branche.
+    const PlanBranches plan = preparer_branches(pose, r.impression.hauteur_couche, 0.45 * r.impression.largeur_extrusion);
+    VERIFIER(!plan.vide() && plan.tiges.size() == 2);
+    for (const std::vector<CoucheCourbe>& tige : plan.tiges) {
+        VERIFIER(tige.size() > 50);
+        if (tige.size() <= 50) {
+            continue;
+        }
+        const auto inclinaison = [](const CoucheCourbe& couche) {
+            return en_degres(std::acos(std::clamp(couche.w.z, -1.0, 1.0)));
+        };
+        VERIFIER(inclinaison(tige.front()) > 75.0);
+        VERIFIER(inclinaison(tige[tige.size() / 2]) < inclinaison(tige.front()) - 2.0);
+        double relief = 0.0;
+        for (std::size_t n = 2; n < 12; ++n) {
+            double bas = 1e9, haut = -1e9;
+            for (const Contour& contour : tige[n].contour) {
+                for (const PointEntier& sommet : contour) {
+                    Vec3 point;
+                    double hauteur = 0.0;
+                    if (poser_sur_la_surface(plan.analyse.champ, tige[n], en_mm(sommet), plan.dessus[tige[n].niveau],
+                                             hauteur, point)) {
+                        bas = std::min(bas, hauteur), haut = std::max(haut, hauteur);
+                    }
+                }
+            }
+            relief = std::max(relief, haut - bas);
+        }
+        VERIFIER(relief > 0.3);
+    }
+
+    // La stratégie : le tronc, puis une partie par branche.
+    const std::vector<Strategie> strategies = toutes_les_strategies(pose, r);
+    VERIFIER(strategies.front().type == TypeStrategie::classique);
+    const Strategie* courbes = trouver(strategies, TypeStrategie::couches_courbes);
+    VERIFIER(courbes != nullptr);
+    if (!courbes) {
+        return;
+    }
+    VERIFIER(courbes->parties.size() == 3 && courbes->parties.front().tronc_lisse);
+    VERIFIER(courbes->parties[1].couches_courbes && courbes->parties[1].parent == 0);
+    VERIFIER(courbes->surplomb < 5.0);
+
+    // D'ordinaire, le slicer ne propose que deux stratégies : la classique
+    // et les couches courbes. Les anciennes couches orientées n'y sont plus.
+    {
+        const std::vector<Strategie> proposees = proposer_strategies(pose, r);
+        VERIFIER(proposees.size() == 2);
+        VERIFIER(proposees.front().type == TypeStrategie::classique);
+        VERIFIER(proposees.back().type == TypeStrategie::couches_courbes);
+    }
+    // L'ondulation est proposée pour tout modèle. Pour un champignon (un
+    // chapeau tout autour d'un pied), le slicer ne sait pas encore découper
+    // le chapeau : l'ondulation n'a alors que le corps de la pièce, une
+    // remarque le dit, et son tranchage est celui du classique.
+    {
+        const std::vector<Strategie> pour_champignon = proposer_strategies(poser_au_centre(essai::champignon()), r);
+        VERIFIER(pour_champignon.size() == 2);
+        const Strategie* ondulation = trouver(pour_champignon, TypeStrategie::couches_courbes);
+        VERIFIER(ondulation != nullptr && ondulation->parties.size() == 1 && !ondulation->remarques.empty());
+        if (ondulation) {
+            const ResultatTranchage a_plat = trancher_strategie(*ondulation, r);
+            VERIFIER_ACCEPTE(a_plat.verification);
+            VERIFIER(a_plat.verification.extrusions_en_rotation == 0);
+        }
+    }
+
+    const ResultatTranchage resultat = trancher_strategie(*courbes, r);
+    VERIFIER_ACCEPTE(resultat.verification);
+    VERIFIER(resultat.verification.extrusions_en_rotation > 1000);
+    // Le choix de l'utilisateur : une branche imprimée à plat, avec le tronc.
+    // Il reste alors le tronc et une seule branche en couches courbes, et le
+    // tranchage est toujours accepté (la jonction se refait toute seule).
+    {
+        OptionsStrategie choix;
+        choix.a_plat.push_back(courbes->parties[1].repere);
+        const std::vector<Strategie> avec_choix = proposer_strategies(pose, r, choix);
+        const Strategie* reste = trouver(avec_choix, TypeStrategie::couches_courbes);
+        VERIFIER(reste != nullptr);
+        if (reste) {
+            VERIFIER(reste->parties.size() == 2);
+            const ResultatTranchage a_plat = trancher_strategie(*reste, r);
+            VERIFIER_ACCEPTE(a_plat.verification);
+            VERIFIER(a_plat.verification.extrusions_en_rotation > 500);
+        }
+    }
+    // La vérification « au fur et à mesure » trouve la même chose que la
+    // vérification d'un seul trait, même si le G-code est donné en deux
+    // morceaux ; et une copie prise en route repart bien du même point.
+    {
+        const std::string& g = resultat.gcode;
+        const std::size_t coupe = g.find('\n', g.size() / 2) + 1;
+        VerificationSuivie suivie(r);
+        suivie.lire(std::string_view(g).substr(0, coupe));
+        VerificationSuivie copie(suivie);
+        suivie.lire(std::string_view(g).substr(coupe));
+        copie.lire(std::string_view(g).substr(coupe));
+        const RapportVerification a = suivie.terminer(), b = copie.terminer();
+        VERIFIER(a.nombre_erreurs == 0 && b.nombre_erreurs == 0);
+        VERIFIER(a.extrusions == resultat.verification.extrusions && b.extrusions == a.extrusions);
+        VERIFIER(a.lignes == resultat.verification.lignes && b.lignes == a.lignes);
+        // Un mouvement fautif (une extrusion sans reprise du filament) est
+        // compté par la copie qui le lit, pas par l'autre.
+        VerificationSuivie fautive(r);
+        fautive.lire("G1 X10 Y10 Z0.2 F3000\nG1 E-1 F1800\nG1 X20 Y10 E0.5 F1500\n");
+        VERIFIER(fautive.erreurs() > 0);
+    }
+    // Bien moins de parois dans le vide qu'en 3 axes (il en reste un peu : la
+    // première couche d'une branche repose sur le remplissage aéré du tronc).
+    const ResultatTranchage classique = trancher(pose, r);
+    VERIFIER(resultat.verification.longueur_dans_le_vide < 15.0);
+    VERIFIER(classique.verification.longueur_dans_le_vide > 30.0);
+    // Le tronc est imprimé d'abord et en entier : chaque partie n'est commencée qu'une fois.
+    std::size_t debuts = 0;
+    std::istringstream lignes(resultat.gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        debuts += ligne.starts_with(";PARTIE:");
+    }
+    VERIFIER(debuts == 3);
+    // Le tronc est lisse : aucun de ses cordons ne sort de son rayon (6 mm),
+    // il n'a donc aucune amorce de branche.
+    double rayon = 0.0;
+    std::size_t couches_du_tronc = 0;
+    for (const CoucheApercu& couche : resultat.apercu) {
+        if (couche.partie != 0 || couche.z < 1.0) {
+            continue;  // (la première couche a une jupe, plus large)
+        }
+        ++couches_du_tronc;
+        for (const MouvementApercu& m : couche.mouvements) {
+            if (m.type != type_apercu_vide) {
+                rayon = std::max(rayon, std::hypot(m.x1 - axe.x, m.y1 - axe.y));
+            }
+        }
+    }
+    VERIFIER(couches_du_tronc > 250);
+    VERIFIER(rayon > 5.0 && rayon < 6.05);
+    // Là où une branche viendra, le tronc est laissé à nu : à cette hauteur,
+    // aucune de ses parois ne passe au cœur du pied de la branche (à plus
+    // d'un millimètre de son bord), mais son remplissage, lui, arrive
+    // jusque-là. Au bord du pied, le tronc garde sa peau partout où la
+    // branche ne le recouvre pas.
+    {
+        std::size_t parois_dans_la_zone = 0, parois = 0, couches_vues = 0;
+        for (const CoucheApercu& couche : resultat.apercu) {
+            if (couche.partie != 0 || couche.z < 28.0 || couche.z > 32.0) {
+                continue;
+            }
+            ++couches_vues;
+            const Polygones zone = decaler(analyse.zone_a(couche.z - 0.1), -1.0);
+            for (const MouvementApercu& m : couche.mouvements) {
+                if (m.type != 1 && m.type != 2) {
+                    continue;
+                }
+                ++parois;
+                for (const Contour& contour : zone) {
+                    parois_dans_la_zone += Clipper2Lib::PointInPolygon(en_unites(Point2{m.x1, m.y1}), contour) ==
+                                           Clipper2Lib::PointInPolygonResult::IsInside;
+                }
+            }
+        }
+        VERIFIER(couches_vues > 10 && parois > 100);
+        VERIFIER(parois_dans_la_zone == 0);
+    }
+
+    // Un arbre plus riche (une branche qui porte une branche, des formes
+    // arrondies) passe aussi ; un champignon, dont le chapeau fait tout le
+    // tour du pied, n'est pas découpé ainsi.
+    for (const auto& fabriquer : {essai::arbre_organique, essai::arbre_double}) {
+        const std::vector<Strategie> autres = toutes_les_strategies(poser_au_centre(fabriquer()), r);
+        const Strategie* autre = trouver(autres, TypeStrategie::couches_courbes);
+        VERIFIER(autre != nullptr);
+        if (autre) {
+            const ResultatTranchage tranche = trancher_strategie(*autre, r);
+            VERIFIER_ACCEPTE(tranche.verification);
+            VERIFIER(tranche.verification.longueur_dans_le_vide < 45.0);
+        }
+    }
+    if (const Strategie* ondulation =
+            trouver(toutes_les_strategies(poser_au_centre(essai::champignon()), r), TypeStrategie::couches_courbes)) {
+        // Le chapeau n'est d'ordinaire pas une branche en ondulation. Le choix
+        // tient à un seuil : selon le compilateur, il peut tomber de l'autre
+        // côté. Ce qui compte : au plus une partie de plus, et un G-code accepté.
+        VERIFIER(ondulation->parties.size() <= 2);
+        if (ondulation->parties.size() > 1) {
+            VERIFIER_ACCEPTE(trancher_strategie(*ondulation, r).verification);
+        }
+    }
+}
+
+// Peau courbe : une dernière passe suit la forme du dessus de la pièce.
+void test_peau_courbe() {
+    Reglages r = reglages_essai();
+    const Maillage champignon = essai::champignon();
+    const ResultatTranchage sans = trancher_classique(champignon, r);
+    VERIFIER_ACCEPTE(sans.verification);
+    VERIFIER(sans.gcode.find(";PEAU COURBE") == std::string::npos);
+
+    r.impression.peau_courbe = true;
+    const ResultatTranchage avec = trancher_classique(champignon, r);
+    VERIFIER_ACCEPTE(avec.verification);
+    const auto debut = avec.gcode.find(";PEAU COURBE");
+    VERIFIER(debut != std::string::npos);
+    if (debut != std::string::npos) {
+        // Pendant la passe, la buse monte et descend pour suivre le chapeau
+        // (plus d'un millimètre d'écart), et la tête s'incline pour rester
+        // d'aplomb sur la surface, sans dépasser la pente maximale.
+        double z_min = 1e9, z_max = -1e9, b_max = 0.0;
+        std::size_t cordons = 0;
+        std::istringstream lignes(avec.gcode.substr(debut));
+        for (std::string ligne; std::getline(lignes, ligne);) {
+            const auto z = ligne.find(" Z"), e = ligne.find(" E"), b = ligne.find(" B");
+            if (!ligne.starts_with("G1") || z == std::string::npos || e == std::string::npos) {
+                continue;
+            }
+            ++cordons;
+            z_min = std::min(z_min, std::stod(ligne.substr(z + 2)));
+            z_max = std::max(z_max, std::stod(ligne.substr(z + 2)));
+            if (b != std::string::npos) {
+                b_max = std::max(b_max, std::abs(std::stod(ligne.substr(b + 2))));
+            }
+        }
+        VERIFIER(cordons > 100);
+        VERIFIER(z_max - z_min > 1.0);
+        VERIFIER(b_max > 10.0 && b_max <= r.impression.peau_courbe_pente_max + 1e-6);
+        VERIFIER(avec.remarques.empty());
+    }
+    // La peau ne coûte presque rien : à peu près autant de filament.
+    VERIFIER(std::abs(avec.longueur_filament - sans.longueur_filament) < 0.1 * sans.longueur_filament);
+
+    // Un dessus plat est déjà lisse : pas de passe de peau.
+    ConstructeurMaillage plat;
+    essai::ajouter_cylindre(plat, {0, 0, 0}, {0, 0, 20}, 8.0);
+    const ResultatTranchage cylindre = trancher_classique(plat.terminer(), r);
+    VERIFIER_ACCEPTE(cylindre.verification);
+    VERIFIER(cylindre.gcode.find(";PEAU COURBE") == std::string::npos);
+
+    // Sans la distance pivot-buse, la tête ne peut pas s'incliner : la passe
+    // est faite buse verticale.
+    Reglages sans_pivot = r;
+    sans_pivot.machine.distance_pivot_buse.reset();
+    const ResultatTranchage vertical = trancher_classique(champignon, sans_pivot);
+    VERIFIER_ACCEPTE(vertical.verification);
+    VERIFIER(vertical.gcode.find(";PEAU COURBE") != std::string::npos);
+    VERIFIER(vertical.verification.extrusions_en_rotation == 0);
+
+    // Avec la stratégie par branches aussi, le dessus du tronc reçoit sa peau.
+    const std::vector<Strategie> strategies = toutes_les_strategies(poser_au_centre(essai::arbre_organique()), r);
+    if (const Strategie* branches = trouver(strategies, TypeStrategie::par_branches)) {
+        const ResultatTranchage resultat = trancher_strategie(*branches, r);
+        VERIFIER_ACCEPTE(resultat.verification);
+        VERIFIER(resultat.gcode.find(";PEAU COURBE") != std::string::npos);
+    }
+}
+
+}  // namespace
+
+// Lit les lignes de mouvement d'un G-code : X, Y, Z, B, C (chaque axe garde
+// sa valeur quand la ligne ne l'écrit pas) et E (0 s'il est absent).
+struct LigneLue {
+    double x = 0, y = 0, z = 0, b = 0, c = 0, e = 0;
+    bool complete = false;  // la ligne écrit les cinq axes
+};
+std::vector<LigneLue> lire_mouvements(const std::string& gcode) {
+    std::vector<LigneLue> lues;
+    LigneLue etat;
+    std::istringstream lignes(gcode);
+    for (std::string ligne; std::getline(lignes, ligne);) {
+        if (ligne.rfind("G0 ", 0) != 0 && ligne.rfind("G1 ", 0) != 0) {
+            continue;
+        }
+        int axes = 0;
+        etat.e = 0.0;
+        std::istringstream mots(ligne.substr(0, ligne.find(';')));
+        for (std::string mot; mots >> mot;) {
+            const double valeur = mot.size() > 1 ? std::atof(mot.c_str() + 1) : 0.0;
+            switch (mot[0]) {
+                case 'X': etat.x = valeur; ++axes; break;
+                case 'Y': etat.y = valeur; ++axes; break;
+                case 'Z': etat.z = valeur; ++axes; break;
+                case 'B': etat.b = valeur; ++axes; break;
+                case 'C': etat.c = valeur; ++axes; break;
+                case 'E': etat.e = valeur; break;
+                default: break;
+            }
+        }
+        if (axes == 0) {
+            continue;  // rétraction ou reprise sur place
+        }
+        etat.complete = axes == 5;
+        lues.push_back(etat);
+    }
+    return lues;
+}
+
+// Le contrat du G-code, version 1 : ce que le firmware ArtPrint attend.
+void test_contrat_gcode() {
+    const Maillage pose = poser_au_centre(essai::arbre());
+    Reglages r = reglages_essai();
+    r.machine.contrat_gcode = 1;
+    const double pivot = *r.machine.distance_pivot_buse;
+    const auto ondulation = [&](const Reglages& reglages) {
+        const std::vector<Strategie> proposees = proposer_strategies(pose, reglages);
+        const Strategie* choisie = trouver(proposees, TypeStrategie::couches_courbes);
+        return choisie ? trancher_strategie(*choisie, reglages) : ResultatTranchage{};
+    };
+
+    // 1. Les coordonnées. Le même tranchage, écrit dans l'ancien format
+    // (positions des axes) puis selon le contrat (position de la pointe) :
+    // pour chaque ligne, X perd pivot x sin(B), Z gagne pivot x (1 - cos(B)),
+    // et Y, B, C, E ne changent pas.
+    Reglages ancien = r;
+    ancien.machine.contrat_gcode = 0;
+    const ResultatTranchage avant = ondulation(ancien), apres = ondulation(r);
+    VERIFIER_ACCEPTE(avant.verification);
+    VERIFIER_ACCEPTE(apres.verification);
+    const std::vector<LigneLue> a = lire_mouvements(avant.gcode), b = lire_mouvements(apres.gcode);
+    VERIFIER(a.size() == b.size() && a.size() > 10000);
+    std::size_t differentes = 0, inclinees = 0, incompletes = 0;
+    double z_min = 1e9;
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        const double angle = en_radians(a[i].b);
+        const bool pareil = std::abs(b[i].x - (a[i].x - pivot * std::sin(angle))) < 0.0025 &&
+                            std::abs(b[i].z - (a[i].z + pivot * (1.0 - std::cos(angle)))) < 0.0025 &&
+                            std::abs(b[i].y - a[i].y) < 1e-9 && std::abs(b[i].b - a[i].b) < 1e-9 &&
+                            std::abs(b[i].c - a[i].c) < 1e-9 && std::abs(b[i].e - a[i].e) < 1e-9;
+        differentes += !pareil;
+        inclinees += std::abs(a[i].b) > 1.0;
+        incompletes += !b[i].complete;
+        z_min = std::min(z_min, b[i].z);
+    }
+    VERIFIER(differentes == 0);
+    VERIFIER(inclinees > 1000);    // l'essai porte bien sur des lignes où la tête penche
+    VERIFIER(incompletes == 0);    // chaque ligne de mouvement porte X Y Z B C
+    VERIFIER(z_min > -1e-3);       // la pointe ne passe jamais sous le plateau
+
+    // 2. Le début et la fin du fichier.
+    VERIFIER(apres.gcode.rfind("; CONTRAT_GCODE: 1\n", 0) == 0);
+    VERIFIER(apres.gcode.find("\nARTPRINT_PRINT_START BUSE=210 PLATEAU=0\n") != std::string::npos);
+    VERIFIER(apres.gcode.find("\nARTPRINT_PRINT_END\n") != std::string::npos);
+    VERIFIER(apres.gcode.find("G28") == std::string::npos && apres.gcode.find("M104") == std::string::npos &&
+             apres.gcode.find("M109") == std::string::npos && apres.gcode.find("M84") == std::string::npos &&
+             apres.gcode.find("G92") == std::string::npos && apres.gcode.find("\nG90") == std::string::npos);
+    VERIFIER(apres.gcode.find(";PARTIE:") != std::string::npos && apres.gcode.find(";COUCHE:") != std::string::npos &&
+             apres.gcode.find(";TYPE:") != std::string::npos && apres.gcode.find(";Z:") != std::string::npos);
+    VERIFIER(avant.gcode.find("G28") != std::string::npos && avant.gcode.find("ARTPRINT") == std::string::npos);
+
+    // 3. Les limites du firmware, avec les réglages d'office : B ne dépasse
+    // jamais 50°, C reste entre -360° et +360°, et le tranchage est accepté.
+    Reglages firmware = r;
+    firmware.machine.b_inclinaison_max = Reglages{}.machine.b_inclinaison_max;
+    firmware.machine.c_min = Reglages{}.machine.c_min;
+    firmware.machine.c_max = Reglages{}.machine.c_max;
+    VERIFIER(firmware.machine.b_inclinaison_max == 50.0 && firmware.machine.c_min && *firmware.machine.c_min == -360.0 &&
+             firmware.machine.c_max && *firmware.machine.c_max == 360.0 && firmware.machine.contrat_gcode == 1);
+    const Maillage buisson = poser_au_centre(essai::buisson());
+    for (const Maillage* modele : {&pose, &buisson}) {
+        const std::vector<Strategie> proposees = proposer_strategies(*modele, firmware);
+        const Strategie* choisie = trouver(proposees, TypeStrategie::couches_courbes);
+        VERIFIER(choisie != nullptr);
+        if (!choisie) {
+            continue;
+        }
+        const ResultatTranchage limite = trancher_strategie(*choisie, firmware);
+        VERIFIER_ACCEPTE(limite.verification);
+        double b_max = 0.0, c_min = 0.0, c_max = 0.0, saut = 0.0, c_avant = 0.0;
+        for (const LigneLue& ligne : lire_mouvements(limite.gcode)) {
+            b_max = std::max(b_max, std::abs(ligne.b));
+            c_min = std::min(c_min, ligne.c);
+            c_max = std::max(c_max, ligne.c);
+            saut = std::max(saut, std::abs(ligne.c - c_avant));
+            c_avant = ligne.c;
+        }
+        VERIFIER(b_max <= 50.0 + 1e-6);
+        VERIFIER(c_min >= -360.0 - 1e-6 && c_max <= 360.0 + 1e-6);
+        VERIFIER(saut <= 180.0);  // le plateau ne fait jamais plus d'un demi-tour d'un coup
+    }
+
+    // 4. Le vérificateur refuse ce que le firmware refuserait.
+    const std::string debut = "; CONTRAT_GCODE: 1\nARTPRINT_PRINT_START BUSE=210 PLATEAU=0\n";
+    VERIFIER_ACCEPTE(verifier_gcode_texte(debut + "G0 X0 Y0 Z50 B50 C0 F600\nARTPRINT_PRINT_END\n", firmware));
+    VERIFIER(verifier_gcode_texte(debut + "G0 X0 Y0 Z50 B60 C0 F600\n", firmware).contient(TypeErreur::limite_b));
+    VERIFIER(verifier_gcode_texte(debut + "G0 X0 Y0 Z50 B0 C170 F600\nG0 X0 Y0 Z50 B0 C300 F600\nG0 X0 Y0 Z50 B0 C400 F600\n",
+                                  firmware).contient(TypeErreur::limite_c));
+    // Contrat 1 : Z est la hauteur de la pointe, même tête inclinée ; elle ne passe pas sous le plateau.
+    VERIFIER_ACCEPTE(verifier_gcode_texte(debut + "G0 X0 Y0 Z2 B45 C0 F600\n", firmware));
+    VERIFIER(verifier_gcode_texte(debut + "G0 X0 Y0 Z-1 B45 C0 F600\n", firmware).contient(TypeErreur::sous_plateau));
+
+    // 5. La durée tient compte des vitesses de rotation du firmware (B à
+    // 5 °/s, C à 10 °/s) : avec des axes de rotation dix fois plus lents,
+    // la même impression est estimée plus longue.
+    Reglages lent = r;
+    lent.machine.vitesse_b_max = 0.5;
+    lent.machine.vitesse_c_max = 1.0;
+    VERIFIER(ondulation(lent).duree_estimee > apres.duree_estimee + 30.0);
+}
+
+// La tête peut s'incliner de plus de 90° si les réglages de la machine le
+// permettent : la buse pointe alors vers le haut et imprime par en dessous.
+void test_au_dela_de_90() {
+    const Maillage pose = poser_au_centre(essai::v03_branche_tombante());
+    const auto ondulation = [&](const Reglages& reglages) {
+        const std::vector<Strategie> proposees = proposer_strategies(pose, reglages);
+        const Strategie* choisie = trouver(proposees, TypeStrategie::couches_courbes);
+        return choisie ? trancher_strategie(*choisie, reglages) : ResultatTranchage{};
+    };
+    const auto b_max = [](const ResultatTranchage& resultat, double& z_min) {
+        double plus_grand = 0.0;
+        z_min = 1e9;
+        for (const LigneLue& ligne : lire_mouvements(resultat.gcode)) {
+            plus_grand = std::max(plus_grand, std::abs(ligne.b));
+            z_min = std::min(z_min, ligne.z);
+        }
+        return plus_grand;
+    };
+    Reglages r = reglages_essai();
+    r.machine.contrat_gcode = 1;
+
+    // Limite à 90° : la branche qui retombe est imprimée, la tête ne dépasse pas 90°.
+    double z_min = 0.0;
+    const ResultatTranchage a_90 = ondulation(r);
+    VERIFIER_ACCEPTE(a_90.verification);
+    VERIFIER(b_max(a_90, z_min) <= 90.0 + 1e-6);
+
+    // Limite à 110° : la tête dépasse 90° sans jamais dépasser 110°, la pointe
+    // reste au-dessus du plateau, et le vérificateur accepte le fichier.
+    r.machine.b_min = -110.0;
+    r.machine.b_max = 110.0;
+    r.machine.b_inclinaison_max = 110.0;
+    r.machine.b_limite_pres_plateau = 110.0;
+    const ResultatTranchage a_110 = ondulation(r);
+    VERIFIER_ACCEPTE(a_110.verification);
+    const double atteint = b_max(a_110, z_min);
+    VERIFIER(atteint > 95.0 && atteint <= 110.0 + 1e-6);
+    VERIFIER(z_min >= 0.0);
+    // Aucune remarque de limite : la machine suit les couches.
+    for (const std::string& remarque : a_110.remarques) {
+        VERIFIER(remarque.find("b_inclinaison_max") == std::string::npos);
+    }
+
+    // Le même fichier, relu avec une machine limitée à 90° : refusé.
+    Reglages etroit = r;
+    etroit.machine.b_inclinaison_max = 90.0;
+    const RapportVerification refus = verifier_gcode_texte(a_110.gcode, etroit);
+    VERIFIER(std::any_of(refus.erreurs.begin(), refus.erreurs.end(),
+                         [](const ErreurVerification& e) { return e.type == TypeErreur::limite_b; }));
+}
+
+// Zones orientées choisies par l'utilisateur : à partir d'un point du
+// modèle, la matière est imprimée dans une autre direction.
+void test_zones_orientees() {
+    ConstructeurMaillage c;
+    essai::ajouter_cylindre(c, {0, 0, 0}, {0, 0, 30}, 10.0, 64);
+    const Maillage cylindre = c.terminer();
+    Reglages r = reglages_essai();
+    r.machine.contrat_gcode = 1;
+    const auto b_extremes = [](const ResultatTranchage& resultat) {
+        std::pair<double, double> extremes{0.0, 0.0};
+        for (const LigneLue& ligne : lire_mouvements(resultat.gcode)) {
+            extremes.first = std::min(extremes.first, ligne.b);
+            extremes.second = std::max(extremes.second, ligne.b);
+        }
+        return extremes;
+    };
+
+    // Le haut du cylindre à 30° : deux parties, le bas à plat puis le haut incliné.
+    const std::vector<ZoneOrientee> une = {{{0, 0, 15}, 30.0, 0.0}};
+    const Strategie par_zones = strategie_par_zones(cylindre, r, une);
+    VERIFIER(par_zones.parties.size() == 2);
+    VERIFIER(proche(par_zones.parties[0].inclinaison, 0.0, 1e-6) && proche(par_zones.parties[1].inclinaison, 30.0, 1e-6));
+    VERIFIER(par_zones.parties[1].parent == 0);
+    VERIFIER(proche(par_zones.parties[0].volume + par_zones.parties[1].volume, volume_maillage(cylindre), 5.0));
+    const ResultatTranchage incline = trancher_strategie(par_zones, r);
+    VERIFIER_ACCEPTE(incline.verification);
+    VERIFIER(proche(std::max(-b_extremes(incline).first, b_extremes(incline).second), 30.0, 0.01));
+
+    // La direction suit l'azimut demandé.
+    const Vec3 d = direction_de_zone({{0, 0, 0}, 30.0, 90.0});
+    VERIFIER(proche(d.x, 0.0, 1e-9) && proche(d.y, 0.5, 1e-9) && proche(d.z, std::sqrt(0.75), 1e-9));
+
+    // Deux zones l'une au-dessus de l'autre : la seconde est portée par la première.
+    const Strategie deux = strategie_par_zones(cylindre, r, {{{0, 0, 8}, 20.0, 0.0}, {{0, 0, 20}, 35.0, 180.0}});
+    VERIFIER(deux.parties.size() == 3 && deux.parties[2].parent == 1);
+    VERIFIER_ACCEPTE(trancher_strategie(deux, r).verification);
+
+    // Une tête qui ne penche que de 30° d'un côté : la zone à 40° est imprimée
+    // de l'autre côté (le plateau tourne), jamais au-delà de la butée.
+    Reglages un_cote = r;
+    un_cote.machine.b_min = -30.0;
+    const ResultatTranchage tourne = trancher_strategie(strategie_par_zones(cylindre, un_cote, {{{0, 0, 15}, 40.0, 180.0}}), un_cote);
+    VERIFIER_ACCEPTE(tourne.verification);
+    VERIFIER(b_extremes(tourne).first >= -30.0 - 1e-6 && proche(b_extremes(tourne).second, 40.0, 0.01));
+
+    // Refus avec un message : un point hors du modèle, une inclinaison que la
+    // machine ne sait pas prendre, une zone trop inclinée qui descend au plateau.
+    const auto refuse = [&](const std::vector<ZoneOrientee>& zones, const char* mot) {
+        try {
+            strategie_par_zones(cylindre, r, zones);
+        } catch (const std::runtime_error& erreur) {
+            return std::string(erreur.what()).find(mot) != std::string::npos;
+        }
+        return false;
+    };
+    VERIFIER(refuse({{{80, 0, 15}, 30.0, 0.0}}, "ne détache rien"));
+    VERIFIER(refuse({{{0, 0, 15}, 150.0, 0.0}}, "la machine ne dépasse pas"));
+    VERIFIER(refuse({{{0, 0, 15}, 80.0, 0.0}}, "Solution"));
+}
+
+// Encombrement simplifié de la tête : la limite d'inclinaison dépend de la
+// hauteur, d'après le bloc qui part du pivot.
+void test_encombrement_tete() {
+    Reglages r = reglages_essai();
+    r.machine.distance_pivot_buse = 55.0;
+    r.machine.b_min = -30.0;
+    r.machine.b_max = 110.0;
+    r.machine.b_inclinaison_max = 110.0;
+    r.machine.hauteur_bascule_b.reset();
+    // Sans encombrement : l'ancienne règle (limite près du plateau partout).
+    VERIFIER(!encombrement_tete_connu(r.machine));
+    VERIFIER(proche(inclinaison_permise(r.machine, 100.0), r.machine.b_limite_pres_plateau, 1e-9));
+    r.machine.tete_demi_largeur = 10.0;
+    r.machine.tete_hauteur = 30.0;
+    VERIFIER(encombrement_tete_connu(r.machine));
+    // Tête verticale : rien ne descend sous la pointe.
+    VERIFIER(proche(point_bas_de_la_tete(r.machine, 0.0), 0.0, 1e-9));
+    // À 90° : la tête descend de sa demi-largeur.
+    VERIFIER(proche(point_bas_de_la_tete(r.machine, 90.0), -10.0, 1e-6));
+    // À 110° : le bout du bloc est le plus bas.
+    const double a = 110.0 * std::numbers::pi / 180.0;
+    VERIFIER(proche(point_bas_de_la_tete(r.machine, 110.0), 85.0 * std::cos(a) - 10.0 * std::sin(a), 1e-6));
+    // Au ras du plateau : la limite près du plateau, pas plus.
+    VERIFIER(proche(inclinaison_permise(r.machine, 0.3), r.machine.b_limite_pres_plateau, 1e-9));
+    // Plus haut, la limite grandit avec la hauteur, jusqu'à la butée.
+    const double milieu = inclinaison_permise(r.machine, 20.0);
+    VERIFIER(milieu >= 90.0 && milieu < 110.0);
+    VERIFIER(inclinaison_permise(r.machine, 30.0) > milieu);
+    VERIFIER(proche(inclinaison_permise(r.machine, 60.0), 110.0, 1e-9));
+    // Au-delà de la limite près du plateau, la tête reste à la marge de sécurité du plateau.
+    for (const double z : {13.0, 20.0, 35.0, 60.0}) {
+        VERIFIER(z + point_bas_de_la_tete(r.machine, inclinaison_permise(r.machine, z)) >= r.machine.marge_securite - 1e-9);
+    }
+}
+
+int main() {
+    test_encombrement_tete();
+    test_zones_orientees();
+    test_decoupe();
+    test_squelette();
+    test_cinematique();
+    test_strategies(essai::arbre(), "arbre en plusieurs volumes");
+    test_strategies(essai::arbre_plat(), "arbre d'une seule pièce");
+    test_b_vertical();
+    test_couches_pivotantes();
+    test_objets_organiques();
+    test_courses();
+    test_couches_courbes();
+    test_contrat_gcode();
+    test_au_dela_de_90();
+    test_peau_courbe();
+    if (echecs == 0) {
+        std::cout << "Tests du 5 axes : tout est correct.\n";
+        return 0;
+    }
+    std::cerr << echecs << " vérification(s) en échec.\n";
+    return 1;
+}

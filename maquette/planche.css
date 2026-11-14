@@ -1,0 +1,43 @@
+/* ArtPrint Slicer - licence AGPL v3
+   Mise en page de la planche de design. Aucune valeur en dur : tout vient de tokens.css. */
+body { overflow: auto; height: auto; display: block; }
+.planche-tete {
+  display: flex; align-items: center; gap: var(--e-4); flex-wrap: wrap; min-height: calc(var(--h-barre-onglets) + var(--e-2));
+  background: var(--c-barre); color: var(--c-barre-texte); padding-block: var(--e-2);
+  padding-left: max(var(--e-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--e-4), env(safe-area-inset-right, 0px));
+}
+.planche-titre { color: var(--c-barre-texte-2); flex: 1; }
+.planche-tete .segments { border-color: var(--c-texte-2); }
+.planche-tete .segments button { background: var(--c-barre-2); color: var(--c-barre-texte); padding: 0 var(--e-3); border-color: var(--c-texte-2); }
+.planche-tete .segments button.actif { background: var(--c-accent); color: var(--c-sur-accent); }
+.planche { display: grid; gap: var(--e-8); padding-block: var(--e-6);
+  padding-left: max(var(--e-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--e-4), env(safe-area-inset-right, 0px)); }
+.planche h2 { margin: 0 0 var(--e-3); font-size: var(--t-16); font-weight: var(--g-fort); }
+.planche h3 { margin: var(--e-4) 0 var(--e-2); font-size: var(--t-11); font-weight: var(--g-fort); letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-texte-2); }
+.planche-intro, .note { margin: 0; color: var(--c-texte-2); max-width: 70ch; }
+.note { margin-bottom: var(--e-3); font-size: var(--t-12); }
+.logos { display: flex; flex-wrap: wrap; gap: var(--e-4); margin-bottom: var(--e-2); }
+.logo-fond { display: flex; align-items: center; gap: var(--e-2); padding: var(--e-5) var(--e-6); border: var(--bord); border-radius: var(--r-2); }
+.logo-fond.sombre { background: var(--c-barre); color: var(--c-barre-texte); }
+.logo-fond.clair { background: var(--c-panneau); color: var(--c-texte); }
+.logo-fond .logo { height: calc(var(--h-logo) * 2); }
+.logo-fond .nom { font-weight: var(--g-logo); font-size: calc(var(--t-16) * 2); }
+.logo.sur-clair .logo-a { fill: var(--c-texte); }
+.nuancier { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--l-champ) * 1.75), 1fr)); gap: var(--e-2); }
+.nuance { border: var(--bord); border-radius: var(--r-1); overflow: hidden; background: var(--c-panneau); min-width: 0; }
+.nuance .couleur { height: calc(var(--e-8) + var(--e-2)); border-bottom: var(--bord); display: flex; align-items: end; justify-content: end; padding: var(--e-1) var(--e-2); font-size: var(--t-11); font-weight: var(--g-fort); }
+.nuance .nom, .nuance .hex { display: block; padding: 0 var(--e-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nuance .nom { padding-top: var(--e-1); font-size: var(--t-12); }
+.nuance .hex { padding-bottom: var(--e-1); font-size: var(--t-11); color: var(--c-texte-2); }
+.typo { display: grid; gap: var(--e-2); }
+.typo div { display: flex; align-items: baseline; gap: var(--e-4); flex-wrap: wrap; border-bottom: var(--bord); padding-bottom: var(--e-2); }
+.typo .mesure { width: calc(var(--l-champ) * 1.5); font-size: var(--t-11); color: var(--c-texte-2); flex: none; }
+.formes { display: grid; gap: var(--e-3); }
+.formes .ligne { display: flex; align-items: center; gap: var(--e-3); flex-wrap: wrap; }
+.formes .mesure { width: calc(var(--l-champ) * 1.5); font-size: var(--t-12); color: var(--c-texte-2); flex: none; }
+.formes .barre { height: var(--e-3); background: var(--c-accent); }
+.formes .boite { width: calc(var(--e-8) * 2); height: var(--e-8); background: var(--c-champ); border: var(--bord-fort); display: grid; place-items: center; font-size: var(--t-11); color: var(--c-texte-2); }
+.icones { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--l-champ) * 1.5), 1fr)); gap: var(--e-2); }
+.icones .case-icone { border: var(--bord); border-radius: var(--r-1); background: var(--c-panneau); padding: var(--e-2); display: grid; gap: var(--e-1); min-width: 0; }
+.icones .tailles { display: flex; align-items: center; gap: var(--e-3); color: var(--c-texte); }
+.icones .nom { font-size: var(--t-11); color: var(--c-texte-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

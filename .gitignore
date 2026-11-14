@@ -9,3 +9,9 @@
 
 # Dossier de compilation (généré automatiquement)
 /build/
+
+# Réponses préenregistrées de la maquette (fabriquées par maquette/generer_donnees.py)
+/maquette/donnees/
+
+# Vignette de l'imprimante, dessinée à partir du STEP privé
+/maquette/prive/

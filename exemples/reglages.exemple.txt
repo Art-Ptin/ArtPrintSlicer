@@ -1,0 +1,135 @@
+# ArtPrint Slicer - exemple de fichier de réglages.
+# Copier ce fichier, puis remplacer les valeurs par celles de la machine.
+# Une ligne par réglage : nom = valeur. Le signe # commence un commentaire.
+# La virgule ou le point sont acceptés pour les décimales.
+
+# --- Machine ---------------------------------------------------------------
+
+rayon_plateau = 150
+hauteur_impression = 260
+
+# Distance entre le pivot B et la pointe de la buse, en mm.
+# À MESURER sur la machine, puis enlever le # devant la ligne.
+# distance_pivot_buse =
+
+# Axe autour duquel la tête s'incline : X ou Y. À confirmer sur la machine.
+axe_pivot_b = Y
+# Sens des axes : 1 ou -1. À confirmer sur la machine.
+sens_b = 1
+sens_c = 1
+
+# Position X et Y (machine) du centre du plateau.
+centre_plateau_x = 0
+centre_plateau_y = 0
+
+# Courses des axes X, Y, Z en mm, dans les coordonnées du G-code.
+# À MESURER sur la machine. Sans ces réglages, les courses ne sont pas vérifiées.
+# course_x_min =
+# course_x_max =
+# course_y_min =
+# course_y_max =
+# course_z_min =
+# course_z_max =
+
+# Butées de B, en degrés.
+# Elles peuvent dépasser 90 (110 par exemple) si la mécanique le permet :
+# la buse pointe alors vers le haut et imprime par en dessous.
+b_min = -90
+b_max = 90
+# Inclinaison maximale de B acceptée par le firmware, en degrés. Le slicer ne
+# la dépasse jamais ; une partie qui demande plus est signalée avant l'export.
+b_inclinaison_max = 50
+# Vitesses de rotation maximales du firmware (degrés par seconde), pour
+# estimer la durée.
+vitesse_b_max = 5
+vitesse_c_max = 10
+# Contrat du G-code. 1 : le fichier donne la position de la pointe de la buse
+# et utilise les macros ARTPRINT_PRINT_START et ARTPRINT_PRINT_END (firmware
+# ArtPrint). 0 : ancien format, positions des axes.
+contrat_gcode = 1
+# Inclinaison maximale près du plateau, en degrés.
+b_limite_pres_plateau = 55
+# Hauteur (mm) au-dessus de laquelle B peut dépasser cette limite.
+# À MESURER sur la machine. Sans ce réglage, la limite s'applique partout.
+# hauteur_bascule_b =
+# Encombrement simplifié de la tête : un bloc qui part du pivot et s'étend du
+# côté opposé à la buse. À MESURER sur la machine. Avec ces deux réglages (et
+# la distance pivot-buse), le slicer calcule lui-même jusqu'où la tête peut
+# s'incliner à chaque hauteur sans toucher le plateau : la hauteur de bascule
+# ci-dessus ne sert alors plus. Par prudence, toute la tête est comptée à la
+# largeur de ce bloc. La limite près du plateau reste permise partout.
+# Demi-largeur du bloc, de chaque côté de l'axe de la buse, en mm.
+# tete_demi_largeur =
+# Longueur du bloc au-delà du pivot, en mm.
+# tete_hauteur =
+# Pivot continu : sur une branche courbe, la tête pivote pendant qu'elle
+# imprime (1). Avec 0, elle pivote entre deux couches, sans extruder.
+pivot_continu = 1
+
+# Butées de C, en degrés. Avant d'en atteindre une, le slicer retire le
+# filament, relève la buse, déroule le plateau et reprend.
+c_min = -360
+c_max = 360
+
+# Collisions avec la vraie forme de l'imprimante.
+# Le modèle de machine se fabrique à partir du fichier STEP (qui reste privé) :
+#   python outils/convertir_machine.py machine/imprimante.step machine/groupes.txt machine/machine.apm
+# Un nom sans dossier est cherché à côté de ce fichier de réglages.
+# Sans ce réglage, les collisions avec la machine ne sont pas vérifiées.
+# modele_machine = machine.apm
+# Distance minimale à garder entre la tête, le bras et tout le reste, en mm.
+marge_securite = 2
+# Rayon autour de la pointe de la buse où le contact avec la matière est normal, en mm.
+zone_buse = 5
+# Marge propre à la buse, qui travaille au ras de la matière, en mm.
+marge_buse = 0,2
+
+# --- Impression ------------------------------------------------------------
+
+# Cordon déposé, en mm.
+largeur_extrusion = 0,45
+# Peau courbe : une dernière passe suit la forme du dessus de la pièce pour
+# effacer les marches d'escalier (1 : oui, 0 : non). L'intérieur reste en
+# couches planes.
+peau_courbe = 0
+# Pente la plus raide suivie par cette passe, en degrés.
+peau_courbe_pente_max = 30
+hauteur_couche = 0,2
+hauteur_premiere_couche = 0,2
+diametre_filament = 1,75
+# Multiplicateur de matière (1 = normal).
+debit = 1
+
+# Coque de la pièce.
+nombre_parois = 2
+couches_dessus = 4
+couches_dessous = 3
+# Remplissage intérieur, en pourcentage (0 = creux, 100 = plein).
+densite_remplissage = 15
+
+# Jupe : boucles tracées autour de la pièce pour amorcer la buse (0 = aucune).
+jupe_boucles = 1
+jupe_distance = 5
+
+# Vitesses, en mm/s.
+vitesse_paroi_externe = 25
+vitesse_paroi_interne = 40
+vitesse_remplissage = 60
+vitesse_premiere_couche = 20
+vitesse_a_vide = 120
+
+# Rétraction avant chaque déplacement à vide. Longueur à régler sur la machine.
+retraction_longueur = 2
+retraction_vitesse = 40
+# La buse monte de cette hauteur (mm) pendant les déplacements à vide.
+levee_z = 0,2
+
+# Températures, en °C. Plateau à 0 : pas de plateau chauffant.
+temperature_buse = 210
+temperature_plateau = 0
+# Ventilateur de pièce à partir de la 2e couche : 1 = oui, 0 = non.
+ventilation = 1
+
+# Préparation avant l'impression (chauffe, palpage du plateau), en minutes.
+# Ajoutée au temps d'impression dans les estimations.
+duree_preparation = 5

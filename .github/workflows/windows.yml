@@ -1,0 +1,38 @@
+# Compile ArtPrint Slicer sous Windows avec Visual Studio, lance les tests
+# et fabrique l'installateur. Le Setup.exe est joint à chaque exécution.
+name: Windows
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Installer NSIS (outil qui fabrique l'installateur)
+        run: choco install nsis --no-progress -y
+
+      - name: Préparer la compilation
+        run: cmake -S . -B build -A x64
+
+      - name: Compiler
+        run: cmake --build build --config Release --parallel
+
+      - name: Lancer les tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Fabriquer l'installateur
+        run: cmake --build build --config Release --target installateur
+
+      - name: Joindre l'installateur
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtPrintSlicer-Setup
+          path: build/ArtPrintSlicer-Setup-*.exe
+          if-no-files-found: error

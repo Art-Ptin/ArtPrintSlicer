@@ -1,0 +1,22 @@
+ArtPrint Slicer utilise les composants suivants, chacun sous sa propre licence.
+
+Clipper2 - calculs sur les polygones
+  Copyright (c) Angus Johnson. Licence Boost Software License 1.0.
+  https://github.com/AngusJohnson/Clipper2
+
+JSON for Modern C++ (nlohmann/json) - lecture et écriture du JSON
+  Copyright (c) Niels Lohmann. Licence MIT.
+  https://github.com/nlohmann/json
+
+three.js - affichage 3D de l'interface
+  Copyright (c) three.js authors. Licence MIT.
+  https://github.com/mrdoob/three.js
+
+Microsoft Edge WebView2 SDK - affichage de l'interface sous Windows
+  (fichiers WebView2.h et WebView2Loader.dll)
+  Copyright (C) Microsoft Corporation. Licence de type BSD, fournie avec le
+  paquet « Microsoft.Web.WebView2 ».
+  https://www.nuget.org/packages/Microsoft.Web.WebView2
+
+Le texte complet des licences de Clipper2, de nlohmann/json et de three.js
+est fourni dans le dossier « licences » du logiciel installé.

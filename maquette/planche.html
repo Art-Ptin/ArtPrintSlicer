@@ -1,0 +1,52 @@
+<title>Planche de design ArtPrint</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="polices.css">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="planche.css">
+
+<header class="planche-tete">
+  <div class="marque" id="logo-barre"></div>
+  <span class="planche-titre">Planche de design</span>
+  <div class="segments" role="group" aria-label="Thème">
+    <button id="theme-systeme" class="actif">Système</button>
+    <button id="theme-clair">Clair</button>
+    <button id="theme-sombre">Sombre</button>
+  </div>
+</header>
+
+<main class="planche">
+  <p class="planche-intro">Toutes les valeurs de cette page sont lues dans <b>tokens.css</b>, le fichier unique de variables de design. Changer une valeur là-bas change toute l'interface.</p>
+
+  <section aria-labelledby="s-logo">
+    <h2 id="s-logo">Logo</h2>
+    <div class="logos">
+      <div class="logo-fond sombre" id="logo-sombre"></div>
+      <div class="logo-fond clair" id="logo-clair"></div>
+    </div>
+    <p class="note">Symbole redessiné d'après ta planche de logos, en attendant tes fichiers d'origine.</p>
+  </section>
+
+  <section aria-labelledby="s-couleurs">
+    <h2 id="s-couleurs">Couleurs</h2>
+    <div id="couleurs"></div>
+  </section>
+
+  <section aria-labelledby="s-typo">
+    <h2 id="s-typo">Typographie</h2>
+    <div id="typo" class="typo"></div>
+  </section>
+
+  <section aria-labelledby="s-formes">
+    <h2 id="s-formes">Espacements, tailles et formes</h2>
+    <div id="formes" class="formes"></div>
+  </section>
+
+  <section aria-labelledby="s-icones">
+    <h2 id="s-icones">Icônes</h2>
+    <p class="note">Jeu dessiné pour ArtPrint : trait de 1,5 px sur une grille de 24, affiché en 16, 20 et 24 px.</p>
+    <div id="icones" class="icones"></div>
+  </section>
+</main>
+<script type="module" src="planche.js"></script>

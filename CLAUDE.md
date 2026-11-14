@@ -11,7 +11,7 @@
 
 ## La machine
 
-- La tête s'incline en B autour d'un pivot. Le plateau rond (rayon 150 mm) tourne en C. Hauteur d'impression 281 mm.
+- La tête s'incline en B autour d'un pivot. Le plateau rond (rayon 150 mm) tourne en C. Hauteur d'impression 260 mm.
 - La distance entre le pivot B et la pointe de la buse est un réglage, à mesurer sur la machine. Aucune valeur fixe dans le code.
 - Firmware Klipper sur carte BTT Octopus, avec B et C déclarés comme axes G-code. Format des lignes : G0/G1 X Y Z B C F, angles en degrés.
 - Objectif : 5 axes continu, B et C peuvent bouger pendant l'extrusion (Unlayered ne fait que du 3+2).
@@ -67,7 +67,7 @@ Les pièces du STEP sont séparées en groupes qui bougent ensemble. Pour chaque
 ### Réglages
 
 - **Marge de sécurité** : réglable, **2 mm** par défaut.
-- **Inclinaison de B** : limitée à **55°** près du plateau, jusqu'à **90°** plus haut. La **hauteur de bascule** entre les deux limites est un réglage (valeur à mesurer sur la machine, pas de valeur inventée dans le code).
+- **Inclinaison de B** : limitée à **55°** près du plateau, jusqu'à la limite de la machine plus haut (réglages « butées de B » et « inclinaison maximale de B » ; au-delà de 90°, la buse imprime par en dessous). La **hauteur de bascule** entre les deux limites est un réglage (valeur à mesurer sur la machine, pas de valeur inventée dans le code).
 - **Chemin du fichier STEP** : réglage (voir plus haut).
 
 ### En cas de collision

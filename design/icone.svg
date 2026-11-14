@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Icône d'ArtPrint Slicer : le A et son anneau, sur un carré arrondi graphite. -->
+  <rect width="256" height="256" rx="52" fill="#15181b"/>
+  <g transform="translate(128 128) scale(0.84) translate(-141 -119)">
+    <defs>
+      <mask id="a" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+        <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+        <clipPath id="devant"><rect x="10" y="156" width="262" height="68"/></clipPath>
+        <ellipse cx="141" cy="156" rx="119.25" ry="30.25" fill="none" stroke="#000" stroke-width="31.5" clip-path="url(#devant)"/>
+      </mask>
+      <mask id="anneau" maskUnits="userSpaceOnUse" x="10" y="14" width="262" height="210">
+        <rect x="10" y="14" width="262" height="210" fill="#fff"/>
+        <clipPath id="derriere"><rect x="10" y="14" width="262" height="142"/></clipPath>
+        <path d="M100 22 125 18 246 220H195L124.6 85.5 105.7 220H61.6z" fill="#000" stroke="#000" stroke-width="16" clip-path="url(#derriere)"/>
+      </mask>
+    </defs>
+    <path d="M100 22 125 18 246 220H195L124.6 85.5 105.7 220H61.6z" fill="#ffffff" mask="url(#a)"/>
+    <ellipse cx="141" cy="156" rx="119.25" ry="30.25" fill="none" stroke="#e4572e" stroke-width="15.5" mask="url(#anneau)"/>
+  </g>
+</svg>

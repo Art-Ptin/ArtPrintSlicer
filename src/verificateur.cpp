@@ -1,0 +1,793 @@
+// ArtPrint Slicer - licence AGPL v3
+//
+// Comment la matière est contrôlée :
+//   Chaque extrusion est rejouée par petits pas. À chaque pas, on regarde
+//   deux choses avant de déposer le cordon dans la grille de matière :
+//     - « dans » : le cœur du nouveau cordon est-il déjà rempli ? Un court
+//       passage est normal (deux lignes qui se croisent, un contour qui se
+//       referme) ; au-delà de la tolérance, c'est une erreur.
+//     - « sous » : y a-t-il de la matière juste au-dessus de la pointe, le
+//       long de la buse ? Si oui, la buse devrait traverser la pièce.
+//   Le cordon n'est ajouté à la grille qu'avec un peu de retard : sinon il
+//   se « verrait » lui-même juste derrière la buse.
+#include "verificateur.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <deque>
+#include <format>
+#include <istream>
+#include <filesystem>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <numbers>
+#include <optional>
+#include <sstream>
+
+#include "collisions.hpp"
+#include "gcode.hpp"
+#include "machine.hpp"
+#include "matiere.hpp"
+
+namespace artprint {
+
+namespace {
+
+constexpr double epsilon = 1e-9;
+// Pas de contrôle des déplacements à vide, en mm.
+constexpr double pas_a_vide = 1.0;
+// Nombre maximal de pas pour un seul mouvement (garde-fou).
+constexpr double pas_max_par_mouvement = 2'000'000.0;
+
+PositionMachine interpoler(const PositionMachine& a, const PositionMachine& b, double t) {
+    return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t,
+            a.b + (b.b - a.b) * t, a.c + (b.c - a.c) * t};
+}
+
+// Le détecteur de collisions, copié avec le vérificateur qui le porte.
+struct DetecteurCopiable {
+    std::unique_ptr<DetecteurCollisions> detecteur;
+    DetecteurCopiable() = default;
+    DetecteurCopiable(const DetecteurCopiable& autre)
+        : detecteur(autre.detecteur ? std::make_unique<DetecteurCollisions>(*autre.detecteur) : nullptr) {}
+    DetecteurCopiable(DetecteurCopiable&&) noexcept = default;
+    DetecteurCopiable& operator=(std::unique_ptr<DetecteurCollisions> nouveau) {
+        detecteur = std::move(nouveau);
+        return *this;
+    }
+    DetecteurCollisions* operator->() const { return detecteur.get(); }
+    DetecteurCollisions& operator*() const { return *detecteur; }
+    explicit operator bool() const { return detecteur != nullptr; }
+};
+
+class Verificateur {
+public:
+    explicit Verificateur(const Reglages& reglages)
+        : machine_(reglages.machine),
+          verif_(reglages.verification),
+          largeur_(reglages.impression.largeur_extrusion),
+          section_filament_(std::numbers::pi * reglages.impression.diametre_filament *
+                            reglages.impression.diametre_filament / 4.0),
+          debit_(std::max(0.01, reglages.impression.debit)),
+          hauteur_(std::min(reglages.impression.hauteur_couche,
+                            reglages.impression.hauteur_premiere_couche)),
+          grille_(std::min(verif_.pas_controle, hauteur_ / 2.0)) {
+        if (machine_.modele_machine.empty()) {
+            return;
+        }
+        // Forme réelle de l'imprimante : chargée une fois, puis gardée.
+        try {
+            modele_ = charger_modele(machine_.modele_machine);
+            detecteur_ = std::make_unique<DetecteurCollisions>(*modele_, machine_);
+        } catch (const std::exception& erreur) {
+            signaler(TypeErreur::modele_machine, position_, erreur.what(),
+                     "Vérifier le réglage « modele_machine », ou le vider pour trancher sans "
+                     "contrôle des collisions.");
+        }
+    }
+
+    void traiter_ligne(int numero, std::string_view texte) {
+        ligne_ = numero;
+        texte_ligne_ = texte;
+        while (!texte_ligne_.empty() &&
+               (texte_ligne_.back() == '\r' || texte_ligne_.back() == '\n')) {
+            texte_ligne_.pop_back();
+        }
+        ++rapport_.lignes;
+
+        // Le commentaire « ;TYPE: » annonce le genre des traits qui suivent.
+        // Seules les parois comptent pour la mesure « dans le vide » : le
+        // remplissage enjambe normalement du vide à l'intérieur de la pièce.
+        if (texte_ligne_.rfind(";TYPE:", 0) == 0) {
+            paroi_en_cours_ = texte_ligne_.find("paroi") != std::string::npos;
+        }
+        // Macros du firmware ArtPrint (contrat du G-code). Celle du début
+        // prend l'origine des cinq axes, chauffe, et passe en positions
+        // absolues et en extrusion relative ; celle de la fin range la machine.
+        if (texte_ligne_.rfind("ARTPRINT_PRINT_START", 0) == 0) {
+            absolu_ = true;
+            e_absolu_ = false;
+            return;
+        }
+        if (texte_ligne_.rfind("ARTPRINT_PRINT_END", 0) == 0) {
+            return;
+        }
+        LigneGcode ligne;
+        try {
+            ligne = lire_ligne_gcode(texte);
+        } catch (const ErreurGcode& erreur) {
+            signaler(TypeErreur::syntaxe, position_,
+                     std::format("Ligne de G-code illisible : {}.", erreur.what()),
+                     "Corriger ou supprimer cette ligne.");
+            return;
+        }
+
+        if (ligne.lettre == 'G') {
+            traiter_g(ligne);
+        } else if (ligne.lettre == 'M') {
+            if (ligne.numero == 82) {
+                e_absolu_ = true;
+            } else if (ligne.numero == 83) {
+                e_absolu_ = false;
+            }
+        }
+    }
+
+    RapportVerification terminer() {
+        vider_attente();
+        return std::move(rapport_);
+    }
+
+    // Nombre d'erreurs trouvées jusqu'ici.
+    std::size_t erreurs() const { return rapport_.nombre_erreurs; }
+
+private:
+    // Un morceau de cordon qui attend d'être ajouté à la grille.
+    struct Depot {
+        Vec3 pointe;
+        Vec3 direction;
+        double distance;  // distance parcourue en extrusion à ce moment-là
+        double hauteur;   // épaisseur du cordon déposé à cet endroit
+    };
+
+    void signaler(TypeErreur type, const PositionMachine& position, std::string probleme,
+                  std::string solution) {
+        ++rapport_.nombre_erreurs;
+        if (++compte_par_type_[type] > verif_.erreurs_max_par_type) {
+            return;
+        }
+        // La position est rendue comme la machine l'affiche (valeur de B du G-code).
+        PositionMachine affichee = position;
+        affichee.b += machine_.b_vertical;
+        rapport_.erreurs.push_back(
+            {type, ligne_, texte_ligne_, affichee, std::move(probleme), std::move(solution)});
+    }
+
+    void traiter_g(const LigneGcode& ligne) {
+        switch (ligne.numero) {
+            case 0:
+            case 1:
+                traiter_mouvement(ligne);
+                break;
+            case 2:
+            case 3:
+                signaler(TypeErreur::commande_non_geree, position_,
+                         "Les arcs de cercle (G2 et G3) ne sont pas vérifiables.",
+                         "Découper l'arc en petits segments droits (G1).");
+                break;
+            case 10:  // rétraction faite par le firmware
+                retracte_firmware_ = true;
+                ++rapport_.retractions;
+                fin_de_trait();
+                break;
+            case 11:  // reprise faite par le firmware
+                retracte_firmware_ = false;
+                break;
+            case 20:
+                signaler(TypeErreur::commande_non_geree, position_,
+                         "Les pouces (G20) ne sont pas pris en charge.",
+                         "Écrire le G-code en millimètres (G21).");
+                break;
+            case 90:
+                absolu_ = true;
+                break;
+            case 91:
+                absolu_ = false;
+                break;
+            case 92:
+                redefinir_position(ligne);
+                break;
+            default:
+                break;  // G4, G21, G28... : sans effet sur les contrôles
+        }
+    }
+
+    void redefinir_position(const LigneGcode& ligne) {
+        if (const auto v = ligne.parametre('X')) ecrit_.x = *v;
+        if (const auto v = ligne.parametre('Y')) ecrit_.y = *v;
+        if (const auto v = ligne.parametre('Z')) ecrit_.z = *v;
+        if (const auto v = ligne.parametre('B')) ecrit_.b = *v - machine_.b_vertical;
+        if (const auto v = ligne.parametre('C')) ecrit_.c = *v;
+        if (const auto v = ligne.parametre('E')) e_ = *v;
+        position_ = axes_depuis(ecrit_);
+    }
+
+    // Position des axes d'après ce qui est écrit dans le fichier (contrat du
+    // G-code). Tant que la distance pivot-buse manque, l'erreur sera signalée
+    // par le contrôle du mouvement : ici, on garde les valeurs telles quelles.
+    PositionMachine axes_depuis(const PositionMachine& ecrit) const {
+        try {
+            return depuis_gcode(machine_, ecrit);
+        } catch (const ErreurReglageManquant&) {
+            return ecrit;
+        }
+    }
+
+    bool est_retracte() const { return retracte_firmware_ || retrait_ > epsilon; }
+
+    void traiter_mouvement(const LigneGcode& ligne) {
+        // Ce que la ligne écrit (voir le contrat du G-code), puis la position
+        // des axes qui en découle : tous les contrôles se font sur les axes.
+        PositionMachine ecrit = ecrit_;
+        auto lire_axe = [&](char nom, double& axe) {
+            if (const auto v = ligne.parametre(nom)) {
+                axe = absolu_ ? *v : axe + *v;
+            }
+        };
+        lire_axe('X', ecrit.x);
+        lire_axe('Y', ecrit.y);
+        lire_axe('Z', ecrit.z);
+        // En interne, B est l'inclinaison de la tête comptée depuis la verticale.
+        if (const auto v = ligne.parametre('B')) {
+            ecrit.b = absolu_ ? *v - machine_.b_vertical : ecrit.b + *v;
+        }
+        lire_axe('C', ecrit.c);
+        PositionMachine cible = axes_depuis(ecrit);
+        ecrit_cible_ = ecrit;
+
+        double delta_e = 0.0;
+        if (const auto v = ligne.parametre('E')) {
+            delta_e = e_absolu_ ? *v - e_ : *v;
+            e_ += delta_e;
+        }
+
+        const bool bouge = std::abs(cible.x - position_.x) > epsilon ||
+                           std::abs(cible.y - position_.y) > epsilon ||
+                           std::abs(cible.z - position_.z) > epsilon ||
+                           std::abs(cible.b - position_.b) > epsilon ||
+                           std::abs(cible.c - position_.c) > epsilon;
+
+        if (!bouge) {
+            if (delta_e < -epsilon) {  // rétraction sur place
+                retrait_ += -delta_e;
+                ++rapport_.retractions;
+                fin_de_trait();
+            } else if (delta_e > epsilon) {  // reprise sur place
+                retrait_ = std::max(0.0, retrait_ - delta_e);
+            }
+            return;
+        }
+
+        const bool extrusion = delta_e > epsilon;
+        if (extrusion) {
+            if (est_retracte()) {
+                signaler(TypeErreur::extrusion_sans_reprise, position_,
+                         "Extrusion alors que le filament est encore rétracté : le début "
+                         "du cordon manquera.",
+                         "Ajouter une reprise (G1 E positif, sans déplacement) avant cette "
+                         "extrusion.");
+                retrait_ = 0.0;
+                retracte_firmware_ = false;
+            }
+            a_extrude_ = true;
+            ++rapport_.extrusions;
+            if (std::abs(cible.b - position_.b) > epsilon || std::abs(cible.c - position_.c) > epsilon) {
+                ++rapport_.extrusions_en_rotation;
+            }
+        } else {
+            // Avant la toute première extrusion, la buse est encore vide :
+            // la rétraction n'est pas exigée.
+            if (a_extrude_ && !est_retracte()) {
+                signaler(TypeErreur::retraction_manquante, position_,
+                         "Déplacement à vide sans rétraction : la buse va couler et "
+                         "laisser des fils.",
+                         "Ajouter une rétraction (G1 E négatif, sans déplacement) juste "
+                         "avant ce déplacement.");
+            }
+            if (delta_e < -epsilon) {  // rétraction pendant le déplacement
+                retrait_ += -delta_e;
+                ++rapport_.retractions;
+            }
+            ++rapport_.deplacements_a_vide;
+            fin_de_trait();
+        }
+
+        verifier_axes(cible);
+        try {
+            parcourir(cible, extrusion, delta_e);
+        } catch (const ErreurReglageManquant& erreur) {
+            signaler(TypeErreur::reglage_manquant, cible, erreur.what(),
+                     "Ajouter ce réglage dans le fichier de réglages.");
+        }
+        position_ = cible;
+        ecrit_ = ecrit_cible_;
+    }
+
+    // Contrôles qui ne dépendent que des valeurs des axes B et C.
+    void verifier_axes(const PositionMachine& cible) {
+        const double tour = std::abs(cible.c - position_.c);
+        if (tour > 180.0 + 1e-6) {
+            const double court = angle_le_plus_proche(cible.c, position_.c);
+            signaler(TypeErreur::c_chemin_long, cible,
+                     std::format("L'axe C tourne de {:.1f}° d'un seul coup, alors que le "
+                                 "chemin le plus court fait {:.1f}°.",
+                                 tour, std::abs(court - position_.c)),
+                     std::format("Écrire C{:.3f} à la place de C{:.3f} : c'est la même "
+                                 "orientation du plateau.",
+                                 court, cible.c));
+        }
+        verifier_course('X', cible.x, machine_.course_x_min, machine_.course_x_max, cible);
+        verifier_course('Y', cible.y, machine_.course_y_min, machine_.course_y_max, cible);
+        verifier_course('Z', cible.z, machine_.course_z_min, machine_.course_z_max, cible);
+        if (std::abs(cible.b) > machine_.b_inclinaison_max + 1e-6) {
+            signaler(TypeErreur::limite_b, cible,
+                     std::format("La tête est inclinée de {:.2f}° : le firmware n'accepte pas plus de {:.1f}° "
+                                 "(réglage « b_inclinaison_max »).",
+                                 cible.b, machine_.b_inclinaison_max),
+                     "Réduire l'inclinaison de la tête, ou imprimer cette partie à plat.");
+        } else if (cible.b < machine_.b_min - 1e-6 || cible.b > machine_.b_max + 1e-6) {
+            signaler(TypeErreur::limite_b, cible,
+                     std::format("L'axe B est à {:.2f}°, hors de ses butées ({:.1f}° à "
+                                 "{:.1f}°).",
+                                 cible.b, machine_.b_min, machine_.b_max),
+                     "Réduire l'inclinaison de la tête à cet endroit.");
+        }
+        if ((machine_.c_min && cible.c < *machine_.c_min - 1e-6) ||
+            (machine_.c_max && cible.c > *machine_.c_max + 1e-6)) {
+            signaler(TypeErreur::limite_c, cible,
+                     std::format("L'axe C est à {:.2f}°, hors de ses butées.", cible.c),
+                     "Détordre le plateau : faire un déplacement à vide qui ramène C dans "
+                     "ses limites.");
+        }
+    }
+
+    // Vérifie qu'un axe linéaire reste dans sa course. Le mouvement est
+    // droit : si le départ et l'arrivée sont dans la course, tout le trajet l'est.
+    void verifier_course(char axe, double valeur, const std::optional<double>& min,
+                         const std::optional<double>& max, const PositionMachine& cible) {
+        if ((min && valeur < *min - 1e-6) || (max && valeur > *max + 1e-6)) {
+            const std::string bas = min ? std::format("{:.1f}", *min) : "sans limite";
+            const std::string haut = max ? std::format("{:.1f}", *max) : "sans limite";
+            signaler(TypeErreur::limite_course, cible,
+                     std::format("L'axe {} est demandé à {:.2f} mm, hors de sa course "
+                                 "({} à {} mm) : la machine irait en butée.",
+                                 axe, valeur, bas, haut),
+                     "Déplacer, tourner ou réduire la pièce pour rester dans la course.");
+        }
+    }
+
+    // Le modèle de machine est gros : il est gardé en mémoire d'un tranchage
+    // à l'autre tant que le fichier ne change pas.
+    static std::shared_ptr<const ModeleMachine> charger_modele(const std::string& chemin_utf8) {
+        static std::mutex verrou;
+        static std::string chemin_garde;
+        static std::filesystem::file_time_type date_gardee;
+        static std::shared_ptr<const ModeleMachine> garde;
+        const std::filesystem::path chemin(std::u8string(chemin_utf8.begin(), chemin_utf8.end()));
+        std::error_code erreur;
+        const auto date = std::filesystem::last_write_time(chemin, erreur);
+        const std::lock_guard<std::mutex> garde_verrou(verrou);
+        if (!garde || chemin_garde != chemin_utf8 || erreur || date != date_gardee) {
+            garde = std::make_shared<const ModeleMachine>(lire_modele_machine(chemin));
+            chemin_garde = chemin_utf8;
+            date_gardee = date;
+        }
+        return garde;
+    }
+
+    // Contrôle les collisions à cette position. Renvoie vrai si une erreur
+    // a été signalée.
+    bool controler_collision(const PositionMachine& ici) {
+        if (!detecteur_) {
+            return false;
+        }
+        std::optional<Contact> contact;
+        try {
+            contact = detecteur_->controler(ici);
+        } catch (const ErreurReglageManquant&) {
+            return false;  // déjà signalé par le contrôle de la pose
+        }
+        if (!contact) {
+            return false;
+        }
+        const char* solution = "";
+        TypeErreur type = TypeErreur::collision_machine;
+        switch (contact->type) {
+            case TypeContact::matiere:
+                type = TypeErreur::collision_matiere;
+                solution = "Imprimer cette zone plus tôt, réduire l'inclinaison de la tête, ou "
+                           "faire tourner le plateau avant d'approcher.";
+                break;
+            case TypeContact::plateau:
+                type = TypeErreur::collision_plateau;
+                solution = "Remonter la trajectoire, ou réduire l'inclinaison de la tête près "
+                           "du plateau.";
+                break;
+            case TypeContact::machine:
+                solution = "Rapprocher la pièce du centre du plateau, la tourner ou la réduire.";
+                break;
+        }
+        signaler(type, ici,
+                 std::format("Collision : « {} » touche « {} » (distance {:.1f} mm, pour une "
+                             "marge de sécurité de {:.1f} mm).",
+                             contact->piece, contact->obstacle, contact->distance,
+                             machine_.marge_securite),
+                 solution);
+        // Après trop de collisions, le contrôle s'arrête : le G-code est
+        // déjà refusé, inutile de ralentir la suite.
+        if (++collisions_ >= verif_.erreurs_max_par_type) {
+            detecteur_.detecteur.reset();
+        }
+        return true;
+    }
+
+    // Rejoue le mouvement par petits pas, de la position actuelle à la cible.
+    void parcourir(const PositionMachine& cible, bool extrusion, double delta_e) {
+        const PoseOutil depart = pose_dans_piece(machine_, position_);
+        const PoseOutil arrivee = pose_dans_piece(machine_, cible);
+
+        // Épaisseur du cordon de ce mouvement, déduite de la matière
+        // extrudée : volume = section du cordon x longueur, et la section
+        // d'un cordon de largeur w et d'épaisseur t vaut (w - t) t + pi t² / 4.
+        epaisseur_ = hauteur_;
+        const double longueur = norme(arrivee.pointe - depart.pointe);
+        if (extrusion && longueur > 1e-6) {
+            const double section = delta_e * section_filament_ / (debit_ * longueur);
+            const double a = std::numbers::pi / 4.0 - 1.0;
+            const double discriminant = largeur_ * largeur_ + 4.0 * a * section;
+            const double t = discriminant > 0.0 ? (-largeur_ + std::sqrt(discriminant)) / (2.0 * a)
+                                                : 2.5 * hauteur_;
+            epaisseur_ = std::clamp(t, 0.25 * hauteur_, 2.5 * hauteur_);
+        }
+
+        // Majorant du chemin parcouru par la pointe sur la pièce.
+        const double droit = norme(Vec3{cible.x - position_.x, cible.y - position_.y,
+                                        cible.z - position_.z});
+        const double rayon = std::max(std::hypot(depart.pointe.x, depart.pointe.y),
+                                      std::hypot(arrivee.pointe.x, arrivee.pointe.y));
+        const double borne = droit + en_radians(std::abs(cible.c - position_.c)) * rayon +
+                             en_radians(std::abs(cible.b - position_.b)) *
+                                 machine_.distance_pivot_buse.value_or(0.0);
+        const double pas = extrusion ? grille_.pas() : pas_a_vide;
+        const int nombre =
+            static_cast<int>(std::clamp(std::ceil(borne / pas), 1.0, pas_max_par_mouvement));
+
+        bool b_signale = false;
+        bool plateau_signale = false;
+        bool volume_signale = false;
+        bool dessus_signale = false;
+        bool collision_signalee = false;
+        Vec3 precedent = depart.pointe;
+
+        for (int k = 1; k <= nombre; ++k) {
+            // Contrat 1 : c'est la pointe qui va en ligne droite (le firmware
+            // s'en charge, même quand B tourne) ; sinon, ce sont les axes.
+            const double part = static_cast<double>(k) / nombre;
+            const PositionMachine ici = machine_.contrat_gcode >= 1
+                                            ? axes_depuis(interpoler(ecrit_, ecrit_cible_, part))
+                                            : interpoler(position_, cible, part);
+            const PoseOutil pose = pose_dans_piece(machine_, ici);
+            const double avance = norme(pose.pointe - precedent);
+            precedent = pose.pointe;
+            (extrusion ? rapport_.longueur_extrusions : rapport_.longueur_a_vide) += avance;
+
+            if (!plateau_signale && pose.pointe.z < -1e-6) {
+                plateau_signale = true;
+                signaler(TypeErreur::sous_plateau, ici,
+                         std::format("La pointe de la buse descend à {:.3f} mm sous la "
+                                     "surface du plateau.",
+                                     -pose.pointe.z),
+                         "Remonter la trajectoire, ou vérifier le réglage "
+                         "« distance_pivot_buse ».");
+            }
+            if (!b_signale) {
+                b_signale = verifier_inclinaison(ici, pose);
+            }
+            if (!collision_signalee) {
+                collision_signalee = controler_collision(ici);
+            }
+            if (!extrusion) {
+                continue;
+            }
+
+            if (!volume_signale &&
+                (std::hypot(pose.pointe.x, pose.pointe.y) > machine_.rayon_plateau + 1e-6 ||
+                 pose.pointe.z > machine_.hauteur_impression + 1e-6)) {
+                volume_signale = true;
+                signaler(TypeErreur::hors_volume, ici,
+                         std::format("Extrusion en dehors du volume d'impression (plateau "
+                                     "de rayon {:.0f} mm, hauteur {:.0f} mm).",
+                                     machine_.rayon_plateau, machine_.hauteur_impression),
+                         "Recentrer ou réduire la pièce.");
+            }
+
+            controler_matiere(ici, pose, avance, dessus_signale);
+
+            distance_extrusion_ += avance;
+            // Un disque de matière tous les 0,45 largeur de cordon (et au bout
+            // de chaque trait) : ils se recouvrent largement, le cordon est
+            // plein, et il y a deux à trois fois moins de disques à poser.
+            if (distance_extrusion_ - dernier_depot_ < 0.45 * largeur_) {
+                en_suspens_ = Depot{pose.pointe, pose.direction, distance_extrusion_, epaisseur_};
+                continue;
+            }
+            en_suspens_.reset();
+            dernier_depot_ = distance_extrusion_;
+            attente_.push_back({pose.pointe, pose.direction, distance_extrusion_, epaisseur_});
+            const double retard = 3.0 * largeur_;
+            while (!attente_.empty() && attente_.front().distance < distance_extrusion_ - retard) {
+                deposer(attente_.front());
+                attente_.pop_front();
+            }
+        }
+    }
+
+    // Vérifie l'inclinaison de B selon la hauteur. Renvoie vrai si une erreur
+    // a été signalée.
+    bool verifier_inclinaison(const PositionMachine& ici, const PoseOutil& pose) {
+        // (Ce contrôle est fait à chaque pas de chaque mouvement : il doit être rapide.)
+        if (inclinaison_admise(machine_, pose.pointe.z, ici.b)) {
+            return false;
+        }
+        const double permise = inclinaison_permise(machine_, pose.pointe.z);
+        if (encombrement_tete_connu(machine_)) {
+            signaler(TypeErreur::limite_b, ici,
+                     std::format("La tête est inclinée de {:.2f}° à {:.2f} mm du plateau : son bloc descendrait à "
+                                 "{:.1f} mm du plateau (marge de sécurité : {:.1f} mm). À cette hauteur, la "
+                                 "limite est de {:.1f}°.",
+                                 ici.b, pose.pointe.z, pose.pointe.z + point_bas_de_la_tete(machine_, ici.b),
+                                 machine_.marge_securite, permise),
+                     "Réduire l'inclinaison près du plateau, ou imprimer cette zone plus haut.");
+        } else if (machine_.hauteur_bascule_b) {
+            signaler(TypeErreur::limite_b, ici,
+                     std::format("La tête est inclinée de {:.2f}° à {:.2f} mm du plateau. "
+                                 "Sous {:.2f} mm, la limite est de {:.1f}°.",
+                                 ici.b, pose.pointe.z, *machine_.hauteur_bascule_b,
+                                 machine_.b_limite_pres_plateau),
+                     "Réduire l'inclinaison près du plateau, ou imprimer cette zone plus haut.");
+        } else {
+            signaler(TypeErreur::limite_b, ici,
+                     std::format("La tête est inclinée de {:.2f}°. La limite est de {:.1f}° "
+                                 "partout tant que le réglage « hauteur_bascule_b » n'est pas "
+                                 "renseigné.",
+                                 ici.b, machine_.b_limite_pres_plateau),
+                     "Mesurer la hauteur de bascule sur la machine et l'ajouter aux "
+                     "réglages, ou réduire l'inclinaison.");
+        }
+        return true;
+    }
+
+    void controler_matiere(const PositionMachine& ici, const PoseOutil& pose, double avance,
+                           bool& dessus_signale) {
+        const double hauteur = epaisseur_;
+
+        // « Dans le vide » : rien sous le cordon. On regarde un peu plus bas
+        // que la couche en cours, le long de la buse, au centre et sur les
+        // bords du cordon ; le plateau compte comme un appui.
+        if (paroi_en_cours_ && !soutenu(pose, hauteur)) {
+            rapport_.longueur_dans_le_vide += avance;
+        }
+
+        // « Dans » : le cœur du cordon, un quart de couche sous la pointe.
+        if (grille_.occupe(pose.pointe - pose.direction * (hauteur / 4.0))) {
+            longueur_dans_ += avance;
+            if (!dans_signale_ &&
+                longueur_dans_ > verif_.tolerance_croisement * largeur_) {
+                dans_signale_ = true;
+                signaler(TypeErreur::dans_matiere, ici,
+                         std::format("Le cordon est imprimé dans de la matière déjà déposée "
+                                     "sur {:.2f} mm au moins.",
+                                     longueur_dans_),
+                         "Supprimer ce passage en double, ou décaler cette trajectoire "
+                         "d'une couche.");
+            }
+        } else {
+            longueur_dans_ = 0.0;
+            dans_signale_ = false;
+        }
+
+        // « Sous » : de la matière au-dessus de la pointe, le long de la buse.
+        if (dessus_signale) {
+            return;
+        }
+        const double pas = grille_.pas();
+        double au_dessus = -1.0;
+        for (double t = pas; t <= verif_.hauteur_controle_dessus; t += pas) {
+            if (grille_.occupe(pose.pointe + pose.direction * t)) {
+                au_dessus = t;
+                break;
+            }
+        }
+        if (au_dessus < 0.0) {
+            longueur_sous_ = 0.0;
+            return;
+        }
+        // Tout près de la pointe (moins d'une demi-épaisseur de cordon), ce
+        // peut être un cordon voisin qui déborde un peu, sur une couche
+        // inclinée : comme un croisement, c'est toléré sur une courte
+        // longueur. Si cela dure, la buse est bien sous la matière.
+        if (au_dessus <= hauteur / 2.0 + 1e-9) {
+            longueur_sous_ += avance;
+            if (longueur_sous_ <= verif_.tolerance_croisement * largeur_) {
+                return;
+            }
+        }
+        dessus_signale = true;
+        signaler(TypeErreur::sous_matiere, ici,
+                 std::format("Le cordon est imprimé sous de la matière déjà déposée "
+                             "({:.2f} mm au-dessus de la pointe) : la buse devrait "
+                             "traverser la pièce.",
+                             au_dessus),
+                 "Imprimer cette zone avant celle du dessus, ou changer "
+                 "l'orientation de la buse.");
+    }
+
+    // Vrai si le cordon déposé ici repose sur le plateau ou sur de la matière.
+    bool soutenu(const PoseOutil& pose, double hauteur) const {
+        // Deux directions perpendiculaires à la buse, pour viser les bords du cordon.
+        const Vec3 aide = std::abs(pose.direction.z) < 0.9 ? Vec3{0.0, 0.0, 1.0} : Vec3{1.0, 0.0, 0.0};
+        const Vec3 u = normaliser(produit_vectoriel(aide, pose.direction));
+        const Vec3 v = produit_vectoriel(pose.direction, u);
+        const double bord = 0.5 * largeur_;
+        const Vec3 decalages[5] = {Vec3{}, u * bord, u * -bord, v * bord, v * -bord};
+        for (const double profondeur : {1.15, 1.4, 1.7, 2.0}) {
+            for (const Vec3& decalage : decalages) {
+                const Vec3 point = pose.pointe + decalage - pose.direction * (profondeur * hauteur);
+                if (point.z <= 0.05 || grille_.occupe(point)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void deposer(const Depot& depot) {
+        grille_.deposer(depot.pointe, depot.direction, largeur_, depot.hauteur);
+        if (detecteur_) {
+            detecteur_->deposer(depot.pointe - depot.direction * (depot.hauteur / 2.0));
+        }
+    }
+
+    void vider_attente() {
+        // Le bout du trait, s'il n'a pas encore son disque.
+        if (en_suspens_) {
+            attente_.push_back(*en_suspens_);
+            dernier_depot_ = en_suspens_->distance;
+            en_suspens_.reset();
+        }
+        for (const Depot& depot : attente_) {
+            deposer(depot);
+        }
+        attente_.clear();
+    }
+
+    // Fin d'un trait continu d'extrusion (déplacement à vide ou rétraction).
+    void fin_de_trait() {
+        vider_attente();
+        longueur_dans_ = 0.0;
+        longueur_sous_ = 0.0;
+        dans_signale_ = false;
+    }
+
+    const ReglagesMachine machine_;
+    const ReglagesVerification verif_;
+    const double largeur_;  // largeur nominale du cordon
+    const double section_filament_;  // mm² de filament par mm poussé
+    const double debit_;             // multiplicateur de matière des réglages
+    double epaisseur_ = 0.0;         // épaisseur du cordon du mouvement en cours
+    const double hauteur_;  // hauteur nominale du cordon
+    GrilleMatiere grille_;
+    RapportVerification rapport_;
+    std::map<TypeErreur, int> compte_par_type_;
+
+    int ligne_ = 0;
+    std::string texte_ligne_;
+
+    PositionMachine position_;      // position des axes
+    PositionMachine ecrit_;         // ce que le fichier a écrit en dernier (voir le contrat du G-code)
+    PositionMachine ecrit_cible_;   // ce qu'écrit la ligne en cours
+    double e_ = 0.0;
+    bool absolu_ = true;    // G90 / G91
+    bool e_absolu_ = true;  // M82 / M83
+    double retrait_ = 0.0;  // longueur de filament actuellement rétractée
+    bool retracte_firmware_ = false;
+    bool a_extrude_ = false;
+
+    std::shared_ptr<const ModeleMachine> modele_;
+    DetecteurCopiable detecteur_;
+    // Vrai tant que les traits lus sont des parois (ou que le fichier ne dit
+    // pas le genre des traits).
+    bool paroi_en_cours_ = true;
+    int collisions_ = 0;
+
+    std::deque<Depot> attente_;
+    double dernier_depot_ = -1e9;  // distance d'extrusion du dernier disque posé
+    std::optional<Depot> en_suspens_;  // le dernier point passé sans disque
+    double distance_extrusion_ = 0.0;
+    double longueur_dans_ = 0.0;
+    double longueur_sous_ = 0.0;  // longueur parcourue avec de la matière juste au-dessus de la pointe
+    bool dans_signale_ = false;
+};
+
+}  // namespace
+
+bool RapportVerification::contient(TypeErreur type) const {
+    return std::any_of(erreurs.begin(), erreurs.end(),
+                       [type](const ErreurVerification& e) { return e.type == type; });
+}
+
+RapportVerification verifier_gcode(std::istream& gcode, const Reglages& reglages) {
+    Verificateur verificateur(reglages);
+    std::string ligne;
+    int numero = 0;
+    while (std::getline(gcode, ligne)) {
+        verificateur.traiter_ligne(++numero, ligne);
+    }
+    return verificateur.terminer();
+}
+
+RapportVerification verifier_gcode_texte(std::string_view gcode, const Reglages& reglages) {
+    std::istringstream flux{std::string(gcode)};
+    return verifier_gcode(flux, reglages);
+}
+
+struct VerificationSuivie::Interne {
+    explicit Interne(const Reglages& reglages) : verificateur(reglages) {}
+    Verificateur verificateur;
+    int numero = 0;
+};
+
+VerificationSuivie::VerificationSuivie(const Reglages& reglages) : interne_(std::make_unique<Interne>(reglages)) {}
+VerificationSuivie::VerificationSuivie(const VerificationSuivie& autre)
+    : interne_(std::make_unique<Interne>(*autre.interne_)) {}
+VerificationSuivie::VerificationSuivie(VerificationSuivie&&) noexcept = default;
+VerificationSuivie& VerificationSuivie::operator=(VerificationSuivie&&) noexcept = default;
+VerificationSuivie::~VerificationSuivie() = default;
+
+std::size_t VerificationSuivie::lire(std::string_view texte, std::size_t erreurs_max) {
+    std::size_t debut = 0, lues = 0;
+    while (debut < texte.size()) {
+        std::size_t fin = texte.find('\n', debut);
+        if (fin == std::string_view::npos) {
+            fin = texte.size();
+        }
+        interne_->verificateur.traiter_ligne(++interne_->numero, texte.substr(debut, fin - debut));
+        ++lues;
+        debut = fin + 1;
+        if (interne_->verificateur.erreurs() > erreurs_max) {
+            break;
+        }
+    }
+    return lues;
+}
+
+std::size_t VerificationSuivie::erreurs() const { return interne_->verificateur.erreurs(); }
+
+RapportVerification VerificationSuivie::terminer() {
+    RapportVerification rapport = interne_->verificateur.terminer();
+    return rapport;
+}
+
+std::string decrire(const ErreurVerification& erreur) {
+    const PositionMachine& p = erreur.position;
+    return std::format(
+        "Ligne {} : {}\n"
+        "  Problème : {}\n"
+        "  Position de la machine : X={:.3f} Y={:.3f} Z={:.3f} B={:.3f}° C={:.3f}°\n"
+        "  Solution possible : {}\n",
+        erreur.ligne, erreur.texte_ligne, erreur.probleme, p.x, p.y, p.z, p.b, p.c,
+        erreur.solution);
+}
+
+}  // namespace artprint

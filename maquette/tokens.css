@@ -1,0 +1,164 @@
+/* ArtPrint Slicer - licence AGPL v3
+   VARIABLES DE DESIGN : la seule source des couleurs, tailles, espacements et
+   formes de l'interface. Aucune autre feuille de style n'écrit de valeur en dur.
+   Identité ArtPrint : graphite #1F2429, orange filament #E4572E, blanc #FFFFFF,
+   nuit #15181B, police Archivo. Deux thèmes, mêmes noms de variables. */
+
+:root {
+  /* --- Neutres : fenêtre, panneau, champ, survol. Du blanc franc, des gris
+     neutres pour les bords : aucun ton beige ou crème. --- */
+  --c-fenetre: #ffffff;
+  --c-panneau: #ffffff;
+  --c-champ: #ffffff;
+  --c-survol: #f0f1f3;
+  --c-bord: #d9dce0;
+  --c-bord-fort: #7b8187;
+
+  /* --- Barres du haut : sombres dans les deux thèmes --- */
+  --c-barre: #15181b;
+  --c-barre-2: #1f2429;
+  --c-barre-texte: #ffffff;
+  --c-barre-texte-2: #aab0b6;
+  --c-barre-texte-3: #747c85;   /* élément désactivé sur la barre (la barre est sombre dans les deux thèmes) */
+
+  /* --- Texte : principal, secondaire, désactivé --- */
+  --c-texte: #15181b;
+  --c-texte-2: #4f555b;
+  --c-texte-3: #858a8e;
+
+  /* --- Accent : l'orange filament d'ArtPrint. Un seul accent dans toute l'interface. --- */
+  --c-accent: #e4572e;          /* fonds : bouton principal, onglet actif, sélection */
+  --c-accent-survol: #ec6a44;
+  --c-accent-appui: #de5229;
+  --c-accent-texte: #a83a17;    /* accent utilisé comme texte ou icône */
+  --c-sur-accent: #15181b;      /* texte posé sur un fond d'accent */
+  --c-accent-voile: #f8e1d6;    /* fond léger : ligne choisie, survol d'accent */
+
+  /* --- États : réservés à OK / attention / erreur, toujours avec une icône --- */
+  --c-ok: #17703f;
+  --c-ok-voile: #dceee2;
+  --c-attention: #755200;
+  --c-attention-voile: #fff3c2;
+  --c-erreur: #b3142b;
+  --c-erreur-voile: #f8dee1;
+
+  /* --- Vue 3D --- */
+  --c-scene: #ffffff;
+  --c-plateau: #0f1113;
+  --c-grille: #4f565f;
+  --c-plateau-bord: #15181b;
+  --c-piece: #a2a7ad;
+  --c-selection: #cf4a23;
+  --axe-x: #d4313a;
+  --axe-y: #2e9a55;
+  --axe-z: #3577d6;
+
+  /* --- Aperçu : une couleur par type de trajectoire --- */
+  --seg-paroi-externe: #e69f00;
+  --seg-paroi-interne: #4c8dcf;
+  --seg-remplissage: #e96a92;
+  --seg-plein: #41c170;
+  --seg-supports: #946fff;
+  --seg-ponts: #00e3ff;
+  --seg-jupe: #ab8735;
+  --seg-deplacement: #b4b9bf;
+
+  /* --- Ombres : deux niveaux, pour les éléments flottants seulement --- */
+  --o-1: 0 1px 2px rgb(21 24 27 / 0.14), 0 2px 6px rgb(21 24 27 / 0.10);
+  --o-2: 0 4px 12px rgb(21 24 27 / 0.16), 0 12px 32px rgb(21 24 27 / 0.14);
+
+  /* --- Typographie : une famille, quatre tailles, deux graisses --- */
+  --police: "Archivo", "Segoe UI", system-ui, sans-serif;
+  --t-11: 11px;
+  --t-12: 12px;
+  --t-13: 13px;
+  --t-16: 16px;
+  --g-normal: 400;
+  --g-fort: 600;
+  --g-logo: 700;          /* réservée au nom « ArtPrint » du logo */
+  --interligne: 1.35;
+
+  /* --- Espacements : grille de 4 px --- */
+  --e-1: 4px;
+  --e-2: 8px;
+  --e-3: 12px;
+  --e-4: 16px;
+  --e-5: 20px;
+  --e-6: 24px;
+  --e-8: 32px;
+
+  /* --- Tailles --- */
+  --h-champ: 28px;        /* champs et boutons */
+  --h-ligne: 32px;        /* une ligne de paramètre */
+  --h-barre-titre: 32px;
+  --h-barre-onglets: 36px;
+  --h-etat: 24px;         /* ligne d'état du bas */
+  --l-panneau: 340px;
+  --l-champ: 104px;
+  --i-16: 16px;
+  --i-20: 20px;
+  --i-24: 24px;
+  --trait-icone: 1.5;
+
+  --l-unite: 36px;        /* colonne de l'unité, dans une ligne de paramètre */
+  --l-action: 20px;       /* colonne du bouton « rétablir » */
+  --l-marqueur: 4px;      /* repère de valeur modifiée */
+  --l-feuille: 860px;     /* panneau glissant (bobines, machine) */
+  --l-feuille-etroite: 420px;
+  --l-trajectoires: 352px;
+  --l-curseur: 36px;      /* curseur vertical de couches */
+  --l-case: 16px;         /* case à cocher */
+  --h-logo: 24px;
+  --l-menu: 248px;        /* menu déroulant */
+  --l-menu-page: 176px;   /* menu de gauche de la page Imprimante */
+  --l-controle: 560px;    /* panneau « Contrôle » de la page Imprimante */
+  --h-touche: 48px;       /* touche de déplacement d'un axe */
+  --l-lecture: 56px;      /* bouton de lecture de la caméra */
+  --l-nuance: 32px;       /* carré de couleur d'une bobine, dans le gestionnaire */
+  --l-reste: 200px;       /* colonne « Restant » du gestionnaire */
+  --h-camera: 240px;      /* hauteur minimale de l'image de la caméra */
+  --l-vignette: 44px;     /* image de l'imprimante ou du plateau, dans sa tuile */
+  --h-tuile: 88px;        /* tuiles imprimante, plateau, synchro */
+  --h-bandeau: 28px;      /* bandeau de titre d'une section de la colonne */
+  --h-champ-serre: 24px;  /* champs de la colonne des réglages */
+  --h-ligne-serre: 28px;  /* ligne de paramètre de la colonne */
+  --interligne-serre: 1.25;
+  --l-outil: 32px;        /* bouton de la barre d'outils */
+  --l-interrupteur: 28px;
+  --h-interrupteur: 16px;
+  --l-bouton-pouce: 12px; /* pastille de l'interrupteur */
+  --l-pastille: 28px;     /* pastille de couleur d'une bobine */
+  --h-jauge: 4px;
+  --h-vue-etroite: 360px; /* hauteur minimale de la vue 3D sur petit écran */
+  --seuil-etroit: 900px;  /* rappel : largeur où la page passe en une colonne */
+
+  /* --- Formes --- */
+  --r-1: 2px;             /* champs, boutons */
+  --r-2: 4px;             /* cartes, dialogues */
+  --r-3: 8px;             /* grandes touches de la page Imprimante */
+  --trait: 1px;
+  --trait-fort: 2px;      /* onglet actif, anneau de focus */
+  --bord: var(--trait) solid var(--c-bord);
+  --bord-fort: var(--trait) solid var(--c-bord-fort);
+  --anneau: var(--trait-fort) solid var(--c-accent-texte);
+
+  /* --- Mouvement --- */
+  --d-rapide: 150ms;
+  --d-lent: 200ms;
+}
+
+/* Thème sombre : choisi par le système, sauf si le thème clair est demandé. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --c-fenetre: #15181b; --c-panneau: #1f2429; --c-champ: #282e35; --c-survol: #323a42; --c-bord: #3b434c; --c-bord-fort: #7d8691; --c-barre: #101214; --c-barre-2: #15181b; --c-barre-texte: #ffffff; --c-barre-texte-2: #a3aab1; --c-texte: #ffffff; --c-texte-2: #b3b8bd; --c-texte-3: #7b838b; --c-accent: #e4572e; --c-accent-survol: #ee6a43; --c-accent-appui: #de5229; --c-accent-texte: #ff8a66; --c-sur-accent: #15181b; --c-accent-voile: #3d2118; --c-ok: #57c48d; --c-ok-voile: #16301f; --c-attention: #e9bc45; --c-attention-voile: #332a0f; --c-erreur: #ff7088; --c-erreur-voile: #3a161d; --c-scene: #15181b; --c-plateau: #0b0c0e; --c-grille: #46505b; --c-plateau-bord: #6c7682; --c-piece: #8f969d; --c-selection: #ff8a66; --axe-x: #ee5a62; --axe-y: #4cc07a; --axe-z: #5b98ef;
+    --o-1: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.35);
+    --o-2: 0 4px 12px rgb(0 0 0 / 0.55), 0 12px 32px rgb(0 0 0 / 0.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --c-fenetre: #15181b; --c-panneau: #1f2429; --c-champ: #282e35; --c-survol: #323a42; --c-bord: #3b434c; --c-bord-fort: #7d8691; --c-barre: #101214; --c-barre-2: #15181b; --c-barre-texte: #ffffff; --c-barre-texte-2: #a3aab1; --c-texte: #ffffff; --c-texte-2: #b3b8bd; --c-texte-3: #7b838b; --c-accent: #e4572e; --c-accent-survol: #ee6a43; --c-accent-appui: #de5229; --c-accent-texte: #ff8a66; --c-sur-accent: #15181b; --c-accent-voile: #3d2118; --c-ok: #57c48d; --c-ok-voile: #16301f; --c-attention: #e9bc45; --c-attention-voile: #332a0f; --c-erreur: #ff7088; --c-erreur-voile: #3a161d; --c-scene: #15181b; --c-plateau: #0b0c0e; --c-grille: #46505b; --c-plateau-bord: #6c7682; --c-piece: #8f969d; --c-selection: #ff8a66; --axe-x: #ee5a62; --axe-y: #4cc07a; --axe-z: #5b98ef;
+  --o-1: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.35);
+  --o-2: 0 4px 12px rgb(0 0 0 / 0.55), 0 12px 32px rgb(0 0 0 / 0.45);
+  color-scheme: dark;
+}
